@@ -134,6 +134,7 @@ go run ./tools/review
 It runs `codex review --base origin/main` (`-base` picks another base; `-uncommitted` reviews uncommitted changes instead) and saves it to `out/codex-review-N.txt` with the next free N.
 
 - Codex runs in the `workspace-write` sandbox with the Go build cache added (approved by the developer 2026-11-06): it may write in the repository, the temp folder and the Go build cache, so it can run `go test` and temporary probe tests, and nothing else on the machine. The tool fails if the report's header shows another sandbox.
+- golangci-lint cannot run inside Codex's sandbox (it cannot resolve the working directory there), so Codex reviews lint findings from the code only; `tools/check` covers lint.
 - Afterwards the tool lists every file Codex created, changed or removed in the working tree and fails if there is one. Inspect and revert such files; never commit them. On a clean tree every change shows; with `-uncommitted` it compares file contents.
 - Do not apply a finding on trust. Reproduce it first; for a bug, write the failing test, then fix.
 - Commit fixes as `Address Codex review on <topic>` (`the second Codex review` for a second round).

@@ -33,6 +33,14 @@ const (
 
 // FromInt returns n as a Q8, saturated to the range.
 func FromInt(n int) Q8 {
+	// Clamp before shifting: a huge n would overflow the shift itself.
+	const limit = 1 << (16 - FracBits - 1) // 128
+	switch {
+	case n > limit:
+		return Max
+	case n < -limit:
+		return Min
+	}
 	return saturate(int64(n) << FracBits)
 }
 
