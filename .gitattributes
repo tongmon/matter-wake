@@ -1,0 +1,3 @@
+# LF everywhere, so gofmt and the golden files agree on every OS.
+* text=auto eol=lf
+*.png binary

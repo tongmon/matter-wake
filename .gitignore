@@ -1,0 +1,11 @@
+# Screenshots, recordings, profiles and other local output.
+/out/
+
+# Built binaries.
+/matter-wake
+/matter-wake.exe
+*.test
+*.prof
+
+# Personal Claude Code settings.
+/.claude/settings.local.json
