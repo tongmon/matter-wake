@@ -62,6 +62,13 @@ func TestArithmeticSaturates(t *testing.T) {
 	if got := FromInt(-3); got != -3*One {
 		t.Errorf("FromInt(-3) = %v", got)
 	}
+	// Shifting a huge int would overflow before saturating (Codex review).
+	if got := FromInt(math.MaxInt); got != Max {
+		t.Errorf("FromInt(MaxInt) = %v, want Max", got)
+	}
+	if got := FromInt(math.MinInt); got != Min {
+		t.Errorf("FromInt(MinInt) = %v, want Min", got)
+	}
 }
 
 // Damping must shrink negative values exactly as it shrinks positive ones;
