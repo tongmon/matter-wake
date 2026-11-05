@@ -12,6 +12,8 @@ import (
 	"fmt"
 	"io"
 	"strings"
+
+	"github.com/tongmon/matter-wake/internal/fixed"
 )
 
 // ID identifies a material inside one Table. ID 0 is always the empty
@@ -95,11 +97,30 @@ type Def struct {
 	// Name is unique within a table.
 	Name string `json:"name"`
 	Kind Kind   `json:"kind"`
-	// Density decides what sinks through what: a moving cell may swap
-	// with a non-static cell of lower density.
+	// Density decides what sinks through what: a moving cell may sink into a
+	// liquid of lower density.
 	Density uint8 `json:"density"`
-	// Dispersion is how many cells a liquid may slide sideways in one tick.
+
+	// FallAccel is how much a falling cell's speed grows each tick, in
+	// cells per tick. Powders and liquids only.
+	FallAccel fixed.Q8 `json:"fallAccel"`
+	// SinkChance is the percent chance, each time it tries, that a moving
+	// cell sinks into a lighter liquid. Powders and liquids only.
+	SinkChance uint8 `json:"sinkChance"`
+	// SlideChance is the percent chance each tick that a powder blocked
+	// below slides down diagonally; it sets how steep a heap stands.
+	// Powders only (liquids always slide).
+	SlideChance uint8 `json:"slideChance"`
+	// FlowSpeed is the sideways push a liquid blocked below gains each
+	// tick. It keeps its direction from tick to tick. Liquids only.
+	FlowSpeed fixed.Q8 `json:"flowSpeed"`
+	// FlowDamping scales the push after each cell the liquid flows, 0..1.
+	// Liquids only.
+	FlowDamping fixed.Q8 `json:"flowDamping"`
+	// Dispersion is the most cells a liquid flows sideways in one tick.
+	// Liquids only.
 	Dispersion uint8 `json:"dispersion"`
+
 	// Color is the base color; each cell varies it by its tone.
 	Color Color `json:"color"`
 	// ToneSpread is how much a cell's tone darkens the base color, 0..255.
@@ -171,8 +192,36 @@ func validate(d Def) error {
 	if int(d.Kind) >= len(kindNames) {
 		return fmt.Errorf("%q: invalid kind %d", d.Name, d.Kind)
 	}
-	if d.Dispersion > 0 && d.Kind != Liquid {
-		return fmt.Errorf("%q: only liquids may have dispersion", d.Name)
+	if err := validateMotion(d); err != nil {
+		return fmt.Errorf("%q: %w", d.Name, err)
+	}
+	return nil
+}
+
+// Limits on motion values. They keep one cell update within the reach the
+// parallel tick allows (world.MaxReach).
+var (
+	maxFallAccel = fixed.FromInt(4)
+	maxFlowSpeed = fixed.FromInt(8)
+)
+
+func validateMotion(d Def) error {
+	moving := d.Kind == Powder || d.Kind == Liquid
+	switch {
+	case !moving && (d.FallAccel != 0 || d.SinkChance != 0):
+		return errors.New("only powders and liquids may have fallAccel or sinkChance")
+	case d.Kind != Powder && d.SlideChance != 0:
+		return errors.New("only powders may have slideChance")
+	case d.Kind != Liquid && (d.FlowSpeed != 0 || d.FlowDamping != 0 || d.Dispersion != 0):
+		return errors.New("only liquids may have flowSpeed, flowDamping or dispersion")
+	case d.FallAccel < 0 || d.FallAccel > maxFallAccel:
+		return fmt.Errorf("fallAccel %v is outside [0, %v]", d.FallAccel, maxFallAccel)
+	case d.SinkChance > 100 || d.SlideChance > 100:
+		return errors.New("sinkChance and slideChance are percents, 0..100")
+	case d.FlowSpeed < 0 || d.FlowSpeed > maxFlowSpeed:
+		return fmt.Errorf("flowSpeed %v is outside [0, %v]", d.FlowSpeed, maxFlowSpeed)
+	case d.FlowDamping < 0 || d.FlowDamping > fixed.One:
+		return fmt.Errorf("flowDamping %v is outside [0, 1]", d.FlowDamping)
 	}
 	return nil
 }

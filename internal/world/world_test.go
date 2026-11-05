@@ -6,11 +6,11 @@ import (
 	"testing"
 
 	"github.com/tongmon/matter-wake/internal/material"
-	"github.com/tongmon/matter-wake/internal/rng"
 )
 
 func TestNewRejectsBadConfig(t *testing.T) {
-	tab := testTable(t, 4)
+	tab := testTable(t, nil)
+	tooFar := testTable(t, func(d []material.Def) { d[defWater].Dispersion = MaxReach + 1 })
 	tests := []struct {
 		name    string
 		cfg     Config
@@ -18,7 +18,7 @@ func TestNewRejectsBadConfig(t *testing.T) {
 	}{
 		{"zero width", Config{Width: 0, Height: 8, Materials: tab}, "not positive"},
 		{"no materials", Config{Width: 8, Height: 8}, "no material table"},
-		{"reach too far", Config{Width: 8, Height: 8, Materials: testTable(t, MaxReach+1)}, "disperses"},
+		{"reach too far", Config{Width: 8, Height: 8, Materials: tooFar}, "disperses"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -36,7 +36,7 @@ func TestSandFallsToTheFloor(t *testing.T) {
 	for range w.Height() {
 		w.Step()
 	}
-	if c, _ := w.At(3, w.Height()-1); c.Mat != ids.sand {
+	if _, y, ok := find(w, ids.sand); !ok || y != w.Height()-1 {
 		t.Fatalf("sand did not land on the bottom row: %s", render(w, ids))
 	}
 }
@@ -66,7 +66,7 @@ func TestSandSinksThroughWater(t *testing.T) {
 	w, ids := newTestWorld(t, 6, 10, 1)
 	w.Fill(0, 6, 6, 10, ids.water)
 	w.Fill(0, 4, 6, 6, ids.sand)
-	for range 80 {
+	for range 200 {
 		w.Step()
 	}
 	for x := range w.Width() {
@@ -176,79 +176,4 @@ func BenchmarkStep(b *testing.B) {
 			}
 		})
 	}
-}
-
-type testIDs struct {
-	stone, sand, water material.ID
-}
-
-func testTable(tb testing.TB, waterDispersion int) *material.Table {
-	tb.Helper()
-	tab, err := material.NewTable([]material.Def{
-		{Name: "air", Kind: material.Empty},
-		{Name: "stone", Kind: material.Static, Density: 255},
-		{Name: "sand", Kind: material.Powder, Density: 30},
-		{Name: "water", Kind: material.Liquid, Density: 20, Dispersion: uint8(waterDispersion)},
-	})
-	if err != nil {
-		tb.Fatal(err)
-	}
-	return tab
-}
-
-func newTestWorld(tb testing.TB, width, height, workers int) (*World, testIDs) {
-	tb.Helper()
-	tab := testTable(tb, 4)
-	w, err := New(Config{Width: width, Height: height, Seed: 1, Workers: workers, Materials: tab})
-	if err != nil {
-		tb.Fatal(err)
-	}
-	tb.Cleanup(w.Close)
-	return w, testIDs{stone: tab.MustLookup("stone"), sand: tab.MustLookup("sand"), water: tab.MustLookup("water")}
-}
-
-// scatter fills the top 40% of the world with a random mix and lays a few
-// stone ledges below it.
-func scatter(w *World, ids testIDs, seed uint64) {
-	s := rng.New(seed)
-	for y := range w.Height() * 4 / 10 {
-		for x := range w.Width() {
-			switch s.IntN(10) {
-			case 0, 1, 2:
-				w.Set(x, y, ids.sand)
-			case 3, 4, 5:
-				w.Set(x, y, ids.water)
-			}
-		}
-	}
-	for _, y := range []int{w.Height() * 6 / 10, w.Height() * 8 / 10} {
-		for x := w.Width() / 8; x < w.Width()*7/8; x++ {
-			if x%23 > 3 {
-				w.Set(x, y, ids.stone)
-			}
-		}
-	}
-}
-
-// render draws the grid as text for failure messages.
-func render(w *World, ids testIDs) string {
-	var b strings.Builder
-	b.WriteByte('\n')
-	for y := range w.Height() {
-		for x := range w.Width() {
-			c, _ := w.At(x, y)
-			switch c.Mat {
-			case ids.stone:
-				b.WriteByte('#')
-			case ids.sand:
-				b.WriteByte('s')
-			case ids.water:
-				b.WriteByte('~')
-			default:
-				b.WriteByte('.')
-			}
-		}
-		b.WriteByte('\n')
-	}
-	return b.String()
 }

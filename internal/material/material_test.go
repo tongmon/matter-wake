@@ -25,6 +25,10 @@ func TestShippedTableLoads(t *testing.T) {
 	if id := tab.MustLookup("air"); id != Air {
 		t.Errorf("air has ID %d, want %d", id, Air)
 	}
+	// Motion values arrive as fixed-point numbers.
+	if water := tab.Def(tab.MustLookup("water")); water.FlowSpeed.Float() != 0.5 {
+		t.Errorf("water flowSpeed = %v, want 0.5", water.FlowSpeed)
+	}
 }
 
 func TestParseRejectsBadTables(t *testing.T) {
@@ -42,6 +46,13 @@ func TestParseRejectsBadTables(t *testing.T) {
 		{"missing name", `{"materials":[{"name":"air","kind":"empty"},{"kind":"static"}]}`, "missing name"},
 		{"bad color", `{"materials":[{"name":"air","kind":"empty","color":"red"}]}`, "color"},
 		{"dispersion on powder", `{"materials":[{"name":"air","kind":"empty"},{"name":"sand","kind":"powder","dispersion":2}]}`, "only liquids"},
+		{"flow on powder", `{"materials":[{"name":"air","kind":"empty"},{"name":"sand","kind":"powder","flowSpeed":0.5}]}`, "only liquids"},
+		{"slide on liquid", `{"materials":[{"name":"air","kind":"empty"},{"name":"water","kind":"liquid","slideChance":10}]}`, "only powders may"},
+		{"fall on stone", `{"materials":[{"name":"air","kind":"empty"},{"name":"stone","kind":"static","fallAccel":0.25}]}`, "only powders and liquids"},
+		{"sink over 100", `{"materials":[{"name":"air","kind":"empty"},{"name":"sand","kind":"powder","sinkChance":101}]}`, "percents"},
+		{"negative accel", `{"materials":[{"name":"air","kind":"empty"},{"name":"sand","kind":"powder","fallAccel":-1}]}`, "fallAccel"},
+		{"damping over 1", `{"materials":[{"name":"air","kind":"empty"},{"name":"water","kind":"liquid","flowDamping":1.5}]}`, "flowDamping"},
+		{"accel not a number", `{"materials":[{"name":"air","kind":"empty"},{"name":"sand","kind":"powder","fallAccel":"fast"}]}`, "not a number"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
