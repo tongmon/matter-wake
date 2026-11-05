@@ -81,6 +81,7 @@ Module path: `github.com/tongmon/matter-wake`.
 | `internal/palette/` | Cells to premultiplied RGBA, testable without a GPU. | **no** |
 | `internal/scene/` | Starting worlds. | **no** |
 | `internal/sched/` | The fixed goroutine pool. The only logic package with `sync`. | **no** |
+| `internal/fixed/` | Fixed-point numbers (Q8) for simulation values with fractions. | **no** |
 | `internal/rng/` | Seeded random numbers (SplitMix64), stable across Go versions. | **no** |
 | `data/` | Materials and other tunables (JSON). | |
 | `tools/archtest/` | Tests of the architecture rules. | no |

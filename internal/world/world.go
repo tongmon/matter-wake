@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"hash/fnv"
 
+	"github.com/tongmon/matter-wake/internal/fixed"
 	"github.com/tongmon/matter-wake/internal/material"
 	"github.com/tongmon/matter-wake/internal/rng"
 	"github.com/tongmon/matter-wake/internal/sched"
@@ -37,14 +38,10 @@ type Cell struct {
 	// Last is the tick in which the cell was last updated, so a cell that
 	// moved ahead of the scan is not updated twice in one tick.
 	Last uint32
-}
-
-// props are per-material values laid out for the update loop. Indexing an
-// array of MaxMaterials entries with a material.ID needs no bounds check.
-type props struct {
-	kind       [material.MaxMaterials]material.Kind
-	density    [material.MaxMaterials]uint8
-	dispersion [material.MaxMaterials]uint8
+	// Vy is the speed of a falling cell, in cells per tick.
+	Vy fixed.Q8
+	// Ax is a liquid's sideways push; its sign is the direction it flows.
+	Ax fixed.Q8
 }
 
 type chunk struct {
@@ -69,8 +66,10 @@ type World struct {
 	cells         []Cell
 	tick          uint32
 	seed          uint64
-	props         *props
-	pool          *sched.Pool
+	// mats holds every material's values. Indexing an array of
+	// MaxMaterials entries with a material.ID needs no bounds check.
+	mats *[material.MaxMaterials]matProps
+	pool *sched.Pool
 	// phases run in order: for each row of chunks from the bottom, its even
 	// columns, then its odd columns.
 	phases [][]chunk
@@ -88,22 +87,20 @@ func New(cfg Config) (*World, error) {
 	if cfg.Materials == nil {
 		return nil, errors.New("world: no material table")
 	}
-	p := new(props)
+	mats := new([material.MaxMaterials]matProps)
 	for i := range cfg.Materials.Len() {
 		d := cfg.Materials.Def(material.ID(i))
 		if int(d.Dispersion) > MaxReach {
 			return nil, fmt.Errorf("world: material %q disperses %d cells, at most %d", d.Name, d.Dispersion, MaxReach)
 		}
-		p.kind[i] = d.Kind
-		p.density[i] = d.Density
-		p.dispersion[i] = d.Dispersion
+		mats[i] = propsOf(&d)
 	}
 	w := &World{
 		width:  cfg.Width,
 		height: cfg.Height,
 		cells:  make([]Cell, cfg.Width*cfg.Height),
 		seed:   cfg.Seed,
-		props:  p,
+		mats:   mats,
 		pool:   sched.New(cfg.Workers),
 	}
 	rows := (cfg.Height + ChunkSize - 1) / ChunkSize
@@ -184,7 +181,7 @@ func (w *World) Paint(cx, cy, r int, id material.ID, onlyEmpty bool) int {
 				continue
 			}
 			c := &w.cells[y*w.width+x]
-			if c.Mat == id || (onlyEmpty && w.props.kind[c.Mat] != material.Empty) {
+			if c.Mat == id || (onlyEmpty && w.mats[c.Mat].kind != material.Empty) {
 				continue
 			}
 			*c = Cell{Mat: id, Tone: w.tone(x, y)}
@@ -209,11 +206,13 @@ func (w *World) Count(id material.ID) int {
 // tests use it to compare runs.
 func (w *World) Checksum() uint64 {
 	h := fnv.New64a()
-	var b [7]byte
+	var b [11]byte
 	for _, c := range w.cells {
 		b[0], b[1] = byte(c.Mat), byte(c.Mat>>8)
 		b[2] = c.Tone
 		b[3], b[4], b[5], b[6] = byte(c.Last), byte(c.Last>>8), byte(c.Last>>16), byte(c.Last>>24)
+		b[7], b[8] = byte(c.Vy), byte(c.Vy>>8)
+		b[9], b[10] = byte(c.Ax), byte(c.Ax>>8)
 		_, _ = h.Write(b[:])
 	}
 	return h.Sum64()
@@ -247,69 +246,6 @@ func (w *World) stepChunk(i int) {
 			for x := c.x1 - 1; x >= c.x0; x-- {
 				w.update(x, y, &s)
 			}
-		}
-	}
-}
-
-func (w *World) update(x, y int, s *rng.Stream) {
-	i := y*w.width + x
-	c := &w.cells[i]
-	k := w.props.kind[c.Mat]
-	switch k {
-	case material.Empty, material.Static:
-		return
-	case material.Powder, material.Liquid:
-	}
-	if c.Last == w.tick {
-		return
-	}
-	c.Last = w.tick
-	if w.tryMove(i, x, y+1) {
-		return
-	}
-	dir := 1
-	if s.Bool() {
-		dir = -1
-	}
-	if w.tryMove(i, x+dir, y+1) || w.tryMove(i, x-dir, y+1) {
-		return
-	}
-	if k == material.Liquid {
-		w.spread(i, x, y, dir, int(w.props.dispersion[c.Mat]))
-	}
-}
-
-// tryMove swaps the cell at index i with the cell at (x, y) if that cell
-// is lighter and not static.
-func (w *World) tryMove(i, x, y int) bool {
-	if !w.InBounds(x, y) {
-		return false
-	}
-	j := y*w.width + x
-	target := w.cells[j].Mat
-	if w.props.kind[target] == material.Static || w.props.density[target] >= w.props.density[w.cells[i].Mat] {
-		return false
-	}
-	w.cells[i], w.cells[j] = w.cells[j], w.cells[i]
-	return true
-}
-
-// spread slides a liquid up to n empty cells sideways, trying direction
-// dir first.
-func (w *World) spread(i, x, y, dir, n int) {
-	for _, side := range [2]int{dir, -dir} {
-		to := x
-		for range n {
-			nx := to + side
-			if nx < 0 || nx >= w.width || w.props.kind[w.cells[y*w.width+nx].Mat] != material.Empty {
-				break
-			}
-			to = nx
-		}
-		if to != x {
-			j := y*w.width + to
-			w.cells[i], w.cells[j] = w.cells[j], w.cells[i]
-			return
 		}
 	}
 }
