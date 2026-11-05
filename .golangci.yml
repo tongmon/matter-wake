@@ -1,0 +1,101 @@
+version: "2"
+
+# Run through the pinned tool module, never a global install:
+#   go tool -modfile=tools.mod golangci-lint run ./...
+#   go tool -modfile=tools.mod golangci-lint fmt ./...
+# go run ./tools/check runs both.
+
+linters:
+  default: standard # errcheck, govet, ineffassign, staticcheck, unused
+  enable:
+    # Bugs
+    - errorlint # wrap with %w, compare with errors.Is / errors.As
+    - nilerr
+    - exhaustive # every material.Kind in a switch
+    # Consistency
+    - revive
+    - gocritic
+    - unparam
+    - misspell
+    - usestdlibvars
+    # Size
+    - gocognit
+    - funlen
+    # Discipline
+    - nolintlint # every //nolint names its linter and says why
+    - forbidigo
+  settings:
+    govet:
+      enable-all: true
+      disable:
+        - fieldalignment # layout is chosen for cache behavior, not size
+        - shadow # too noisy for err := patterns
+    staticcheck:
+      checks: ["all"]
+    exhaustive:
+      default-signifies-exhaustive: false
+      # A material.ID is data, not an enum: Air is its only named value.
+      ignore-types: ^github\.com/tongmon/matter-wake/internal/material\.ID$
+    gocognit:
+      min-complexity: 25
+    funlen:
+      lines: 80
+      statements: 50
+    nolintlint:
+      require-explanation: true
+      require-specific: true
+    forbidigo:
+      forbid:
+        - pattern: ^fmt\.Print(f|ln)?$
+          msg: log with log/slog, or write to an io.Writer passed in
+        - pattern: ^print(ln)?$
+          msg: log with log/slog
+    revive:
+      rules:
+        - name: blank-imports
+        - name: context-as-argument
+        - name: dot-imports
+        - name: error-naming
+        - name: error-return
+        - name: error-strings
+        - name: errorf
+        - name: exported
+        - name: increment-decrement
+        - name: indent-error-flow
+        - name: package-comments
+        - name: range
+        - name: receiver-naming
+        - name: redefines-builtin-id
+        - name: superfluous-else
+        - name: time-naming
+        - name: unexported-return
+        - name: unreachable-code
+        - name: unused-parameter
+        - name: var-declaration
+        - name: var-naming
+    gocritic:
+      enabled-tags: [diagnostic, style, performance]
+      disabled-checks:
+        - unnamedResult # short helpers return pairs without names
+        - whyNoLint # nolintlint already requires a reason
+  exclusions:
+    generated: strict
+    rules:
+      - path: _test\.go
+        linters: [funlen, gocognit]
+      - path: ^(cmd|tools)/
+        linters: [forbidigo]
+
+formatters:
+  enable:
+    - gofumpt
+    - goimports
+  settings:
+    gofumpt:
+      module-path: github.com/tongmon/matter-wake
+      extra:
+        group-params: true
+        clothe-returns: true
+    goimports:
+      local-prefixes:
+        - github.com/tongmon/matter-wake

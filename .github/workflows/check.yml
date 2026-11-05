@@ -1,0 +1,36 @@
+name: check
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          # The latest patch release, so govulncheck does not flag standard
+          # library bugs that a newer patch has already fixed.
+          go-version: "1.27.x"
+          check-latest: true
+      - name: Install Ebitengine's Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libc6-dev libgl1-mesa-dev libxcursor-dev libxi-dev libxinerama-dev libxrandr-dev libxxf86vm-dev libasound2-dev pkg-config
+      - name: Run checks
+        env:
+          # The race detector needs cgo; the check skips it where no C
+          # compiler is found.
+          CGO_ENABLED: "1"
+        run: go run ./tools/check -vuln

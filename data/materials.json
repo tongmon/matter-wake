@@ -1,0 +1,8 @@
+{
+  "materials": [
+    { "name": "air", "kind": "empty", "density": 0, "color": "#00000000" },
+    { "name": "stone", "kind": "static", "density": 255, "color": "#6b6a72", "toneSpread": 40 },
+    { "name": "sand", "kind": "powder", "density": 30, "color": "#e0c27a", "toneSpread": 50 },
+    { "name": "water", "kind": "liquid", "density": 20, "dispersion": 4, "color": "#3a7bd5c8", "toneSpread": 20 }
+  ]
+}
