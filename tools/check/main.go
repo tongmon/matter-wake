@@ -123,15 +123,48 @@ func cgoCompiler() error {
 	if err != nil {
 		return fmt.Errorf("cannot read go env: %w", err)
 	}
-	fields := strings.Fields(string(out))
-	if len(fields) < 2 || fields[0] != "1" {
+	// One value per line: CC may hold spaces.
+	lines := strings.Split(strings.TrimRight(string(out), "\r\n"), "\n")
+	if len(lines) != 2 || strings.TrimSpace(lines[0]) != "1" {
 		return errors.New("cgo is disabled; install a C compiler (MinGW-family gcc or clang on Windows)")
 	}
-	version, err := exec.Command(fields[1], "--version").Output()
+	cc, err := splitCC(lines[1])
 	if err != nil {
-		return fmt.Errorf("the C compiler %q does not run: %w", fields[1], err)
+		return err
+	}
+	version, err := exec.Command(cc[0], "--version").Output()
+	if err != nil {
+		return fmt.Errorf("the C compiler %q does not run: %w", cc[0], err)
 	}
 	first, _, _ := strings.Cut(string(version), "\n")
-	fmt.Printf("CC=%s: %s\n", fields[1], strings.TrimSpace(first))
+	fmt.Printf("CC=%s: %s\n", strings.TrimSpace(lines[1]), strings.TrimSpace(first))
 	return nil
+}
+
+// splitCC splits CC into the compiler and its arguments as the go command
+// does: fields are separated by spaces, and a field in single or double
+// quotes keeps its spaces. Nothing inside quotes is unescaped.
+func splitCC(cc string) ([]string, error) {
+	var fields []string
+	for s := strings.TrimSpace(cc); s != ""; s = strings.TrimLeft(s, " \t\r\n") {
+		if q := s[0]; q == '"' || q == '\'' {
+			end := strings.IndexByte(s[1:], q)
+			if end < 0 {
+				return nil, fmt.Errorf("CC %q has an unterminated %c quote", cc, q)
+			}
+			fields = append(fields, s[1:1+end])
+			s = s[2+end:]
+			continue
+		}
+		end := strings.IndexAny(s, " \t\r\n")
+		if end < 0 {
+			end = len(s)
+		}
+		fields = append(fields, s[:end])
+		s = s[end:]
+	}
+	if len(fields) == 0 {
+		return nil, errors.New("CC is empty")
+	}
+	return fields, nil
 }

@@ -36,6 +36,10 @@ to keep results the same on every platform. The compiler flags are in
    `git get-tar-commit-id`, and replace the kept files above.
 2. Add a wrapper for every new `src/*.c` and remove the wrappers of deleted
    ones. `TestEveryBox2DSourceIsCompiled` lists what is missing.
-3. Update the version, commit and hash here.
-4. Run the determinism test and review the golden change, if any:
+3. Set `box2dSum` in `internal/physics/box2d_sum.go` to the value
+   `TestBox2DSumIsCurrent` prints. Go's build cache does not see changes to
+   files the wrappers include from here, so until that constant changes, Go
+   keeps the old compiled Box2D.
+4. Update the version, commit and hash here.
+5. Run the determinism test and review the golden change, if any:
    `go test ./internal/physics/ -run Determinism -update`.
