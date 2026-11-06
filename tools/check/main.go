@@ -55,10 +55,15 @@ func main() {
 		{"cgo", func() (string, error) { return "", cgoCompiler() }},
 		{"lint", func() (string, error) { return "", gocmd(append(lint, "run", "./...")...) }},
 		{"test", func() (string, error) { return "", gocmd("test", "-shuffle=on", "./...") }},
-		// The determinism golden once more with Box2D's SIMD compiled out,
-		// so every OS also checks the scalar path against the SIMD ones.
-		{"box2d scalar", func() (string, error) {
-			return "", gocmd("test", "-tags", "box2dscalar", "-run", "Determinism", "./internal/physics/")
+		// Box2D's determinism golden on every path this machine has: the
+		// SIMD ones, then with SIMD compiled out. Verbose, so a CI log
+		// records which paths and which compiler fusing it checked.
+		{"box2d paths", func() (string, error) {
+			const tests = "Determinism|CompiledWithoutContraction"
+			if err := gocmd("test", "-v", "-run", tests, "./internal/physics/"); err != nil {
+				return "", err
+			}
+			return "", gocmd("test", "-v", "-tags", "box2dscalar", "-run", tests, "./internal/physics/")
 		}},
 		{"race", func() (string, error) { return "", gocmd("test", "-race", "./...") }},
 		{"vuln", func() (string, error) {

@@ -148,7 +148,7 @@ Before opening a PR, run:
 go run ./tools/check
 ```
 
-It runs, and fails if any fails: formatting (`golangci-lint fmt --diff`), `go mod tidy -diff`, a check that cgo and its C compiler work (it prints the compiler), `golangci-lint run`, `go test -shuffle=on ./...`, the determinism golden with `-tags box2dscalar`, and `go test -race ./...`. Box2D needs cgo, so without a C compiler the check fails. `-vuln` adds govulncheck; `-fix` formats first. CI (`.github/workflows/check.yml`) runs `go run ./tools/check -vuln` on Windows, macOS and Linux for every PR and push to `main`.
+It runs, and fails if any fails: formatting (`golangci-lint fmt --diff`), `go mod tidy -diff`, a check that cgo and its C compiler work (it prints the compiler), `golangci-lint run`, `go test -shuffle=on ./...`, the Box2D determinism golden and FMA probe verbosely on this machine's SIMD paths and again with `-tags box2dscalar` (the CI log shows which paths ran), and `go test -race ./...`. Box2D needs cgo, so without a C compiler the check fails. `-vuln` adds govulncheck; `-fix` formats first. CI (`.github/workflows/check.yml`) runs `go run ./tools/check -vuln` on Windows, macOS and Linux for every PR and push to `main`.
 
 **Second-model review.** For code changes, also get a Codex review, as uplunge does. Commit first, then:
 
