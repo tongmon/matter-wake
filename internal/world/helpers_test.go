@@ -35,7 +35,7 @@ func testDefs() []material.Def {
 		{Name: "stone", Kind: material.Static, Density: 255},
 		{
 			Name: "sand", Kind: material.Powder, Density: 30,
-			FallAccel: q(0.25), SinkChance: 25, SlideChance: 80,
+			FallAccel: q(0.225), SinkChance: 25, SlideChance: 50,
 		},
 		{
 			Name: "water", Kind: material.Liquid, Density: 20,

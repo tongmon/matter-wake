@@ -45,8 +45,9 @@ func propsOf(d *material.Def) matProps {
 // spot is where a moving cell is: its index and coordinates.
 type spot struct{ i, x, y int }
 
-// update moves one cell. A powder falls if it can and otherwise may slide
-// down diagonally; a liquid follows updateLiquid.
+// update moves one cell by updatePowder or updateLiquid. A cell that cannot
+// move draws no random numbers, so skipping it changes nothing else in its
+// chunk (TestRestingCellsDrawNoRandomNumbers).
 func (w *World) update(x, y int, s *rng.Stream) {
 	i := y*w.width + x
 	c := &w.cells[i]
@@ -68,16 +69,61 @@ func (w *World) update(x, y int, s *rng.Stream) {
 		w.updateLiquid(at, p, s)
 		return
 	}
-	if _, fell := w.fall(at, p, s); !fell {
-		w.slide(at, p, s)
+	w.updatePowder(at, p, s)
+}
+
+// updatePowder moves a powder. A falling powder now and then pauses for a
+// tick (pauses). One that starts to fall from rest moves one cell without
+// speeding up; after that it falls by fall. One blocked below keeps its
+// speed and may slide down diagonally. It comes to rest, no longer falling,
+// once both sides are blocked as well.
+func (w *World) updatePowder(at spot, p *matProps, s *rng.Stream) {
+	c := &w.cells[at.i]
+	if c.Falling && w.mayMove(at, p) && pauses(p, s) {
+		return
 	}
+	if !c.Falling {
+		if w.enterable(at.x, at.y+1, p, s) {
+			j := w.swap(at.i, at.x, at.y+1)
+			w.cells[j].Vy, w.cells[j].Falling = 0, true
+			return
+		}
+	} else if _, fell := w.fall(at, p, s); fell {
+		return
+	}
+	if w.slide(at, p, s) {
+		return
+	}
+	if !w.isEmpty(at.x-1, at.y) && !w.isEmpty(at.x+1, at.y) {
+		c.Falling = false
+	}
+}
+
+// mayMove reports, without drawing random numbers, whether a powder could
+// move: whether it might enter the cell below or, if it slides at all, one
+// of the cells diagonally below.
+func (w *World) mayMove(at spot, p *matProps) bool {
+	return w.entryTo(at.x, at.y+1, p) != blocked ||
+		p.slideChance > 0 && (w.entryTo(at.x-1, at.y+1, p) != blocked || w.entryTo(at.x+1, at.y+1, p) != blocked)
+}
+
+// pauses reports whether a falling powder sits out this tick. The weaker it
+// accelerates, the more often it pauses: with fallAccel a it pauses with
+// chance (1 − 4a) / 2, so never once a is a quarter cell per tick or more.
+func pauses(p *matProps, s *rng.Stream) bool {
+	n := int(fixed.One) - 4*int(p.fallAccel)
+	return n > 0 && s.IntN(2*int(fixed.One)) < n
 }
 
 // updateLiquid falls if it can, then flows sideways from wherever it ended
 // up, in the same update. Only a liquid that did neither and has no
-// sideways push left slides down diagonally.
+// sideways push left slides down diagonally. A liquid blocked below loses
+// its speed.
 func (w *World) updateLiquid(at spot, p *matProps, s *rng.Stream) {
 	at, fell := w.fall(at, p, s)
+	if !fell {
+		w.cells[at.i].Vy = 0
+	}
 	blocked := !fell || !w.enterable(at.x, at.y+1, p, s)
 	at, flowed := w.flow(at, p, blocked)
 	if fell || flowed || w.cells[at.i].Ax.Abs() >= fixed.One {
@@ -86,20 +132,44 @@ func (w *World) updateLiquid(at spot, p *matProps, s *rng.Stream) {
 	w.slide(at, p, s)
 }
 
-// enterable reports whether a moving cell with values p may move into
-// (x, y): into empty space always, into a lighter liquid with p's sink
-// chance, never into anything else.
-func (w *World) enterable(x, y int, p *matProps, s *rng.Stream) bool {
+// entry is whether a moving cell may move into a position.
+type entry uint8
+
+const (
+	blocked entry = iota // never
+	free                 // always: the position is empty
+	sink                 // with the mover's sink chance: a lighter liquid
+)
+
+// entryTo tells whether a moving cell with values p may move into (x, y).
+// It draws no random numbers.
+func (w *World) entryTo(x, y int, p *matProps) entry {
 	if !w.InBounds(x, y) {
-		return false
+		return blocked
 	}
 	t := &w.mats[w.cells[y*w.width+x].Mat]
 	switch t.kind {
 	case material.Empty:
-		return true
+		return free
 	case material.Liquid:
-		return t.density < p.density && chance(s, p.sinkChance)
+		if t.density < p.density && p.sinkChance > 0 {
+			return sink
+		}
 	case material.Static, material.Powder:
+	}
+	return blocked
+}
+
+// enterable reports whether a moving cell with values p moves into (x, y)
+// now: into empty space always, into a lighter liquid with p's sink
+// chance, never into anything else.
+func (w *World) enterable(x, y int, p *matProps, s *rng.Stream) bool {
+	switch w.entryTo(x, y, p) {
+	case free:
+		return true
+	case sink:
+		return chance(s, p.sinkChance)
+	case blocked:
 	}
 	return false
 }
@@ -133,12 +203,11 @@ func chance(s *rng.Stream, percent uint8) bool {
 // grows by fallAccel each tick, and at speed v it moves one cell plus one
 // more for every two whole units of v beyond the first. During those extra
 // cells it now and then picks a sideways drift, the way a stream frays.
-// Hitting something mid-fall stops it. A powder whose drift is blocked
-// falls on straight down if it can; a liquid stops there. It returns where
-// the cell ended and whether it fell.
+// Hitting something mid-fall, drifted or not, stops it with speed 0. It
+// returns where the cell ended and whether it fell; a cell that could not
+// fall keeps its speed.
 func (w *World) fall(at spot, p *matProps, s *rng.Stream) (spot, bool) {
 	if !w.enterable(at.x, at.y+1, p, s) {
-		w.cells[at.i].Vy = 0
 		return at, false
 	}
 	v := w.cells[at.i].Vy.Add(p.fallAccel).Clamp(0, maxFall)
@@ -152,11 +221,8 @@ func (w *World) fall(at spot, p *matProps, s *rng.Stream) (spot, bool) {
 		}
 		nx := at.x + drift
 		if !w.enterable(nx, at.y+1, p, s) {
-			if p.kind == material.Liquid || nx == at.x || !w.enterable(at.x, at.y+1, p, s) {
-				v = 0
-				break
-			}
-			nx = at.x
+			v = 0
+			break
 		}
 		at.i = w.swap(at.i, nx, at.y+1)
 		at.x, at.y = nx, at.y+1
@@ -225,12 +291,17 @@ func (w *World) growPush(push fixed.Q8, x, y int, p *matProps) fixed.Q8 {
 }
 
 // slide moves a cell blocked below one cell down to the left or right,
-// trying a random side first. A powder slides only with its slide chance,
-// which sets how steep its heaps are. A liquid that slides goes on flowing
-// that way: its push becomes one cell in that direction.
-func (w *World) slide(at spot, p *matProps, s *rng.Stream) {
+// trying a random side first, and reports whether it moved. A powder
+// slides only with its slide chance, which sets how fast its heaps spread
+// (a settled heap is 45° whatever the chance), and is falling afterwards.
+// A liquid that slides goes on flowing that way: its push becomes one cell
+// in that direction. With neither diagonal open it draws no random numbers.
+func (w *World) slide(at spot, p *matProps, s *rng.Stream) bool {
+	if w.entryTo(at.x-1, at.y+1, p) == blocked && w.entryTo(at.x+1, at.y+1, p) == blocked {
+		return false
+	}
 	if p.kind == material.Powder && !chance(s, p.slideChance) {
-		return
+		return false
 	}
 	dir := 1
 	if s.Bool() {
@@ -241,10 +312,13 @@ func (w *World) slide(at spot, p *matProps, s *rng.Stream) {
 			j := w.swap(at.i, at.x+d, at.y+1)
 			if p.kind == material.Liquid {
 				w.cells[j].Ax = fixed.FromInt(d)
+			} else {
+				w.cells[j].Falling = true
 			}
-			return
+			return true
 		}
 	}
+	return false
 }
 
 // fallReach is how far sideways a fall at maxFall can drift: one cell for

@@ -263,6 +263,117 @@ func pourOnFloor(t *testing.T, sand bool, drop, volume int) int {
 	return column(cx)
 }
 
+// A powder that starts to fall from rest moves one cell without speeding
+// up; it accelerates from its second tick of falling on.
+func TestPowderFirstFallTickDoesNotAccelerate(t *testing.T) {
+	w, ids := newTestWorld(t, 8, 20, 1)
+	w.Set(3, 0, ids.sand)
+	w.Step()
+	x, y, _ := find(w, ids.sand)
+	if c, _ := w.At(x, y); y != 1 || c.Vy != 0 || !c.Falling {
+		t.Fatalf("after its first tick sand is at y=%d with speed %v, falling %v; want y=1, speed 0, falling",
+			y, c.Vy, c.Falling)
+	}
+	w.Step()
+	x, y, _ = find(w, ids.sand)
+	if c, _ := w.At(x, y); c.Vy != w.mats[ids.sand].fallAccel {
+		t.Fatalf("after its second tick sand has speed %v, want one step of acceleration %v",
+			c.Vy, w.mats[ids.sand].fallAccel)
+	}
+}
+
+// A falling powder now and then pauses for a tick, the more often the
+// weaker it accelerates: with no acceleration, half the time.
+func TestPowderPausesWhileFalling(t *testing.T) {
+	w, ids := newTestWorldWith(t, 8, 300, 1, func(d []material.Def) { d[defSand].FallAccel = 0 })
+	w.Set(3, 0, ids.sand)
+	for range 200 {
+		w.Step()
+	}
+	// Without pauses it would fall one cell every tick.
+	if _, y, _ := find(w, ids.sand); y < 60 || y > 140 {
+		t.Fatalf("sand without acceleration fell %d cells in 200 ticks, want about 100", y)
+	}
+}
+
+// A falling powder that lands keeps its speed while it can still move
+// along, and comes to rest once both sides are blocked too.
+func TestPowderKeepsSpeedUntilItRests(t *testing.T) {
+	w, ids := newTestWorld(t, 9, 3, 1)
+	w.Fill(0, 2, 9, 3, ids.stone)
+	w.Set(4, 1, ids.sand)
+	c := &w.cells[w.Width()+4]
+	c.Vy, c.Falling = 3*fixed.One, true
+	w.Step()
+	if got, _ := w.At(4, 1); got.Vy != 3*fixed.One || !got.Falling {
+		t.Fatalf("landed sand with open sides has speed %v, falling %v; want speed 3 kept, falling", got.Vy, got.Falling)
+	}
+	w.Set(3, 1, ids.stone)
+	w.Set(5, 1, ids.stone)
+	w.Step()
+	if got, _ := w.At(4, 1); got.Falling {
+		t.Fatal("sand blocked below and on both sides is still falling")
+	}
+}
+
+// A falling powder whose sideways drift is blocked stops there, instead of
+// falling on straight down.
+func TestPowderStopsWhenItsDriftIsBlocked(t *testing.T) {
+	w, ids := newTestWorld(t, 3, 400, 1)
+	w.Fill(0, 0, 1, 400, ids.stone)
+	w.Fill(2, 0, 3, 400, ids.stone)
+	w.Set(1, 0, ids.sand)
+	prev := fixed.Q8(0)
+	for range 120 {
+		w.Step()
+		_, y, _ := find(w, ids.sand)
+		c, _ := w.At(1, y)
+		if y < w.Height()-1 && prev > fixed.One && c.Vy == 0 {
+			return
+		}
+		prev = c.Vy
+	}
+	t.Fatal("sand in a one-cell shaft never lost its speed, though its drift keeps hitting the walls")
+}
+
+// Cells that cannot move draw no random numbers, so whether they are
+// updated does not change anything else in their chunk. Cell sleep will
+// rely on this.
+func TestRestingCellsDrawNoRandomNumbers(t *testing.T) {
+	run := func(fill func(w *World, ids testIDs)) *World {
+		w, ids := newTestWorld(t, 64, 64, 1)
+		w.Fill(0, 63, 64, 64, ids.stone)
+		w.Fill(30, 0, 31, 63, ids.stone)
+		fill(w, ids)
+		for y := range 30 {
+			for x := 36; x < 60; x++ {
+				switch (x + y) % 3 {
+				case 0:
+					w.Set(x, y, ids.sand)
+				case 1:
+					w.Set(x, y, ids.water)
+				}
+			}
+		}
+		for range 150 {
+			w.Step()
+		}
+		return w
+	}
+	resting := run(func(w *World, ids testIDs) {
+		w.Fill(0, 50, 30, 63, ids.sand)
+		w.Fill(0, 44, 30, 50, ids.water)
+	})
+	stone := run(func(w *World, ids testIDs) { w.Fill(0, 44, 30, 63, ids.stone) })
+	for y := range 64 {
+		for x := 31; x < 64; x++ {
+			if a, b := resting.cells[y*64+x], stone.cells[y*64+x]; a != b {
+				t.Fatalf("cell (%d, %d) differs when a resting sand bed and pool share the chunk: %+v, %+v", x, y, a, b)
+			}
+		}
+	}
+}
+
 // Water poured into a basin settles to a nearly flat surface.
 func TestWaterLevelsInABasin(t *testing.T) {
 	w, ids := newTestWorld(t, 40, 20, 1)
