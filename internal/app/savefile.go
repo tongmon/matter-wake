@@ -97,6 +97,9 @@ func openSave(dir string, sess *game.Config, fixed bool) (*game.Config, error) {
 	if err := os.MkdirAll(filepath.Join(dir, blocksDir), 0o755); err != nil {
 		return nil, fmt.Errorf("app: -save: %w", err)
 	}
+	if err := checkWritable(dir); err != nil {
+		return nil, err
+	}
 	out := *sess
 	out.Store = &diskStore{dir: dir, mats: sess.Materials}
 	meta, err := readMeta(dir)
@@ -122,6 +125,61 @@ func openSave(dir string, sess *game.Config, fixed bool) (*game.Config, error) {
 		return nil, err
 	}
 	return &out, nil
+}
+
+// checkWritable fails now if the save in dir could not be written later:
+// if one of its files is read-only, which Windows will not replace, or a
+// folder refuses new files. Finding out on exit would lose the session or
+// save half of it (pitfalls.md).
+func checkWritable(dir string) error {
+	for _, name := range []string{worldFile, sessionFile} {
+		path := filepath.Join(dir, name)
+		info, err := os.Stat(path)
+		if errors.Is(err, fs.ErrNotExist) {
+			continue
+		}
+		switch {
+		case err != nil:
+		case info.IsDir():
+			err = errors.New("it is a folder")
+		case info.Mode().Perm()&0o200 == 0:
+			err = errors.New("it is read-only")
+		}
+		if err == nil {
+			// Opening without O_TRUNC leaves the file as it is.
+			var f *os.File
+			if f, err = os.OpenFile(path, os.O_WRONLY, 0); err == nil {
+				err = f.Close()
+			}
+		}
+		if err != nil {
+			return fmt.Errorf("app: -save: cannot write %s: %w", path, err)
+		}
+	}
+	blocks := filepath.Join(dir, blocksDir)
+	entries, err := os.ReadDir(blocks)
+	if err != nil {
+		return fmt.Errorf("app: -save: %w", err)
+	}
+	for _, e := range entries {
+		info, err := e.Info()
+		if err != nil {
+			return fmt.Errorf("app: -save: %w", err)
+		}
+		if info.Mode().Perm()&0o200 == 0 {
+			return fmt.Errorf("app: -save: %s is read-only", filepath.Join(blocks, e.Name()))
+		}
+	}
+	for _, d := range []string{dir, blocks} {
+		f, err := os.CreateTemp(d, "check.*.tmp")
+		if err != nil {
+			return fmt.Errorf("app: -save: %w", err)
+		}
+		if err := errors.Join(f.Close(), os.Remove(f.Name())); err != nil {
+			return fmt.Errorf("app: -save: %w", err)
+		}
+	}
+	return nil
 }
 
 // readMeta reads the world header of dir, or returns nil if there is none.

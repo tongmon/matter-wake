@@ -235,3 +235,39 @@ func TestReopenedSmallWorldFitsTheView(t *testing.T) {
 			sess.Width, sess.Height, sess.ViewWidth, sess.ViewHeight)
 	}
 }
+
+// A save that could not be written on exit is refused before play starts,
+// or the session would be lost or saved half (pitfalls.md). Found by the
+// Codex review of the save folder (2026-11-06).
+func TestOpenSaveRefusesReadOnlyFiles(t *testing.T) {
+	mats := testMaterials(t)
+	files := map[string]string{
+		sessionFile:                         "matter-wake-session 1\ncamera 0 0\nslot 1\n",
+		filepath.Join(blocksDir, "3_2.mwb"): "x",
+	}
+	for _, name := range []string{worldFile, sessionFile, filepath.Join(blocksDir, "3_2.mwb")} {
+		t.Run(filepath.Base(name), func(t *testing.T) {
+			dir := t.TempDir()
+			if _, err := openSave(dir, terrainConfig(mats), false); err != nil {
+				t.Fatal(err)
+			}
+			path := filepath.Join(dir, name)
+			if text, ok := files[name]; ok {
+				if err := os.WriteFile(path, []byte(text), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if _, err := openSave(dir, terrainConfig(mats), false); err != nil {
+				t.Fatalf("the save does not open before %s is read-only: %v", name, err)
+			}
+			if err := os.Chmod(path, 0o444); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = os.Chmod(path, 0o644) })
+			_, err := openSave(dir, terrainConfig(mats), false)
+			if err == nil || !strings.Contains(err.Error(), filepath.Base(name)) {
+				t.Fatalf("opening a save with %s read-only: error %v, want one naming it", name, err)
+			}
+		})
+	}
+}
