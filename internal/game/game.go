@@ -115,6 +115,10 @@ type Resume struct {
 	// back before those the camera needs, so the blocks the stream had
 	// kept go on as they would have.
 	Blocks [][2]int
+	// Stream is where the stream's requests and checks stood. Nil starts
+	// them anew: the camera requests its area with nothing ahead, and the
+	// first check comes Check ticks after Tick.
+	Stream *StreamState
 }
 
 // Game is a play session. It is not safe for concurrent use.
@@ -133,6 +137,8 @@ type Game struct {
 	terrain *scene.Terrain
 	store   Store
 	limits  Stream
+	// streaming is where the stream's requests and checks stand.
+	streaming StreamState
 	// resident lists the blocks in memory.
 	resident     [][2]int
 	viewW, viewH int
@@ -208,6 +214,14 @@ func resumeTick(cfg *Config) (uint32, error) {
 			return 0, fmt.Errorf("game: resumed inventory holds %d of material %d", n, id)
 		}
 	}
+	if s := r.Stream; s != nil {
+		switch {
+		case s.LastCheck > r.Tick:
+			return 0, fmt.Errorf("game: resumed stream checked last at tick %d, after the saved tick %d", s.LastCheck, r.Tick)
+		case s.Interval < 1:
+			return 0, fmt.Errorf("game: resumed stream interval %d is not positive", s.Interval)
+		}
+	}
 	return r.Tick, nil
 }
 
@@ -219,8 +233,8 @@ func (g *Game) setUp(cfg *Config) error {
 	switch {
 	case cfg.ViewWidth < 1 || cfg.ViewHeight < 1:
 		return fmt.Errorf("game: view %dx%d is not positive", cfg.ViewWidth, cfg.ViewHeight)
-	case cfg.Stream.Margin < 0 || cfg.Stream.MaxBlocks < 1:
-		return fmt.Errorf("game: stream %+v needs a margin of 0 or more and room for a block", cfg.Stream)
+	case !cfg.Stream.valid():
+		return fmt.Errorf("game: stream %+v needs a grid and leads of 0 or more, a target of 1 block or more and checks 1 tick or more apart", cfg.Stream)
 	}
 	t, err := scene.NewTerrain(cfg.Seed, cfg.Width, cfg.Height, cfg.Materials)
 	if err != nil {
@@ -233,12 +247,16 @@ func (g *Game) setUp(cfg *Config) error {
 	}
 	x := g.world.Width() / 2
 	camX, camY := x-g.viewW/2, t.Surface(x)-g.viewH/2
+	g.streaming = StreamState{LastCheck: g.world.Tick(), Interval: cfg.Stream.Check}
 	if r := cfg.Resume; r != nil {
 		if r.HasCamera {
 			camX, camY = r.CameraX, r.CameraY
 		}
 		g.selected = r.Slot - 1
 		copy(g.inventory, r.Inventory)
+		if r.Stream != nil {
+			g.streaming = *r.Stream
+		}
 		if err := g.load(r.Blocks); err != nil {
 			return err
 		}
@@ -246,7 +264,9 @@ func (g *Game) setUp(cfg *Config) error {
 	// Keep the view in the world, moving it as little as it takes.
 	g.spawnX = min(max(camX, 0), max(g.world.Width()-g.viewW, 0))
 	g.spawnY = min(max(camY, 0), max(g.world.Height()-g.viewH, 0))
-	return g.stream(g.spawnX, g.spawnY)
+	// Only the request: the first check belongs to the first tick, which
+	// sees that tick's camera, as the saved session's next tick would.
+	return g.request(g.spawnX, g.spawnY)
 }
 
 // Blocks returns how many blocks of the world are in memory.

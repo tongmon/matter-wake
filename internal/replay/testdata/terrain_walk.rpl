@@ -1,15 +1,17 @@
-matter-wake-replay 3
-# The terrain around the spawn of a 4096x4096 world, with room for only
-# four blocks in memory. The camera digs into the ground, walks two blocks
-# right and comes back, so blocks leave memory and return from the memory
-# store, and then it places the stone it dug. The trace pins the terrain,
-# the streaming and the block format. Cells come and go with their blocks,
-# so this replay is not checked for conservation.
+matter-wake-replay 4
+# The terrain around the spawn of a 4096x4096 world, with a target of four
+# blocks in memory and a check every 60 ticks. The camera digs into the
+# ground, walks two blocks right and comes back: the blocks it left go
+# while it looks around there, and on the way back they return from the
+# memory store while those it walks away from go. Then it places the stone
+# it dug. The trace pins the terrain, the streaming and the block format.
+# Cells come and go with their blocks, so this replay is not checked for
+# conservation.
 seed 1
 size 4096 4096
 scene terrain
 view 480 270
-stream 256 4
+stream 64 4 512 4 60
 tool 10 2000 4
 mode play
 slots sand water stone

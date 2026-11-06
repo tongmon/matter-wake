@@ -371,12 +371,14 @@ func TestSessionRoundTrip(t *testing.T) {
 		CameraX: 7952, CameraY: -3, Slot: 3,
 		Held:   map[string]int{"stone": 15, "water": 0, "sand": 120},
 		Blocks: [][2]int{{16, 2}, {15, 1}, {16, 1}},
+		Stream: &SessionStream{Area: [4]int{7872, -64, 608, 398}, LastCheck: 4200, Interval: 15},
 	}
 	var buf bytes.Buffer
 	if err := WriteSession(&buf, in); err != nil {
 		t.Fatal(err)
 	}
-	want := "matter-wake-session 1\ncamera 7952 -3\nslot 3\nheld \"sand\" 120\nheld \"stone\" 15\nblock 15 1\nblock 16 1\nblock 16 2\n"
+	want := "matter-wake-session 2\ncamera 7952 -3\nslot 3\nstream 7872 -64 608 398 4200 15\n" +
+		"held \"sand\" 120\nheld \"stone\" 15\nblock 15 1\nblock 16 1\nblock 16 2\n"
 	if got := buf.String(); got != want {
 		t.Fatalf("WriteSession wrote %q, want %q", got, want)
 	}
@@ -385,8 +387,30 @@ func TestSessionRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	if got.CameraX != 7952 || got.CameraY != -3 || got.Slot != 3 || len(got.Held) != 2 ||
-		got.Held["sand"] != 120 || got.Held["stone"] != 15 || len(got.Blocks) != 3 || got.Blocks[2] != [2]int{16, 2} {
+		got.Held["sand"] != 120 || got.Held["stone"] != 15 || len(got.Blocks) != 3 || got.Blocks[2] != [2]int{16, 2} ||
+		got.Stream == nil || *got.Stream != *in.Stream {
 		t.Fatalf("ReadSession = %+v", got)
+	}
+}
+
+// A session without a stream line writes none and reads back without
+// one, as do version 1 files, which had none: the stream then starts anew.
+func TestSessionWithoutStream(t *testing.T) {
+	var buf bytes.Buffer
+	if err := WriteSession(&buf, &Session{Slot: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(buf.String(), "stream") {
+		t.Fatalf("WriteSession wrote a stream line for a session without one: %q", buf.String())
+	}
+	for _, text := range []string{buf.String(), "matter-wake-session 1\ncamera 1 2\nslot 1\nblock 3 4\n"} {
+		got, err := ReadSession(strings.NewReader(text))
+		if err != nil {
+			t.Fatalf("ReadSession(%q): %v", text, err)
+		}
+		if got.Stream != nil {
+			t.Fatalf("ReadSession(%q) found a stream %+v", text, got.Stream)
+		}
 	}
 }
 
@@ -415,12 +439,19 @@ func TestSessionTakesAnyName(t *testing.T) {
 }
 
 func TestSessionRefusesBadFiles(t *testing.T) {
-	const head = "matter-wake-session 1\ncamera 1 2\nslot 1\n"
+	const head = "matter-wake-session 2\ncamera 1 2\nslot 1\n"
 	tests := []struct {
 		name, text, wantErr string
 	}{
 		{"empty", "", "missing"},
-		{"newer version", "matter-wake-session 2\n", "format version 2"},
+		{"newer version", "matter-wake-session 3\n", "format version 3"},
+		{"version 0", "matter-wake-session 0\n", "format version 0"},
+		{"stream in version 1", "matter-wake-session 1\ncamera 1 2\nslot 1\nstream 0 0 10 10 0 60\n", "version 1"},
+		{"short stream line", head + "stream 0 0 10 10 0\n", "stream <x>"},
+		{"stream twice", head + "stream 0 0 10 10 0 60\nstream 0 0 10 10 0 60\n", "twice"},
+		{"stream without interval", head + "stream 0 0 10 10 0 0\n", "interval"},
+		{"negative stream size", head + "stream 0 0 -10 10 0 60\n", "width"},
+		{"negative last check", head + "stream 0 0 10 10 -1 60\n", "last check"},
 		{"bad camera", "matter-wake-session 1\ncamera 1 x\n", "camera y"},
 		{"slot 0", "matter-wake-session 1\ncamera 1 2\nslot 0\n", "slot 0"},
 		{"bad held line", head + "held \"sand\"\n", "<count>"},
@@ -444,6 +475,8 @@ func TestSessionRefusesBadFiles(t *testing.T) {
 		{Slot: 1, Held: map[string]int{"sand": -1}},
 		{Slot: 1, Blocks: [][2]int{{-1, 0}}},
 		{Slot: 1, Blocks: [][2]int{{1, 0}, {1, 0}}},
+		{Slot: 1, Stream: &SessionStream{Interval: 0}},
+		{Slot: 1, Stream: &SessionStream{Area: [4]int{0, 0, -1, 0}, Interval: 1}},
 	}
 	for _, s := range bad {
 		if err := WriteSession(&bytes.Buffer{}, s); err == nil {

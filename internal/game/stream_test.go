@@ -8,9 +8,8 @@ import (
 	"github.com/tongmon/matter-wake/internal/world"
 )
 
-// testStream keeps the view and 256 cells around it, at most 12 blocks:
-// the values design.md 7절 settles on.
-var testStream = Stream{Margin: 256, MaxBlocks: 12}
+// testStream is the stream design.md 7절 settles on, Noita's numbers.
+var testStream = Stream{Grid: 64, Lead: 4, LeadMax: 512, Target: 12, Check: 60}
 
 // newTerrainGame starts a terrain session in a world of 8×8 blocks.
 func newTerrainGame(t *testing.T, workers int) *Game {
@@ -27,16 +26,16 @@ func newTerrainGame(t *testing.T, workers int) *Game {
 	return g
 }
 
-// checkResidency fails unless every block the view at (camX, camY) needs is
-// in memory, and no more than MaxBlocks are, unless the view alone needs
-// more.
+// checkResidency fails unless every block of the area the camera at
+// (camX, camY) requests is in memory and the game lists exactly the blocks
+// in memory.
 func checkResidency(t *testing.T, g *Game, camX, camY int) {
 	t.Helper()
-	need := g.needed(camX, camY)
+	need := g.areaBlocks(g.requestArea(camX, camY))
 	for by := need.y0; by < need.y1; by++ {
 		for bx := need.x0; bx < need.x1; bx++ {
 			if !g.world.Resident(bx, by) {
-				t.Fatalf("camera (%d, %d): block (%d, %d) of the view is not in memory", camX, camY, bx, by)
+				t.Fatalf("camera (%d, %d): block (%d, %d) of the camera's area is not in memory", camX, camY, bx, by)
 			}
 		}
 	}
@@ -49,8 +48,8 @@ func checkResidency(t *testing.T, g *Game, camX, camY int) {
 			}
 		}
 	}
-	if needed := (need.x1 - need.x0) * (need.y1 - need.y0); n > max(g.limits.MaxBlocks, needed) || n != len(g.resident) {
-		t.Fatalf("camera (%d, %d): %d blocks in memory (%d listed), at most %d", camX, camY, n, len(g.resident), max(g.limits.MaxBlocks, needed))
+	if n != len(g.resident) {
+		t.Fatalf("camera (%d, %d): %d blocks in memory, %d listed", camX, camY, n, len(g.resident))
 	}
 }
 
@@ -67,8 +66,7 @@ func TestTerrainStartsWithTheViewAroundSpawn(t *testing.T) {
 	}
 }
 
-// Walking the camera across the world keeps the view's blocks in memory
-// and never more than MaxBlocks.
+// Walking the camera across the world keeps the camera's area in memory.
 func TestStreamFollowsTheCamera(t *testing.T) {
 	g := newTerrainGame(t, 2)
 	x, y := g.Spawn()
@@ -88,42 +86,6 @@ func TestStreamFollowsTheCamera(t *testing.T) {
 	}
 }
 
-// Past MaxBlocks, the blocks the view does not need go farthest from the
-// camera first.
-func TestStreamUnloadsFarthestFirst(t *testing.T) {
-	g := newTerrainGame(t, 1)
-	x, y := g.Spawn()
-	// Leave behind a trail of blocks, then turn back toward them.
-	for range 40 {
-		x = min(x+64, 4096-480)
-		step(t, g, Input{CameraX: x, CameraY: y})
-	}
-	need := g.needed(x, y)
-	cx, cy := 2*x+480, 2*y+270
-	dist := func(b [2]int) int {
-		dx, dy := 2*b[0]*world.BlockSize+world.BlockSize-cx, 2*b[1]*world.BlockSize+world.BlockSize-cy
-		return dx*dx + dy*dy
-	}
-	nearest := 1 << 62
-	for _, b := range g.resident {
-		if !need.has(b) {
-			nearest = min(nearest, dist(b))
-		}
-	}
-	cols, rows := g.world.Blocks()
-	for by := range rows {
-		for bx := range cols {
-			b := [2]int{bx, by}
-			if g.world.Resident(bx, by) || need.has(b) {
-				continue
-			}
-			if _, saved := g.store.(*memoryStore).blocks[b]; saved && dist(b) < nearest {
-				t.Fatalf("block %v was unloaded though a kept block is farther from the camera", b)
-			}
-		}
-	}
-}
-
 // A block that leaves memory comes back exactly as it left: the camera goes
 // far away and returns.
 func TestLeavingAndComingBackKeepsTheBlocks(t *testing.T) {
@@ -136,10 +98,14 @@ func TestLeavingAndComingBackKeepsTheBlocks(t *testing.T) {
 	for _, b := range g.resident {
 		before[b] = blockSum(g, b)
 	}
-	// Room for no more than the view needs, so the blocks left behind go.
-	g.limits.MaxBlocks = 4
-	if err := g.stream(0, 4096-270); err != nil {
-		t.Fatal(err)
+	// Room for no more than the camera's area, and a check every tick, so
+	// the blocks left behind go.
+	g.limits.Target = 1
+	for now := range uint32(30) {
+		g.streaming.Interval = 1
+		if err := g.streamAt(now+1, 0, 4096-270); err != nil {
+			t.Fatal(err)
+		}
 	}
 	gone := 0
 	for b := range before {
@@ -150,7 +116,7 @@ func TestLeavingAndComingBackKeepsTheBlocks(t *testing.T) {
 	if gone != len(before) {
 		t.Fatalf("%d of %d blocks left memory when the camera went to the far corner", gone, len(before))
 	}
-	if err := g.stream(x, y); err != nil {
+	if err := g.streamAt(31, x, y); err != nil {
 		t.Fatal(err)
 	}
 	for b, sum := range before {
@@ -201,8 +167,11 @@ func TestNewRejectsBadTerrain(t *testing.T) {
 	}{
 		{"unknown scene", func(c *Config) { c.Scene = "cave" }, "unknown scene"},
 		{"no view", func(c *Config) { c.ViewWidth = 0 }, "view"},
-		{"negative margin", func(c *Config) { c.Stream.Margin = -1 }, "stream"},
-		{"no blocks", func(c *Config) { c.Stream.MaxBlocks = 0 }, "stream"},
+		{"negative grid", func(c *Config) { c.Stream.Grid = -1 }, "stream"},
+		{"negative lead", func(c *Config) { c.Stream.Lead = -1 }, "stream"},
+		{"negative lead cap", func(c *Config) { c.Stream.LeadMax = -1 }, "stream"},
+		{"no target", func(c *Config) { c.Stream.Target = 0 }, "stream"},
+		{"no checks", func(c *Config) { c.Stream.Check = 0 }, "stream"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -254,7 +223,10 @@ func TestResume(t *testing.T) {
 	held := make([]int, tab.Len())
 	held[tab.MustLookup("stone")] = 7
 	cfg := base
-	cfg.Resume = &Resume{Tick: 500, Slot: 3, Inventory: held, CameraX: 100, CameraY: 900, HasCamera: true}
+	// The camera's area at (100, 900), checked last at tick 470 with the
+	// interval halved, as a session that saved there would have left it.
+	saved := StreamState{Area: [4]int{0, 832, 608, 398}, Requested: true, LastCheck: 470, Interval: 15}
+	cfg.Resume = &Resume{Tick: 500, Slot: 3, Inventory: held, CameraX: 100, CameraY: 900, HasCamera: true, Stream: &saved}
 	g, err := New(&cfg)
 	if err != nil {
 		t.Fatal(err)
@@ -262,6 +234,9 @@ func TestResume(t *testing.T) {
 	defer g.Close()
 	if x, y := g.Spawn(); x != 100 || y != 900 {
 		t.Errorf("Spawn() = %d, %d, want the saved 100, 900", x, y)
+	}
+	if got := g.StreamState(); got != saved {
+		t.Errorf("StreamState() = %+v, want the saved %+v", got, saved)
 	}
 	if g.World().Tick() != 500 || g.Slot() != 3 || g.Inventory(tab.MustLookup("stone")) != 7 {
 		t.Errorf("resumed at tick %d, slot %d, holding %d stone; want 500, 3, 7",
@@ -277,6 +252,13 @@ func TestResume(t *testing.T) {
 		{"slot past the last", func(c *Config) { c.Resume.Slot = 4 }, "slot"},
 		{"short inventory", func(c *Config) { c.Resume.Inventory = held[:2] }, "inventory"},
 		{"negative count", func(c *Config) { c.Resume.Inventory = []int{0, -1, 0, 0, 0} }, "holds -1"},
+		{"check after the tick", func(c *Config) {
+			c.Resume.Tick = 10
+			c.Resume.Stream = &StreamState{Requested: true, LastCheck: 11, Interval: 60}
+		}, "check"},
+		{"no interval", func(c *Config) {
+			c.Resume.Stream = &StreamState{Requested: true, Interval: 0}
+		}, "interval"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

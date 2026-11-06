@@ -1,4 +1,4 @@
-matter-wake-replay 3
+matter-wake-replay 4
 # The sandbox at its default size. It uses every tool: it selects each
 # slot, tries to place from the empty inventory, digs sand out of the heap
 # and stone out of the floor, places both back, tries to dig water and to
@@ -9,7 +9,7 @@ seed 1
 size 480 270
 scene sandbox
 view 480 270
-stream 256 12
+stream 64 4 512 12 60
 tool 10 2000 4
 mode play
 slots sand water stone

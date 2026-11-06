@@ -63,9 +63,11 @@ var slots = []string{"sand", "water", "stone"}
 // radius 4.
 var tool = game.Tool{Power: 10, Rate: 2000, Radius: 4}
 
-// stream keeps the blocks within 256 cells of the view and at most 12 in
-// memory, as Noita does (🧪, design.md 7절).
-var stream = game.Stream{Margin: 256, MaxBlocks: 12}
+// stream requests and unloads blocks with Noita's numbers: a 64-cell
+// grid, the area ahead four times as far as the camera's area moved, at
+// most 512 cells, a target of 12 blocks, and a check every second at 60
+// ticks a second (🧪, design.md 7절).
+var stream = game.Stream{Grid: 64, Lead: 4, LeadMax: 512, Target: 12, Check: 60}
 
 // The terrain's view in cells, the logical screen size (🧪).
 const (

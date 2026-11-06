@@ -18,7 +18,7 @@ var (
 
 func sample() *Replay {
 	return &Replay{
-		Seed: 7, Width: 64, Height: 32, ViewWidth: 64, ViewHeight: 32, Stream: game.Stream{Margin: 256, MaxBlocks: 12},
+		Seed: 7, Width: 64, Height: 32, ViewWidth: 64, ViewHeight: 32, Stream: game.Stream{Grid: 64, Lead: 4, LeadMax: 512, Target: 12, Check: 60},
 		Tool: game.Tool{Power: 10, Rate: 2000, Radius: 2}, Slots: []string{"sand", "water"}, Materials: "0123456789abcdef",
 	}
 }
@@ -37,12 +37,12 @@ func TestWrite(t *testing.T) {
 	if err := Write(&buf, r); err != nil {
 		t.Fatal(err)
 	}
-	want := `matter-wake-replay 3
+	want := `matter-wake-replay 4
 seed 7
 size 64 32
 scene sandbox
 view 64 32
-stream 256 12
+stream 64 4 512 12 60
 tool 10 2000 2
 mode play
 slots sand water
@@ -123,14 +123,14 @@ func checkHeader(t *testing.T, got, want *Replay) {
 // Replays are text so they can be written by hand: blank lines, comments,
 // extra spaces and Windows line ends are all accepted.
 func TestReadHandWritten(t *testing.T) {
-	src := "matter-wake-replay 3\r\n" +
+	src := "matter-wake-replay 4\r\n" +
 		"# A hand-written replay.\r\n" +
 		"\r\n" +
 		"seed 18446744073709551615\r\n" +
 		"size  64   32 \r\n" +
 		"scene terrain\r\n" +
 		"view 64  32\r\n" +
-		"stream 0 1\r\n" +
+		"stream 0 0  0 1 1\r\n" +
 		"tool  0 1  0\r\n" +
 		"mode creative \r\n" +
 		"slots stone\r\n" +
@@ -146,7 +146,7 @@ func TestReadHandWritten(t *testing.T) {
 	}
 	checkHeader(t, r, &Replay{
 		Seed: 1<<64 - 1, Width: 64, Height: 32, Scene: game.SceneTerrain, ViewWidth: 64, ViewHeight: 32,
-		Stream: game.Stream{MaxBlocks: 1}, Tool: game.Tool{Rate: 1}, Creative: true,
+		Stream: game.Stream{Target: 1, Check: 1}, Tool: game.Tool{Rate: 1}, Creative: true,
 		Slots: []string{"stone"}, Materials: "unknown",
 	})
 	want := []game.Input{none, put, put, put, {Select: 1}, none}
@@ -162,17 +162,17 @@ func TestReadHandWritten(t *testing.T) {
 
 func TestReadErrors(t *testing.T) {
 	const (
-		v      = "matter-wake-replay 3\n"
+		v      = "matter-wake-replay 4\n"
 		sized  = v + "seed 1\nsize 64 32\n"
-		viewed = sized + "scene sandbox\nview 64 32\nstream 256 12\n"
+		viewed = sized + "scene sandbox\nview 64 32\nstream 64 4 512 12 60\n"
 		header = viewed + "tool 10 2000 4\nmode play\nslots sand\nmaterials 00\n"
 	)
 	tests := []struct {
 		name, src, wantErr string
 	}{
 		{"empty", "", "not a matter-wake replay"},
-		{"newer version", "matter-wake-replay 4\n", "version 4"},
-		{"older version", "matter-wake-replay 2\nseed 1\n", "version 2"},
+		{"newer version", "matter-wake-replay 5\n", "version 5"},
+		{"older version", "matter-wake-replay 3\nseed 1\n", "version 3"},
 		{"bad version", "matter-wake-replay one\n", "version"},
 		{"missing seed", v + "size 64 32\n", `"seed`},
 		{"negative seed", v + "seed -1\n", "seed"},
@@ -181,8 +181,12 @@ func TestReadErrors(t *testing.T) {
 		{"no scene", sized + "tool 10 2000 4\n", `"scene`},
 		{"unknown scene", sized + "scene cave\n", "scene"},
 		{"zero view", sized + "scene sandbox\nview 0 32\n", "view"},
-		{"negative margin", sized + "scene sandbox\nview 64 32\nstream -1 12\n", "stream"},
-		{"no blocks", sized + "scene terrain\nview 64 32\nstream 256 0\n", "stream"},
+		{"old stream line", sized + "scene sandbox\nview 64 32\nstream 256 12\n", "stream"},
+		{"negative grid", sized + "scene sandbox\nview 64 32\nstream -1 4 512 12 60\n", "stream"},
+		{"negative lead", sized + "scene sandbox\nview 64 32\nstream 64 -4 512 12 60\n", "stream"},
+		{"negative lead cap", sized + "scene sandbox\nview 64 32\nstream 64 4 -512 12 60\n", "stream"},
+		{"no target", sized + "scene terrain\nview 64 32\nstream 64 4 512 0 60\n", "stream"},
+		{"no checks", sized + "scene terrain\nview 64 32\nstream 64 4 512 12 0\n", "stream"},
 		{"old brush line", viewed + "brush 4\n", `"tool`},
 		{"short tool", viewed + "tool 10 2000\n", `"tool`},
 		{"negative radius", viewed + "tool 10 2000 -1\n", "tool"},
@@ -235,7 +239,9 @@ func TestWriteRejectsBadReplays(t *testing.T) {
 		{"zero height", func(r *Replay) { r.Height = 0 }},
 		{"unknown scene", func(r *Replay) { r.Scene = "cave" }},
 		{"zero view", func(r *Replay) { r.ViewWidth = 0 }},
-		{"no blocks", func(r *Replay) { r.Stream.MaxBlocks = 0 }},
+		{"no target", func(r *Replay) { r.Stream.Target = 0 }},
+		{"no checks", func(r *Replay) { r.Stream.Check = 0 }},
+		{"negative grid", func(r *Replay) { r.Stream.Grid = -1 }},
 		{"negative radius", func(r *Replay) { r.Tool.Radius = -1 }},
 		{"tool deals no damage", func(r *Replay) { r.Tool.Rate = 0 }},
 		{"no fingerprint", func(r *Replay) { r.Materials = "" }},
@@ -258,13 +264,13 @@ func TestNewAndConfig(t *testing.T) {
 	tab := loadTable(t)
 	cfg := &game.Config{
 		Width: 96, Height: 64, Seed: 42, Workers: 3, Materials: tab,
-		Scene: game.SceneTerrain, ViewWidth: 40, ViewHeight: 30, Stream: game.Stream{Margin: 9, MaxBlocks: 3},
+		Scene: game.SceneTerrain, ViewWidth: 40, ViewHeight: 30, Stream: game.Stream{Grid: 9, Lead: 2, LeadMax: 100, Target: 3, Check: 5},
 		Slots: []string{"water", "stone"}, Tool: game.Tool{Power: 3, Rate: 77, Radius: 5}, Creative: true,
 	}
 	r := New(cfg)
 	want := &Replay{
 		Seed: 42, Width: 96, Height: 64, Scene: game.SceneTerrain, ViewWidth: 40, ViewHeight: 30,
-		Stream: game.Stream{Margin: 9, MaxBlocks: 3}, Tool: game.Tool{Power: 3, Rate: 77, Radius: 5}, Creative: true,
+		Stream: game.Stream{Grid: 9, Lead: 2, LeadMax: 100, Target: 3, Check: 5}, Tool: game.Tool{Power: 3, Rate: 77, Radius: 5}, Creative: true,
 		Slots: []string{"water", "stone"}, Materials: tab.Fingerprint(),
 	}
 	checkHeader(t, r, want)
@@ -301,7 +307,7 @@ func TestReplayReproducesASession(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			cfg := tt.cfg
 			cfg.Seed, cfg.Workers, cfg.Materials = 9, 1, tab
-			cfg.Stream = game.Stream{Margin: 256, MaxBlocks: 6}
+			cfg.Stream = game.Stream{Grid: 64, Lead: 4, LeadMax: 512, Target: 6, Check: 20}
 			cfg.Slots, cfg.Tool = []string{"sand", "water", "stone"}, game.Tool{Power: 10, Rate: 400, Radius: 3}
 			rec := New(&cfg)
 			g := newGame(t, &cfg)

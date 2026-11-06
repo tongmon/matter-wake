@@ -7,12 +7,12 @@
 // The format is line-based text, so replays diff well and can be written
 // by hand:
 //
-//	matter-wake-replay 3
+//	matter-wake-replay 4
 //	seed 1
 //	size 480 270
 //	scene sandbox
 //	view 480 270
-//	stream 256 12
+//	stream 64 4 512 12 60
 //	tool 10 2000 4
 //	mode play
 //	slots sand water stone
@@ -25,8 +25,8 @@
 // The first line names the format and its version. The header follows in
 // this order: the world seed, the world size in cells, the scene (sandbox
 // or terrain, game.Scene), the size of the camera's view in cells, the
-// stream (the margin around the view and the most blocks in memory, as in
-// game.Stream), the tool (its power, its damage per tick and its brush
+// stream (the grid, the lead and its cap, the target and the ticks between
+// checks, as in game.Stream), the tool (its power, its damage per tick and its brush
 // radius, as in game.Tool), the mode (play, or creative for
 // game.Config.Creative), the materials the slots hold in key order, the
 // fingerprint of the material table (material.Table.Fingerprint) and the
@@ -58,7 +58,7 @@ import (
 
 // Version is the format version this build reads and writes. A change to
 // the format raises it, and older files are refused rather than misread.
-const Version = 3
+const Version = 4
 
 // magic is the first word of every replay.
 const magic = "matter-wake-replay"
@@ -119,9 +119,10 @@ func Write(w io.Writer, r *Replay) error {
 	}
 	bw := bufio.NewWriter(w)
 	// A bufio.Writer keeps its first error and Flush returns it.
-	_, _ = fmt.Fprintf(bw, "%s %d\nseed %d\nsize %d %d\nscene %s\nview %d %d\nstream %d %d\n",
+	s := r.Stream
+	_, _ = fmt.Fprintf(bw, "%s %d\nseed %d\nsize %d %d\nscene %s\nview %d %d\nstream %d %d %d %d %d\n",
 		magic, Version, r.Seed, r.Width, r.Height, sceneWord(r.Scene), r.ViewWidth, r.ViewHeight,
-		r.Stream.Margin, r.Stream.MaxBlocks)
+		s.Grid, s.Lead, s.LeadMax, s.Target, s.Check)
 	_, _ = fmt.Fprintf(bw, "tool %d %d %d\nmode %s\nslots %s\nmaterials %s\nticks %d\n",
 		r.Tool.Power, r.Tool.Rate, r.Tool.Radius, mode(r.Creative), strings.Join(r.Slots, " "), r.Materials, len(r.Inputs))
 	var prev game.Input
@@ -146,8 +147,8 @@ func (r *Replay) validate() error {
 		return fmt.Errorf("replay: unknown scene %q", r.Scene)
 	case r.ViewWidth < 1 || r.ViewHeight < 1:
 		return fmt.Errorf("replay: view %dx%d is not positive", r.ViewWidth, r.ViewHeight)
-	case r.Stream.Margin < 0 || r.Stream.MaxBlocks < 1:
-		return fmt.Errorf("replay: stream %+v needs a margin of 0 or more and room for a block", r.Stream)
+	case !streamValid(r.Stream):
+		return fmt.Errorf("replay: stream %+v needs a grid and leads of 0 or more, a target of 1 or more and checks 1 tick or more apart", r.Stream)
 	case r.Tool.Rate == 0 || r.Tool.Radius < 0:
 		return fmt.Errorf("replay: tool %+v needs a rate of 1 or more and a radius of 0 or more", r.Tool)
 	case len(r.Slots) == 0:
@@ -367,16 +368,25 @@ func (p *parser) view(r *Replay) error {
 		return p.errorf("view %s %s is not two positive numbers", f[0], f[1])
 	}
 	r.ViewWidth, r.ViewHeight = w, h
-	if f, err = p.field("stream", "stream <margin> <blocks>", 2); err != nil {
+	if f, err = p.field("stream", "stream <grid> <lead> <lead cap> <target> <check>", 5); err != nil {
 		return err
 	}
-	m, merr := strconv.Atoi(f[0])
-	n, nerr := strconv.Atoi(f[1])
-	if merr != nil || nerr != nil || m < 0 || n < 1 {
-		return p.errorf("stream %s %s: want a margin of 0 or more and 1 block or more", f[0], f[1])
+	var v [5]int
+	for i := range v {
+		if v[i], err = strconv.Atoi(f[i]); err != nil {
+			return p.errorf("stream %s: want five numbers", strings.Join(f, " "))
+		}
 	}
-	r.Stream = game.Stream{Margin: m, MaxBlocks: n}
+	r.Stream = game.Stream{Grid: v[0], Lead: v[1], LeadMax: v[2], Target: v[3], Check: v[4]}
+	if !streamValid(r.Stream) {
+		return p.errorf("stream %s: want a grid and leads of 0 or more, a target of 1 or more and checks 1 tick or more apart", strings.Join(f, " "))
+	}
 	return nil
+}
+
+// streamValid reports whether s describes a stream the game takes.
+func streamValid(s game.Stream) bool {
+	return s.Grid >= 0 && s.Lead >= 0 && s.LeadMax >= 0 && s.Target >= 1 && s.Check >= 1
 }
 
 // parseTool parses the power, rate and radius fields of the tool line.
