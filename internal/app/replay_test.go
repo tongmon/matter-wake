@@ -151,3 +151,46 @@ func TestRecordingStopsAtTheLimit(t *testing.T) {
 		t.Fatalf("the last recorded input is %+v, want the fourth", a.record.Inputs[3])
 	}
 }
+
+// An existing replay that cannot be replaced, such as a read-only file on
+// Windows, must stop Run before the session too (the second Codex review).
+func TestPrepareRecordingRejectsAReadOnlyFile(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root can write a read-only file")
+	}
+	path := filepath.Join(t.TempDir(), "a.rpl")
+	if err := os.WriteFile(path, []byte("old\n"), 0o444); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(path, 0o644) })
+	if err := prepareRecording(path); err == nil {
+		t.Fatal("prepareRecording accepted a read-only file")
+	}
+	if data, err := os.ReadFile(path); err != nil || string(data) != "old\n" {
+		t.Fatalf("the check changed the file to %q (%v)", data, err)
+	}
+}
+
+// A replay written in full is kept when it cannot take its place, so a
+// failure at exit never loses the session's inputs (the second Codex review).
+func TestSaveReplayKeepsTheRecordingWhenTheRenameFails(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "a.rpl")
+	if err := os.Mkdir(path, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	err := saveReplay(path, testReplay())
+	if err == nil {
+		t.Fatal("saveReplay replaced a directory")
+	}
+	kept, globErr := filepath.Glob(path + ".*.tmp")
+	if globErr != nil || len(kept) != 1 {
+		t.Fatalf("found %v (%v), want the one kept recording", kept, globErr)
+	}
+	if !strings.Contains(err.Error(), kept[0]) {
+		t.Fatalf("error %q does not say where the recording is", err)
+	}
+	r, err := loadReplay(kept[0])
+	if err != nil || r.Seed != testReplay().Seed {
+		t.Fatalf("the kept recording loads as %+v (%v)", r, err)
+	}
+}
