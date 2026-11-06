@@ -1,0 +1,46 @@
+matter-wake-replay 3
+# The terrain around the spawn of a 4096x4096 world, with room for only
+# four blocks in memory. The camera digs into the ground, walks two blocks
+# right and comes back, so blocks leave memory and return from the memory
+# store, and then it places the stone it dug. The trace pins the terrain,
+# the streaming and the block format. Cells come and go with their blocks,
+# so this replay is not checked for conservation.
+seed 1
+size 4096 4096
+scene terrain
+view 480 270
+stream 256 4
+tool 10 2000 4
+mode play
+slots sand water stone
+materials ee74dacd409567c3
+ticks 900
+
+# Select stone and wait at the spawn.
+0 2208 1080 - 3 1808 955
+# Dig down into the stone of column 2208, whose ground starts at row 1085.
+60 2208 1088 D 0 1808 955
+110 2208 1096 D 0 1808 955
+160 2208 1104 D 0 1808 955
+210 2208 1104 - 0 1808 955
+# Walk two blocks to the right, 128 cells every 10 ticks.
+240 2336 1104 - 0 1936 955
+250 2464 1104 - 0 2064 955
+260 2592 1104 - 0 2192 955
+270 2720 1104 - 0 2320 955
+280 2848 1104 - 0 2448 955
+290 2976 1104 - 0 2576 955
+300 3104 1104 - 0 2704 955
+310 3232 1104 - 0 2832 955
+# Look around there, then walk back.
+400 3104 1104 - 0 2704 955
+410 2976 1104 - 0 2576 955
+420 2848 1104 - 0 2448 955
+430 2720 1104 - 0 2320 955
+440 2592 1104 - 0 2192 955
+450 2464 1104 - 0 2064 955
+460 2336 1104 - 0 1936 955
+470 2208 1104 - 0 1808 955
+# Put the stone back into the hole.
+500 2208 1096 P 0 1808 955
+530 2208 1096 - 0 1808 955

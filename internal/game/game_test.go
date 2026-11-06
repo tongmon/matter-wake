@@ -52,6 +52,14 @@ func floor(g *Game) (x, y int) {
 	return g.world.Width() / 2, g.world.Height() - 1
 }
 
+// step runs one tick of g and fails the test on an error.
+func step(t *testing.T, g *Game, in Input) {
+	t.Helper()
+	if err := g.Step(in); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func matAt(t *testing.T, g *Game, x, y int) material.ID {
 	t.Helper()
 	c, ok := g.world.At(x, y)
@@ -87,11 +95,11 @@ func TestSelect(t *testing.T) {
 	if got := g.Selected().Name; got != "sand" {
 		t.Fatalf("slot 1 is selected at the start, got %q, want sand", got)
 	}
-	g.Step(Input{Select: 3})
+	step(t, g, Input{Select: 3})
 	if got := g.Selected().Name; got != "stone" {
 		t.Fatalf("slot 3 selected %q, want stone", got)
 	}
-	g.Step(Input{Select: 9})
+	step(t, g, Input{Select: 9})
 	if got := g.Selected().Name; got != "stone" {
 		t.Fatalf("an out-of-range slot changed the selection to %q", got)
 	}
@@ -111,7 +119,7 @@ func TestDigTakesHPOverRate(t *testing.T) {
 		stone := g.mats.MustLookup("stone")
 		x, y := floor(g)
 		for tick := 1; tick <= tt.ticks; tick++ {
-			g.Step(dig(x, y))
+			step(t, g, dig(x, y))
 			if got := matAt(t, g, x, y); tick < tt.ticks && got != stone {
 				t.Fatalf("rate %d: the stone is gone after %d ticks, want %d", tt.rate, tick, tt.ticks)
 			}
@@ -132,7 +140,7 @@ func TestDigRefusesHarderMaterial(t *testing.T) {
 	x, y := 20, 20
 	g.world.Set(x, y, bedrock)
 	for range 100 {
-		g.Step(dig(x, y))
+		step(t, g, dig(x, y))
 	}
 	if got := matAt(t, g, x, y); got != bedrock {
 		t.Fatalf("the bedrock (hardness 11) became %d under a power 10 tool", got)
@@ -144,7 +152,7 @@ func TestDigRefusesHarderMaterial(t *testing.T) {
 	// Power 11 digs it in one tick: its hp is 1.
 	g = newTestGame(t, Tool{Power: 11, Rate: 1})
 	g.world.Set(x, y, bedrock)
-	g.Step(dig(x, y))
+	step(t, g, dig(x, y))
 	if got := matAt(t, g, x, y); got != material.Air {
 		t.Fatalf("a power 11 tool left %d where the bedrock was, want air", got)
 	}
@@ -158,7 +166,7 @@ func TestDigSkipsLiquids(t *testing.T) {
 	g.world.Set(x, y, water)
 	before := g.world.Count(water)
 	// The brush acts before the world moves, so the water is under it.
-	g.Step(dig(x, y))
+	step(t, g, dig(x, y))
 	if got := g.world.Count(water); got != before {
 		t.Fatalf("digging water left %d water cells, want %d", got, before)
 	}
@@ -174,16 +182,16 @@ func TestDigSkipsLiquids(t *testing.T) {
 func TestPlaceTakesFromInventory(t *testing.T) {
 	g := newTestGame(t, Tool{Power: 10, Rate: 5000, Radius: 1})
 	stone := g.mats.MustLookup("stone")
-	g.Step(Input{Select: 3})
+	step(t, g, Input{Select: 3})
 	// Nothing to place yet.
 	before := g.world.Count(stone)
-	g.Step(Input{CursorX: 64, CursorY: 20, Place: true})
+	step(t, g, Input{CursorX: 64, CursorY: 20, Place: true})
 	if got := g.world.Count(stone); got != before {
 		t.Fatalf("placing from an empty inventory changed the stone cells from %d to %d", before, got)
 	}
 	// Dig where the floor meets the wall, both 2 cells thick: the brush of
 	// radius 1 covers 5 stone cells there.
-	g.Step(dig(1, g.world.Height()-2))
+	step(t, g, dig(1, g.world.Height()-2))
 	held := g.Inventory(stone)
 	if held != 5 {
 		t.Fatalf("digging 5 stone cells put %d in the inventory", held)
@@ -192,7 +200,7 @@ func TestPlaceTakesFromInventory(t *testing.T) {
 	placeAt := func(x, y int) {
 		t.Helper()
 		before, inv := g.world.Count(stone), g.Inventory(stone)
-		g.Step(Input{CursorX: x, CursorY: y, Place: true})
+		step(t, g, Input{CursorX: x, CursorY: y, Place: true})
 		placed := g.world.Count(stone) - before
 		if want := min(inv, 5); placed != want {
 			t.Fatalf("with %d stone held, placing added %d cells, want %d", inv, placed, want)
@@ -220,9 +228,9 @@ func TestCreativePlacesWithoutInventory(t *testing.T) {
 	}
 	t.Cleanup(g.Close)
 	water, stone := g.mats.MustLookup("water"), g.mats.MustLookup("stone")
-	g.Step(Input{Select: 2})
+	step(t, g, Input{Select: 2})
 	before := g.world.Count(water)
-	g.Step(Input{CursorX: 64, CursorY: 20, Place: true})
+	step(t, g, Input{CursorX: 64, CursorY: 20, Place: true})
 	if got := g.world.Count(water); got <= before {
 		t.Fatalf("creative placing left %d water cells, want more than %d", got, before)
 	}
@@ -231,7 +239,7 @@ func TestCreativePlacesWithoutInventory(t *testing.T) {
 	}
 	x, y := floor(g)
 	for range 4 {
-		g.Step(dig(x, y))
+		step(t, g, dig(x, y))
 	}
 	if got := matAt(t, g, x, y); got != material.Air {
 		t.Fatalf("4 ticks of creative digging left %d, want air", got)
@@ -240,7 +248,7 @@ func TestCreativePlacesWithoutInventory(t *testing.T) {
 	if held == 0 {
 		t.Fatal("creative digging put no stone in the inventory")
 	}
-	g.Step(Input{CursorX: 40, CursorY: 20, Place: true, Select: 3})
+	step(t, g, Input{CursorX: 40, CursorY: 20, Place: true, Select: 3})
 	if got := g.Inventory(stone); got != held {
 		t.Fatalf("creative placing took stone from the inventory: %d left of %d", got, held)
 	}
@@ -250,10 +258,10 @@ func TestCreativePlacesWithoutInventory(t *testing.T) {
 func TestPlaceFillsFromTheBottom(t *testing.T) {
 	g := newTestGame(t, Tool{Power: 10, Rate: 1, Radius: 1})
 	stone := g.mats.MustLookup("stone")
-	g.Step(Input{Select: 3})
+	step(t, g, Input{Select: 3})
 	g.inventory[stone] = 2
 	// The static stone stays where it is put, in the air.
-	g.Step(Input{CursorX: 64, CursorY: 20, Place: true})
+	step(t, g, Input{CursorX: 64, CursorY: 20, Place: true})
 	for _, p := range [][2]int{{64, 21}, {63, 20}} {
 		if got := matAt(t, g, p[0], p[1]); got != stone {
 			t.Errorf("(%d, %d) holds %d, want stone", p[0], p[1], got)
@@ -274,13 +282,13 @@ func TestDigDamageLastsWhenDiggingStops(t *testing.T) {
 	x, y := floor(g)
 	pauses := []Input{{CursorX: x, CursorY: y}, dig(x-20, y), {CursorX: x, CursorY: y, Place: true}}
 	for _, pause := range pauses {
-		g.Step(dig(x, y))
+		step(t, g, dig(x, y))
 		if got := matAt(t, g, x, y); got != stone {
 			t.Fatalf("the stone is gone before 4 ticks of digging: the cell holds %d", got)
 		}
-		g.Step(pause)
+		step(t, g, pause)
 	}
-	g.Step(dig(x, y))
+	step(t, g, dig(x, y))
 	if got := matAt(t, g, x, y); got != material.Air {
 		t.Fatalf("4 interrupted ticks of digging left %d, want air", got)
 	}
@@ -291,7 +299,7 @@ func TestDigDamageFollowsTheCellsUnderTheBrush(t *testing.T) {
 	g := newTestGame(t, testTool) // radius 3, stone takes 4 ticks
 	x, y := floor(g)
 	for i := range 4 {
-		g.Step(dig(x+i%2, y))
+		step(t, g, dig(x+i%2, y))
 	}
 	// (x, y) and (x+1, y) were under the brush for all 4 ticks.
 	for _, cx := range []int{x, x + 1} {
@@ -308,18 +316,18 @@ func TestDigDamageDoesNotPassToAnotherCell(t *testing.T) {
 	stone := g.mats.MustLookup("stone")
 	x, y := floor(g)
 	for range 6 {
-		g.Step(dig(x, y))
+		step(t, g, dig(x, y))
 	}
 	g.world.Set(x, y, stone)
 	// With the old cell's 600 damage, 5 more ticks would dig it out.
 	for range 5 {
-		g.Step(dig(x, y))
+		step(t, g, dig(x, y))
 	}
 	if got := matAt(t, g, x, y); got != stone {
 		t.Fatalf("a new stone cell inherited the old one's damage: the cell holds %d", got)
 	}
 	for range 5 {
-		g.Step(dig(x, y))
+		step(t, g, dig(x, y))
 	}
 	if got := matAt(t, g, x, y); got != material.Air {
 		t.Fatalf("10 ticks of digging the new stone cell left %d, want air", got)
@@ -343,7 +351,7 @@ func TestDigAndPlaceConserveCells(t *testing.T) {
 			}
 		}
 		held := carried(g)
-		g.Step(in)
+		step(t, g, in)
 		if got := totals(g); !slices.Equal(got, start) {
 			t.Fatalf("tick %d: cells plus inventory are %v, want %v", tick, got, start)
 		}
@@ -385,7 +393,11 @@ func TestStepDoesNotAllocate(t *testing.T) {
 	x, y := floor(g)
 	inputs := []Input{dig(x, y), dig(x+1, y), {CursorX: 40, CursorY: 20, Place: true, Select: 3}, {}}
 	for _, in := range inputs {
-		if n := testing.AllocsPerRun(20, func() { g.Step(in) }); n != 0 {
+		if n := testing.AllocsPerRun(20, func() {
+			if err := g.Step(in); err != nil {
+				t.Error(err)
+			}
+		}); n != 0 {
 			t.Fatalf("Step(%+v) allocates %v times", in, n)
 		}
 	}

@@ -76,10 +76,11 @@ func (c *coverage) add(o coverage) {
 
 // trace plays r with tab on the given number of workers. It writes a line
 // with each material's cell count, the inventory and the checksum at tick
-// 0, every traceEvery ticks and at the end. After every tick it checks that
-// each material's cells plus its inventory are what they were at the
-// start: the tools only move cells between the world and the inventory,
-// and the world's own tick neither makes nor destroys them.
+// 0, every traceEvery ticks and at the end. In the sandbox, after every tick
+// it checks that each material's cells plus its inventory are what they
+// were at the start: the tools only move cells between the world and the
+// inventory, and the world's own tick neither makes nor destroys them. In
+// the terrain the counts cover the blocks in memory, which come and go.
 func trace(t *testing.T, r *Replay, tab *material.Table, workers int) (string, coverage) {
 	t.Helper()
 	g := newGame(t, r.Config(tab, workers))
@@ -107,10 +108,15 @@ func trace(t *testing.T, r *Replay, tab *material.Table, workers int) (string, c
 		for id := range held {
 			held[id] = g.Inventory(material.ID(id))
 		}
-		g.Step(in)
-		if got := totals(g, tab); !slices.Equal(got, start) {
-			t.Fatalf("after tick %d each material's cells plus its inventory are %v, want %v as at the start",
-				w.Tick(), got, start)
+		if err := g.Step(in); err != nil {
+			t.Fatal(err)
+		}
+		// In the terrain, cells come and go with the blocks in memory.
+		if r.Scene == game.SceneSandbox {
+			if got := totals(g, tab); !slices.Equal(got, start) {
+				t.Fatalf("after tick %d each material's cells plus its inventory are %v, want %v as at the start",
+					w.Tick(), got, start)
+			}
 		}
 		for id, before := range held {
 			switch now := g.Inventory(material.ID(id)); {

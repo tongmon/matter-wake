@@ -83,11 +83,11 @@ Module path: `github.com/tongmon/matter-wake`.
 | `internal/app/` | Window, fixed-step loop, `-shots` capture, replay files (`-record`, `-replay`). | yes |
 | `internal/render/` | Draws a session: uploads cell colors, overlay. | yes |
 | `internal/input/` | Maps devices to `game.Input`. | yes |
-| `internal/game/` | A play session: the world plus the player's tools, stepped by `Input`. | **no** |
+| `internal/game/` | A play session: the world plus the player's tools, stepped by `Input`; in the big world it keeps the blocks around the camera in memory. | **no** |
 | `internal/world/` | The cell grid, kept in 512×512 blocks that can be loaded and unloaded, and its tick. | **no** |
 | `internal/material/` | Material kinds and the data loader. | **no** |
 | `internal/palette/` | Cells to premultiplied RGBA, testable without a GPU. | **no** |
-| `internal/scene/` | Starting worlds. | **no** |
+| `internal/scene/` | Starting worlds: the sandbox, and the seeded terrain the big world makes its blocks from. | **no** |
 | `internal/save/` | Encodes a world for saving: each block of cells, field by field, and the world header. | **no** |
 | `internal/replay/` | Encodes and decodes replays: how a session started and its input for every tick. Holds the replay goldens. | **no** |
 | `internal/sched/` | The fixed goroutine pool. The only logic package with `sync`. | **no** |
@@ -123,7 +123,7 @@ Choose checks in proportion to the change:
 
 - **Logic changes:** unit tests. For a bug fix, write a failing test first.
 - **Simulation rule changes:** two golden tests pin how the sandbox evolves. After an intended change, rerun both with `-update` and review the golden diffs in the PR. Each uses its own copy of the materials in `testdata/`, so editing `data/` does not move them.
-  - `internal/scene/testdata/sandbox.golden`, the sandbox left alone: `go test ./internal/scene/ -update`.
+  - `internal/scene/testdata/sandbox.golden`, the sandbox left alone, and `terrain.golden`, blocks of the big world's terrain: `go test ./internal/scene/ -update`.
   - `internal/replay/testdata/*.golden`, the sandbox played by each `*.rpl` replay, which also checks after every tick that only the brush changed the cell counts: `go test ./internal/replay/ -update`.
 - **Replays:** to reproduce or show a session, write or record a replay and play it back. A replay sets the world size and seed, ignores the devices, and exits at its end; give it more `ticks` to watch the end state longer. Format: the `internal/replay` package comment.
   - `go run ./cmd/matter-wake -record out/replays/a.rpl` saves the session's inputs on exit.

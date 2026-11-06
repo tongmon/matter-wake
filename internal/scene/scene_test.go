@@ -53,7 +53,7 @@ func TestSandboxNeedsItsMaterials(t *testing.T) {
 	}
 }
 
-func loadTable(t *testing.T) *material.Table {
+func loadTable(t testing.TB) *material.Table {
 	t.Helper()
 	data, err := os.ReadFile(filepath.Join("testdata", "materials.json"))
 	if err != nil {

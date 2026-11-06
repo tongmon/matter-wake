@@ -1,0 +1,220 @@
+package game
+
+import (
+	"hash/fnv"
+	"strings"
+	"testing"
+
+	"github.com/tongmon/matter-wake/internal/world"
+)
+
+// testStream keeps the view and 256 cells around it, at most 12 blocks:
+// the values design.md 7절 settles on.
+var testStream = Stream{Margin: 256, MaxBlocks: 12}
+
+// newTerrainGame starts a terrain session in a world of 8×8 blocks.
+func newTerrainGame(t *testing.T, workers int) *Game {
+	t.Helper()
+	g, err := New(&Config{
+		Width: 4096, Height: 4096, Seed: 3, Workers: workers, Materials: testTable(t),
+		Slots: []string{"sand", "water", "stone"}, Tool: testTool,
+		Scene: SceneTerrain, ViewWidth: 480, ViewHeight: 270, Stream: testStream,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(g.Close)
+	return g
+}
+
+// checkResidency fails unless every block the view at (camX, camY) needs is
+// in memory, and no more than MaxBlocks are, unless the view alone needs
+// more.
+func checkResidency(t *testing.T, g *Game, camX, camY int) {
+	t.Helper()
+	need := g.needed(camX, camY)
+	for by := need.y0; by < need.y1; by++ {
+		for bx := need.x0; bx < need.x1; bx++ {
+			if !g.world.Resident(bx, by) {
+				t.Fatalf("camera (%d, %d): block (%d, %d) of the view is not in memory", camX, camY, bx, by)
+			}
+		}
+	}
+	cols, rows := g.world.Blocks()
+	n := 0
+	for by := range rows {
+		for bx := range cols {
+			if g.world.Resident(bx, by) {
+				n++
+			}
+		}
+	}
+	if needed := (need.x1 - need.x0) * (need.y1 - need.y0); n > max(g.limits.MaxBlocks, needed) || n != len(g.resident) {
+		t.Fatalf("camera (%d, %d): %d blocks in memory (%d listed), at most %d", camX, camY, n, len(g.resident), max(g.limits.MaxBlocks, needed))
+	}
+}
+
+func TestTerrainStartsWithTheViewAroundSpawn(t *testing.T) {
+	g := newTerrainGame(t, 1)
+	x, y := g.Spawn()
+	if x < 0 || y < 0 || x+480 > 4096 || y+270 > 4096 {
+		t.Fatalf("spawn camera (%d, %d) is not inside the world", x, y)
+	}
+	checkResidency(t, g, x, y)
+	// Ground fills the bottom of the view and sky its top.
+	if c, _ := g.world.At(x+240, y); c.Mat != 0 {
+		t.Errorf("the top middle of the spawn view holds material %d, not sky", c.Mat)
+	}
+}
+
+// Walking the camera across the world keeps the view's blocks in memory
+// and never more than MaxBlocks.
+func TestStreamFollowsTheCamera(t *testing.T) {
+	g := newTerrainGame(t, 2)
+	x, y := g.Spawn()
+	for i := range 120 {
+		// Right, then down, then back left: 32 cells a tick.
+		switch {
+		case i < 50:
+			x += 32
+		case i < 80:
+			y += 32
+		default:
+			x -= 32
+		}
+		x, y = min(max(x, 0), 4096-480), min(max(y, 0), 4096-270)
+		step(t, g, Input{CameraX: x, CameraY: y})
+		checkResidency(t, g, x, y)
+	}
+}
+
+// Past MaxBlocks, the blocks the view does not need go farthest from the
+// camera first.
+func TestStreamUnloadsFarthestFirst(t *testing.T) {
+	g := newTerrainGame(t, 1)
+	x, y := g.Spawn()
+	// Leave behind a trail of blocks, then turn back toward them.
+	for range 40 {
+		x = min(x+64, 4096-480)
+		step(t, g, Input{CameraX: x, CameraY: y})
+	}
+	need := g.needed(x, y)
+	cx, cy := 2*x+480, 2*y+270
+	dist := func(b [2]int) int {
+		dx, dy := 2*b[0]*world.BlockSize+world.BlockSize-cx, 2*b[1]*world.BlockSize+world.BlockSize-cy
+		return dx*dx + dy*dy
+	}
+	nearest := 1 << 62
+	for _, b := range g.resident {
+		if !need.has(b) {
+			nearest = min(nearest, dist(b))
+		}
+	}
+	cols, rows := g.world.Blocks()
+	for by := range rows {
+		for bx := range cols {
+			b := [2]int{bx, by}
+			if g.world.Resident(bx, by) || need.has(b) {
+				continue
+			}
+			if _, saved := g.store.(*memoryStore).blocks[b]; saved && dist(b) < nearest {
+				t.Fatalf("block %v was unloaded though a kept block is farther from the camera", b)
+			}
+		}
+	}
+}
+
+// A block that leaves memory comes back exactly as it left: the camera goes
+// far away and returns.
+func TestLeavingAndComingBackKeepsTheBlocks(t *testing.T) {
+	g := newTerrainGame(t, 2)
+	x, y := g.Spawn()
+	for range 60 {
+		step(t, g, Input{CameraX: x, CameraY: y})
+	}
+	before := map[[2]int]uint64{}
+	for _, b := range g.resident {
+		before[b] = blockSum(g, b)
+	}
+	// Room for no more than the view needs, so the blocks left behind go.
+	g.limits.MaxBlocks = 4
+	if err := g.stream(0, 4096-270); err != nil {
+		t.Fatal(err)
+	}
+	gone := 0
+	for b := range before {
+		if !g.world.Resident(b[0], b[1]) {
+			gone++
+		}
+	}
+	if gone != len(before) {
+		t.Fatalf("%d of %d blocks left memory when the camera went to the far corner", gone, len(before))
+	}
+	if err := g.stream(x, y); err != nil {
+		t.Fatal(err)
+	}
+	for b, sum := range before {
+		if got := blockSum(g, b); got != sum {
+			t.Fatalf("block %v came back different", b)
+		}
+	}
+}
+
+// blockSum hashes the cells of block b, which must be in memory.
+func blockSum(g *Game, b [2]int) uint64 {
+	h := fnv.New64a()
+	for y := b[1] * world.BlockSize; y < (b[1]+1)*world.BlockSize; y++ {
+		for _, c := range g.world.Row(b[0]*world.BlockSize, (b[0]+1)*world.BlockSize, y) {
+			_, _ = h.Write([]byte{byte(c.Mat), c.Tone, byte(c.Last), byte(c.Vy), byte(c.Ax), byte(c.Damage)})
+		}
+	}
+	return h.Sum64()
+}
+
+// The terrain's result does not depend on the worker count, streaming
+// included.
+func TestTerrainIsIndependentOfWorkers(t *testing.T) {
+	var sums []uint64
+	for _, workers := range []int{1, 4} {
+		g := newTerrainGame(t, workers)
+		x, y := g.Spawn()
+		for i := range 90 {
+			in := Input{CameraX: x + 16*i, CameraY: y, CursorX: x + 16*i + 240, CursorY: y + 200, Dig: i%3 == 0}
+			step(t, g, in)
+		}
+		sums = append(sums, g.world.Checksum())
+	}
+	if sums[0] != sums[1] {
+		t.Fatalf("1 worker checksum %#x, 4 workers %#x", sums[0], sums[1])
+	}
+}
+
+func TestNewRejectsBadTerrain(t *testing.T) {
+	base := Config{
+		Width: 1024, Height: 1024, Seed: 1, Materials: testTable(t), Slots: []string{"sand"}, Tool: testTool,
+		Scene: SceneTerrain, ViewWidth: 480, ViewHeight: 270, Stream: testStream,
+	}
+	tests := []struct {
+		name    string
+		edit    func(c *Config)
+		wantErr string
+	}{
+		{"unknown scene", func(c *Config) { c.Scene = "cave" }, "unknown scene"},
+		{"no view", func(c *Config) { c.ViewWidth = 0 }, "view"},
+		{"negative margin", func(c *Config) { c.Stream.Margin = -1 }, "stream"},
+		{"no blocks", func(c *Config) { c.Stream.MaxBlocks = 0 }, "stream"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := base
+			tt.edit(&cfg)
+			g, err := New(&cfg)
+			if err == nil {
+				g.Close()
+			}
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("New error = %v, want one mentioning %q", err, tt.wantErr)
+			}
+		})
+	}
+}

@@ -13,7 +13,8 @@ import (
 
 func testReplay() *replay.Replay {
 	return &replay.Replay{
-		Seed: 3, Width: 64, Height: 32, Tool: game.Tool{Power: 10, Rate: 2000, Radius: 4}, Slots: []string{"sand"}, Materials: "00",
+		Seed: 3, Width: 64, Height: 32, ViewWidth: 64, ViewHeight: 32, Stream: stream,
+		Tool: game.Tool{Power: 10, Rate: 2000, Radius: 4}, Slots: []string{"sand"}, Materials: "00",
 		Inputs: []game.Input{{}, {CursorX: 5, CursorY: 6, Place: true}, {Select: 1}},
 	}
 }

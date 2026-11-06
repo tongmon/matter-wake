@@ -9,6 +9,11 @@
 // material, its cells in the world plus its count in the inventory stay
 // the same for the whole session. Creative mode, for development, places
 // without taking from the inventory and so makes cells.
+//
+// A session plays either the sandbox, a small room kept whole in memory,
+// or the terrain, the big world of which only the blocks around the camera
+// stay in memory (stream.go). The terrain makes a block the first time the
+// camera comes near it; after that the block lives in the store.
 package game
 
 import (
@@ -23,8 +28,24 @@ import (
 // Hz is how many ticks run per second of play.
 const Hz = 60
 
+// Scene is the world a session plays in.
+type Scene string
+
+const (
+	// SceneSandbox is a small test room, all of it in memory. It is the
+	// zero value.
+	SceneSandbox Scene = ""
+	// SceneTerrain is the big seeded world, kept in memory around the
+	// camera only (design.md 7절).
+	SceneTerrain Scene = "terrain"
+)
+
 // Input is what the player does during one tick.
 type Input struct {
+	// CameraX and CameraY are the top-left cell of what the camera shows.
+	// The terrain keeps the blocks around it in memory; the sandbox
+	// ignores it.
+	CameraX, CameraY int
 	// CursorX and CursorY are the cursor position in world cells.
 	CursorX, CursorY int
 	// Place fills the empty cells under the cursor with the selected
@@ -55,6 +76,15 @@ type Config struct {
 	Seed          uint64
 	Workers       int
 	Materials     *material.Table
+	// Scene is the world to play in.
+	Scene Scene
+	// ViewWidth and ViewHeight are how many cells the camera shows. With
+	// the stream they set which blocks of the terrain stay in memory.
+	ViewWidth, ViewHeight int
+	Stream                Stream
+	// Store keeps the blocks the terrain unloads. Nil keeps them in memory
+	// for the session only, which replays and shots rely on.
+	Store Store
 	// Slots name the materials the player can place, in key order.
 	Slots []string
 	Tool  Tool
@@ -75,9 +105,18 @@ type Game struct {
 	// inventory holds how many cells of each material the player carries,
 	// indexed by material.ID.
 	inventory []int
+	// terrain makes the blocks of the big world, nil in the sandbox. The
+	// fields after it are for the terrain too.
+	terrain *scene.Terrain
+	store   Store
+	limits  Stream
+	// resident lists the blocks in memory.
+	resident     [][2]int
+	viewW, viewH int
 }
 
-// New starts a session in the sandbox scene with an empty inventory.
+// New starts a session in cfg.Scene with an empty inventory. In the
+// terrain it loads the blocks around Spawn.
 func New(cfg *Config) (*Game, error) {
 	if len(cfg.Slots) == 0 {
 		return nil, errors.New("game: no material slots")
@@ -96,20 +135,62 @@ func New(cfg *Config) (*Game, error) {
 		}
 		slots[i] = id
 	}
+	switch cfg.Scene {
+	case SceneSandbox, SceneTerrain:
+	default:
+		return nil, fmt.Errorf("game: unknown scene %q", cfg.Scene)
+	}
 	w, err := world.New(world.Config{
 		Width: cfg.Width, Height: cfg.Height, Seed: cfg.Seed, Workers: cfg.Workers, Materials: cfg.Materials,
+		Streamed: cfg.Scene == SceneTerrain,
 	})
 	if err != nil {
 		return nil, err
 	}
-	if err := scene.Sandbox(w, cfg.Materials); err != nil {
+	g := &Game{
+		world: w, mats: cfg.Materials, slots: slots, tool: cfg.Tool, creative: cfg.Creative,
+		inventory: make([]int, cfg.Materials.Len()),
+	}
+	if err := g.setUp(cfg); err != nil {
 		w.Close()
 		return nil, err
 	}
-	return &Game{
-		world: w, mats: cfg.Materials, slots: slots, tool: cfg.Tool, creative: cfg.Creative,
-		inventory: make([]int, cfg.Materials.Len()),
-	}, nil
+	return g, nil
+}
+
+// setUp lays out the session's scene.
+func (g *Game) setUp(cfg *Config) error {
+	if cfg.Scene == SceneSandbox {
+		return scene.Sandbox(g.world, cfg.Materials)
+	}
+	switch {
+	case cfg.ViewWidth < 1 || cfg.ViewHeight < 1:
+		return fmt.Errorf("game: view %dx%d is not positive", cfg.ViewWidth, cfg.ViewHeight)
+	case cfg.Stream.Margin < 0 || cfg.Stream.MaxBlocks < 1:
+		return fmt.Errorf("game: stream %+v needs a margin of 0 or more and room for a block", cfg.Stream)
+	}
+	t, err := scene.NewTerrain(cfg.Seed, cfg.Width, cfg.Height, cfg.Materials)
+	if err != nil {
+		return err
+	}
+	g.terrain, g.store, g.limits = t, cfg.Store, cfg.Stream
+	g.viewW, g.viewH = cfg.ViewWidth, cfg.ViewHeight
+	if g.store == nil {
+		g.store = newMemoryStore(cfg.Materials)
+	}
+	x, y := g.Spawn()
+	return g.stream(x, y)
+}
+
+// Spawn returns where the camera starts: in the terrain, over the middle
+// of the world with the ground across the middle of the view; in the
+// sandbox, at the top left.
+func (g *Game) Spawn() (cameraX, cameraY int) {
+	if g.terrain == nil {
+		return 0, 0
+	}
+	x := g.world.Width() / 2
+	return x - g.viewW/2, max(g.terrain.Surface(x)-g.viewH/2, 0)
 }
 
 // Close releases the session's resources.
@@ -149,8 +230,15 @@ func (g *Game) Inventory(id material.ID) int {
 	return g.inventory[id]
 }
 
-// Step applies one tick of input and advances the world.
-func (g *Game) Step(in Input) {
+// Step applies one tick of input and advances the world. In the terrain it
+// first loads and unloads blocks for the camera; an error there, from the
+// store, ends the session.
+func (g *Game) Step(in Input) error {
+	if g.terrain != nil {
+		if err := g.stream(in.CameraX, in.CameraY); err != nil {
+			return err
+		}
+	}
 	if in.Select >= 1 && in.Select <= len(g.slots) {
 		g.selected = in.Select - 1
 	}
@@ -161,6 +249,7 @@ func (g *Game) Step(in Input) {
 		g.place(in.CursorX, in.CursorY)
 	}
 	g.world.Step()
+	return nil
 }
 
 // dig deals the tool's damage to every cell under the brush centred on
