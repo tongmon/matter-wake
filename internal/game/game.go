@@ -85,6 +85,9 @@ type Config struct {
 	// Store keeps the blocks the terrain unloads. Nil keeps them in memory
 	// for the session only, which replays and shots rely on.
 	Store Store
+	// Resume goes on with a saved terrain session instead of starting a
+	// new one. Its blocks come from Store.
+	Resume *Resume
 	// Slots name the materials the player can place, in key order.
 	Slots []string
 	Tool  Tool
@@ -92,6 +95,21 @@ type Config struct {
 	// material, as much as the brush holds. It is for trying materials out
 	// in development; play starts with an empty inventory instead.
 	Creative bool
+}
+
+// Resume is where a saved session left off.
+type Resume struct {
+	// Tick is how many ticks the world had run.
+	Tick uint32
+	// Slot is the selected slot, 1-based.
+	Slot int
+	// Inventory holds how many cells of each material the player carried,
+	// by material ID.
+	Inventory []int
+	// CameraX and CameraY are where the camera was, if HasCamera is set;
+	// else the camera starts where a new session's does.
+	CameraX, CameraY int
+	HasCamera        bool
 }
 
 // Game is a play session. It is not safe for concurrent use.
@@ -113,6 +131,8 @@ type Game struct {
 	// resident lists the blocks in memory.
 	resident     [][2]int
 	viewW, viewH int
+	// spawnX and spawnY are where the camera starts.
+	spawnX, spawnY int
 }
 
 // New starts a session in cfg.Scene with an empty inventory. In the
@@ -140,9 +160,13 @@ func New(cfg *Config) (*Game, error) {
 	default:
 		return nil, fmt.Errorf("game: unknown scene %q", cfg.Scene)
 	}
+	tick, err := resumeTick(cfg)
+	if err != nil {
+		return nil, err
+	}
 	w, err := world.New(world.Config{
 		Width: cfg.Width, Height: cfg.Height, Seed: cfg.Seed, Workers: cfg.Workers, Materials: cfg.Materials,
-		Streamed: cfg.Scene == SceneTerrain,
+		Streamed: cfg.Scene == SceneTerrain, Tick: tick,
 	})
 	if err != nil {
 		return nil, err
@@ -156,6 +180,27 @@ func New(cfg *Config) (*Game, error) {
 		return nil, err
 	}
 	return g, nil
+}
+
+// resumeTick checks cfg.Resume and returns the tick the world starts at.
+func resumeTick(cfg *Config) (uint32, error) {
+	r := cfg.Resume
+	switch {
+	case r == nil:
+		return 0, nil
+	case cfg.Scene != SceneTerrain:
+		return 0, errors.New("game: only the terrain resumes; the sandbox starts new")
+	case r.Slot < 1 || r.Slot > len(cfg.Slots):
+		return 0, fmt.Errorf("game: resumed slot %d is not one of the %d slots", r.Slot, len(cfg.Slots))
+	case len(r.Inventory) != cfg.Materials.Len():
+		return 0, fmt.Errorf("game: resumed inventory has %d materials, the table %d", len(r.Inventory), cfg.Materials.Len())
+	}
+	for id, n := range r.Inventory {
+		if n < 0 {
+			return 0, fmt.Errorf("game: resumed inventory holds %d of material %d", n, id)
+		}
+	}
+	return r.Tick, nil
 }
 
 // setUp lays out the session's scene.
@@ -178,8 +223,19 @@ func (g *Game) setUp(cfg *Config) error {
 	if g.store == nil {
 		g.store = newMemoryStore(cfg.Materials)
 	}
-	x, y := g.Spawn()
-	return g.stream(x, y)
+	x := g.world.Width() / 2
+	camX, camY := x-g.viewW/2, t.Surface(x)-g.viewH/2
+	if r := cfg.Resume; r != nil {
+		if r.HasCamera {
+			camX, camY = r.CameraX, r.CameraY
+		}
+		g.selected = r.Slot - 1
+		copy(g.inventory, r.Inventory)
+	}
+	// Keep the view in the world, moving it as little as it takes.
+	g.spawnX = min(max(camX, 0), max(g.world.Width()-g.viewW, 0))
+	g.spawnY = min(max(camY, 0), max(g.world.Height()-g.viewH, 0))
+	return g.stream(g.spawnX, g.spawnY)
 }
 
 // Blocks returns how many blocks of the world are in memory.
@@ -191,18 +247,41 @@ func (g *Game) Blocks() int {
 	return len(g.resident)
 }
 
-// Spawn returns where the camera starts: in the terrain, over the middle
-// of the world with the ground across the middle of the view, moved as
-// little as it takes to keep the view in the world; in the sandbox, at
-// the top left.
+// Spawn returns where the camera starts: in a new terrain session, over
+// the middle of the world with the ground across the middle of the view;
+// in a resumed one, where it was; in the sandbox, at the top left. The
+// terrain moves it as little as it takes to keep the view in the world.
 func (g *Game) Spawn() (cameraX, cameraY int) {
-	if g.terrain == nil {
-		return 0, 0
+	return g.spawnX, g.spawnY
+}
+
+// Materials returns the session's material table.
+func (g *Game) Materials() *material.Table {
+	return g.mats
+}
+
+// Slot returns the selected slot, 1-based.
+func (g *Game) Slot() int {
+	return g.selected + 1
+}
+
+// SaveBlocks takes every block of the terrain out of memory and into the
+// store, so the store holds the whole world as it is. The session may go
+// on: its next Step loads the blocks it needs again. The sandbox has
+// nothing to save.
+func (g *Game) SaveBlocks() error {
+	for len(g.resident) > 0 {
+		b := g.resident[len(g.resident)-1]
+		blk, err := g.world.UnloadBlock(b[0], b[1])
+		if err != nil {
+			return fmt.Errorf("game: %w", err)
+		}
+		if err := g.store.Save(b[0], b[1], blk); err != nil {
+			return fmt.Errorf("game: block (%d, %d): %w", b[0], b[1], err)
+		}
+		g.resident = g.resident[:len(g.resident)-1]
 	}
-	x := g.world.Width() / 2
-	cameraX = min(max(x-g.viewW/2, 0), max(g.world.Width()-g.viewW, 0))
-	cameraY = min(max(g.terrain.Surface(x)-g.viewH/2, 0), max(g.world.Height()-g.viewH, 0))
-	return cameraX, cameraY
+	return nil
 }
 
 // Close releases the session's resources.

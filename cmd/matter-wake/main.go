@@ -36,6 +36,7 @@ func run() error {
 	flag.StringVar(&cfg.ReplayPath, "replay", "", "play back this replay file instead of the devices, then exit")
 	flag.StringVar(&cfg.RecordPath, "record", "", "save this session's inputs to this replay file on exit")
 	flag.BoolVar(&cfg.Creative, "creative", false, "place without taking from the inventory, to try materials out")
+	flag.StringVar(&cfg.SavePath, "save", "", "save folder of the terrain (default: matter-wake/saves/world in the user's config folder)")
 	flag.Parse()
 
 	if cfg.ReplayPath != "" {
@@ -48,6 +49,7 @@ func run() error {
 	if err := setScene(&cfg, *scene); err != nil {
 		return err
 	}
+	cfg.FixedWorld = flagSet("seed") || flagSet("width") || flagSet("height")
 	cfg.Seed = *seed
 	if !flagSet("seed") {
 		cfg.Seed = uint64(time.Now().UnixNano())

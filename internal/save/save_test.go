@@ -365,3 +365,51 @@ func TestBlockTakesAnyMaterialTable(t *testing.T) {
 		t.Fatalf("cells hold %d and %d after the round trip, want %d and %d", got[1].Mat, got[2].Mat, b[1].Mat, b[2].Mat)
 	}
 }
+
+func TestPlayerRoundTrip(t *testing.T) {
+	want := &Player{CameraX: 7952, CameraY: -3, Slot: 3, Held: map[string]int{"stone": 15, "sand": 120}}
+	var buf bytes.Buffer
+	if err := WritePlayer(&buf, &Player{CameraX: 7952, CameraY: -3, Slot: 3, Held: map[string]int{"stone": 15, "water": 0, "sand": 120}}); err != nil {
+		t.Fatal(err)
+	}
+	if got := buf.String(); got != "matter-wake-player 1\ncamera 7952 -3\nslot 3\nheld sand 120\nheld stone 15\n" {
+		t.Fatalf("WritePlayer wrote %q", got)
+	}
+	got, err := ReadPlayer(&buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.CameraX != want.CameraX || got.CameraY != want.CameraY || got.Slot != want.Slot || len(got.Held) != 2 ||
+		got.Held["sand"] != 120 || got.Held["stone"] != 15 {
+		t.Fatalf("ReadPlayer = %+v, want %+v", got, want)
+	}
+}
+
+func TestPlayerRefusesBadFiles(t *testing.T) {
+	const head = "matter-wake-player 1\ncamera 1 2\nslot 1\n"
+	tests := []struct {
+		name, text, wantErr string
+	}{
+		{"empty", "", "missing"},
+		{"newer version", "matter-wake-player 2\n", "format version 2"},
+		{"bad camera", "matter-wake-player 1\ncamera 1 x\n", "camera y"},
+		{"slot 0", "matter-wake-player 1\ncamera 1 2\nslot 0\n", "slot 0"},
+		{"bad held line", head + "held sand\n", "held <material> <count>"},
+		{"negative count", head + "held sand -4\n", "count of sand"},
+		{"held twice", head + "held sand 1\nheld sand 2\n", "twice"},
+		{"other line", head + "seed 4\n", "held <material> <count>"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := ReadPlayer(strings.NewReader(tt.text))
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("ReadPlayer error = %v, want one mentioning %q", err, tt.wantErr)
+			}
+		})
+	}
+	for _, p := range []*Player{{Slot: 0}, {Slot: 1, Held: map[string]int{"sand": -1}}, {Slot: 1, Held: map[string]int{"wet sand": 1}}} {
+		if err := WritePlayer(&bytes.Buffer{}, p); err == nil {
+			t.Errorf("WritePlayer accepted %+v", p)
+		}
+	}
+}

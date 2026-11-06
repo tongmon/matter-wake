@@ -44,8 +44,10 @@ import (
 	"hash/crc32"
 	"io"
 	"math"
+	"slices"
 	"strconv"
 	"strings"
+	"unicode"
 
 	"github.com/tongmon/matter-wake/internal/fixed"
 	"github.com/tongmon/matter-wake/internal/material"
@@ -497,4 +499,101 @@ func (l *lines) end() {
 	if l.err == nil {
 		l.err = l.sc.Err()
 	}
+}
+
+// PlayerVersion is the player file layout this build reads and writes.
+const PlayerVersion = 1
+
+const playerMagic = "matter-wake-player"
+
+// Player is what a save holds about the player: where the camera was, the
+// selected slot and what the inventory held, by material name.
+//
+// It is line-based text, like the world header:
+//
+//	matter-wake-player 1
+//	camera 7952 955
+//	slot 3
+//	held sand 120
+//	held stone 15
+//
+// Only materials the inventory holds get a held line, in name order.
+type Player struct {
+	CameraX, CameraY int
+	// Slot is the selected slot, 1-based as the keys are.
+	Slot int
+	// Held is how many cells of each material the inventory holds.
+	Held map[string]int
+}
+
+// WritePlayer writes p.
+func WritePlayer(w io.Writer, p *Player) error {
+	if p.Slot < 1 {
+		return fmt.Errorf("save: slot %d is not 1 or more", p.Slot)
+	}
+	bw := bufio.NewWriter(w)
+	// A bufio.Writer keeps its first error and Flush returns it.
+	_, _ = fmt.Fprintf(bw, "%s %d\ncamera %d %d\nslot %d\n", playerMagic, PlayerVersion, p.CameraX, p.CameraY, p.Slot)
+	names := make([]string, 0, len(p.Held))
+	for name, n := range p.Held {
+		if n < 0 || strings.ContainsFunc(name, unicode.IsSpace) || name == "" {
+			return fmt.Errorf("save: holding %d of %q", n, name)
+		}
+		if n > 0 {
+			names = append(names, name)
+		}
+	}
+	slices.Sort(names)
+	for _, name := range names {
+		_, _ = fmt.Fprintf(bw, "held %s %d\n", name, p.Held[name])
+	}
+	if err := bw.Flush(); err != nil {
+		return fmt.Errorf("save: %w", err)
+	}
+	return nil
+}
+
+// ReadPlayer reads a player file that WritePlayer wrote.
+func ReadPlayer(r io.Reader) (*Player, error) {
+	l := &lines{sc: bufio.NewScanner(r)}
+	if v := l.uint("version", l.next(playerMagic, 1)[0], 16); l.err == nil && v != PlayerVersion {
+		l.err = fmt.Errorf("format version %d; this build reads version %d", v, PlayerVersion)
+	}
+	camera := l.next("camera", 2)
+	p := &Player{Held: map[string]int{}}
+	p.CameraX, p.CameraY = l.int("camera x", camera[0]), l.int("camera y", camera[1])
+	if p.Slot = l.int("slot", l.next("slot", 1)[0]); l.err == nil && p.Slot < 1 {
+		l.err = fmt.Errorf("slot %d is not 1 or more", p.Slot)
+	}
+	for l.err == nil && l.sc.Scan() {
+		f := strings.Fields(l.sc.Text())
+		if len(f) != 3 || f[0] != "held" {
+			l.err = fmt.Errorf("line %q, want %q", l.sc.Text(), "held <material> <count>")
+			break
+		}
+		if _, dup := p.Held[f[1]]; dup {
+			l.err = fmt.Errorf("%q is held twice", f[1])
+			break
+		}
+		p.Held[f[1]] = int(l.uint("count of "+f[1], f[2], 62))
+	}
+	if l.err == nil {
+		l.err = l.sc.Err()
+	}
+	if l.err != nil {
+		return nil, fmt.Errorf("save: player: %w", l.err)
+	}
+	return p, nil
+}
+
+// int parses the value v of name as a signed number.
+func (l *lines) int(name, v string) int {
+	if l.err != nil {
+		return 0
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil {
+		l.err = fmt.Errorf("%s %q is not a number", name, v)
+	}
+	return n
 }

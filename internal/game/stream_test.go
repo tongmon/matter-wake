@@ -242,3 +242,54 @@ func TestSpawnStaysInTheWorld(t *testing.T) {
 		g.Close()
 	}
 }
+
+// A resumed session starts where it left off, and refuses a state it
+// could not have saved.
+func TestResume(t *testing.T) {
+	tab := testTable(t)
+	base := Config{
+		Width: 2048, Height: 2048, Seed: 1, Workers: 1, Materials: tab, Slots: []string{"sand", "water", "stone"}, Tool: testTool,
+		Scene: SceneTerrain, ViewWidth: 480, ViewHeight: 270, Stream: testStream,
+	}
+	held := make([]int, tab.Len())
+	held[tab.MustLookup("stone")] = 7
+	cfg := base
+	cfg.Resume = &Resume{Tick: 500, Slot: 3, Inventory: held, CameraX: 100, CameraY: 900, HasCamera: true}
+	g, err := New(&cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer g.Close()
+	if x, y := g.Spawn(); x != 100 || y != 900 {
+		t.Errorf("Spawn() = %d, %d, want the saved 100, 900", x, y)
+	}
+	if g.World().Tick() != 500 || g.Slot() != 3 || g.Inventory(tab.MustLookup("stone")) != 7 {
+		t.Errorf("resumed at tick %d, slot %d, holding %d stone; want 500, 3, 7",
+			g.World().Tick(), g.Slot(), g.Inventory(tab.MustLookup("stone")))
+	}
+	tests := []struct {
+		name    string
+		edit    func(c *Config)
+		wantErr string
+	}{
+		{"sandbox", func(c *Config) { c.Scene = SceneSandbox }, "only the terrain"},
+		{"slot 0", func(c *Config) { c.Resume.Slot = 0 }, "slot"},
+		{"slot past the last", func(c *Config) { c.Resume.Slot = 4 }, "slot"},
+		{"short inventory", func(c *Config) { c.Resume.Inventory = held[:2] }, "inventory"},
+		{"negative count", func(c *Config) { c.Resume.Inventory = []int{0, -1, 0, 0, 0} }, "holds -1"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c := base
+			c.Resume = &Resume{Slot: 1, Inventory: make([]int, tab.Len())}
+			tt.edit(&c)
+			g, err := New(&c)
+			if err == nil {
+				g.Close()
+			}
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("New error = %v, want one mentioning %q", err, tt.wantErr)
+			}
+		})
+	}
+}

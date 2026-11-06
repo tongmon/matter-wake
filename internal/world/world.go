@@ -255,6 +255,9 @@ func (w *World) Height() int { return w.height }
 // Tick returns how many ticks have run.
 func (w *World) Tick() uint32 { return w.tick }
 
+// Seed returns the seed that keys the world's random choices.
+func (w *World) Seed() uint64 { return w.seed }
+
 // Chunks returns how many chunks the grid is cut into.
 func (w *World) Chunks() int { return len(w.chunks) }
 
