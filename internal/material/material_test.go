@@ -3,6 +3,7 @@ package material
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -86,5 +87,49 @@ func TestColorParsing(t *testing.T) {
 func TestKindString(t *testing.T) {
 	if Liquid.String() != "liquid" || Kind(200).String() != "Kind(200)" {
 		t.Fatal("Kind.String is wrong")
+	}
+}
+
+// A replay keeps the fingerprint of the table it was recorded with, so the
+// fingerprint must follow every value and nothing else.
+func TestFingerprint(t *testing.T) {
+	defs := []Def{
+		{Name: "air", Kind: Empty},
+		{Name: "sand", Kind: Powder, Density: 30, FallAccel: 64, SlideChance: 50, Color: Color{1, 2, 3, 255}},
+	}
+	tab, err := NewTable(defs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fp := tab.Fingerprint()
+	if len(fp) != 16 || strings.Trim(fp, "0123456789abcdef") != "" {
+		t.Fatalf("fingerprint %q is not 16 lowercase hex digits", fp)
+	}
+	same, err := NewTable(defs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if same.Fingerprint() != fp {
+		t.Fatal("equal tables have different fingerprints")
+	}
+	edits := []struct {
+		name string
+		edit func(d []Def) []Def
+	}{
+		{"name", func(d []Def) []Def { d[1].Name = "dust"; return d }},
+		{"density", func(d []Def) []Def { d[1].Density++; return d }},
+		{"fallAccel", func(d []Def) []Def { d[1].FallAccel++; return d }},
+		{"slideChance", func(d []Def) []Def { d[1].SlideChance++; return d }},
+		{"color", func(d []Def) []Def { d[1].Color.R++; return d }},
+		{"another material", func(d []Def) []Def { return append(d, Def{Name: "stone", Kind: Static}) }},
+	}
+	for _, e := range edits {
+		other, err := NewTable(e.edit(slices.Clone(defs)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if other.Fingerprint() == fp {
+			t.Errorf("changing the %s kept the fingerprint", e.name)
+		}
 	}
 }

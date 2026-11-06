@@ -7,6 +7,8 @@ package material
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -240,6 +242,18 @@ func (t *Table) Def(id ID) Def {
 func (t *Table) Lookup(name string) (ID, bool) {
 	id, ok := t.byName[name]
 	return id, ok
+}
+
+// Fingerprint returns 16 hex digits that identify the table's names and
+// values, so a replay can tell whether it plays back with the materials it
+// was recorded with. It covers every field, colors included.
+func (t *Table) Fingerprint() string {
+	data, err := json.Marshal(t.defs)
+	if err != nil {
+		panic(fmt.Sprintf("material: marshal: %v", err)) // a Def is plain data
+	}
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:8])
 }
 
 // MustLookup is Lookup for names the program itself relies on. It panics

@@ -21,6 +21,8 @@ go run ./cmd/matter-wake
 - `-materials PATH`: 재질 파일 (기본 `data/materials.json`)
 - `-shots 0,60,300`: 지정한 틱의 화면을 PNG로 저장하고 마지막 틱 뒤에 종료. 입력은 무시함
 - `-shots-dir DIR`: PNG 저장 폴더 (기본 `out/shots`)
+- `-record PATH`: 이번 세션의 입력을 종료할 때 리플레이 파일로 저장
+- `-replay PATH`: 리플레이 파일을 재생하고 끝나면 종료. 월드 크기와 시드는 리플레이가 정하고, 입력 장치는 무시함. `-shots`와 함께 쓸 수 있음
 
 조작 (임시): 왼쪽 클릭 놓기, 오른쪽 클릭 파기, 1~3 재질 선택(모래, 물, 돌).
 

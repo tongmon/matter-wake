@@ -1,0 +1,17 @@
+{
+  "materials": [
+    { "name": "air", "kind": "empty", "density": 0, "color": "#00000000" },
+    { "name": "stone", "kind": "static", "density": 255, "color": "#6b6a72", "toneSpread": 40 },
+    {
+      "name": "sand", "kind": "powder", "density": 30,
+      "fallAccel": 0.225, "sinkChance": 25, "slideChance": 50,
+      "color": "#e0c27a", "toneSpread": 50
+    },
+    {
+      "name": "water", "kind": "liquid", "density": 20,
+      "fallAccel": 0.375, "sinkChance": 50,
+      "flowSpeed": 0.9, "flowDamping": 0.8, "dispersion": 4,
+      "color": "#3a7bd5c8", "toneSpread": 20
+    }
+  ]
+}

@@ -31,8 +31,17 @@ func run() error {
 	flag.StringVar(&cfg.MaterialsPath, "materials", "data/materials.json", "material table")
 	shots := flag.String("shots", "", "comma-separated ticks to save as PNG, then exit")
 	flag.StringVar(&cfg.ShotsDir, "shots-dir", "out/shots", "folder for -shots")
+	flag.StringVar(&cfg.ReplayPath, "replay", "", "play back this replay file instead of the devices, then exit")
+	flag.StringVar(&cfg.RecordPath, "record", "", "save this session's inputs to this replay file on exit")
 	flag.Parse()
 
+	if cfg.ReplayPath != "" {
+		for _, name := range []string{"seed", "width", "height"} {
+			if flagSet(name) {
+				return fmt.Errorf("-%s cannot be combined with -replay: the replay sets it", name)
+			}
+		}
+	}
 	cfg.Seed = *seed
 	if !flagSet("seed") {
 		cfg.Seed = uint64(time.Now().UnixNano())
@@ -42,7 +51,6 @@ func run() error {
 		return err
 	}
 	cfg.Shots = ticks
-	slog.Info("starting", "seed", cfg.Seed, "workers", cfg.Workers)
 	return app.Run(&cfg)
 }
 
