@@ -110,6 +110,13 @@ func Run(cfg *Config) error {
 			return err
 		}
 	}
+	var tm *timing
+	if cfg.Timing {
+		var err error
+		if tm, err = newTiming(); err != nil {
+			return err
+		}
+	}
 	mats, err := loadMaterials(cfg.MaterialsPath)
 	if err != nil {
 		return err
@@ -125,6 +132,7 @@ func Run(cfg *Config) error {
 	defer g.Close()
 
 	a := newApp(cfg, g, sess, mats, playback)
+	a.timing = tm
 	if sv != nil {
 		a.prefetch = sv.store
 	}
@@ -154,8 +162,7 @@ func Run(cfg *Config) error {
 }
 
 // newApp returns the app that runs session g, started from sess, as cfg
-// asks: playing the replay if there is one, recording, taking shots and
-// timing.
+// asks: playing the replay if there is one, recording and taking shots.
 func newApp(cfg *Config, g *game.Game, sess *game.Config, mats *material.Table, playback *replay.Replay) *app {
 	a := &app{game: g, rend: render.New(mats), width: sess.ViewWidth, height: sess.ViewHeight}
 	camX, camY := g.Spawn()
@@ -170,9 +177,6 @@ func newApp(cfg *Config, g *game.Game, sess *game.Config, mats *material.Table, 
 	}
 	if len(cfg.Shots) > 0 {
 		a.shots = newShooter(cfg.Shots, cfg.ShotsDir, sess.ViewWidth, sess.ViewHeight)
-	}
-	if cfg.Timing {
-		a.timing = new(timing)
 	}
 	return a
 }
@@ -326,9 +330,9 @@ func (a *app) Update() error {
 		a.recordInput(in)
 	}
 	a.in = in
-	var start time.Time
+	var start time.Duration
 	if a.timing != nil {
-		start = time.Now()
+		start = a.timing.clock.now()
 	}
 	if err := a.game.Step(in); err != nil {
 		return err
@@ -339,7 +343,7 @@ func (a *app) Update() error {
 		a.prefetch.Prefetch(a.game.Upcoming(in.CameraX, in.CameraY, prefetchMargin))
 	}
 	if a.timing != nil {
-		a.timing.addTick(time.Since(start))
+		a.timing.addTick(a.timing.clock.since(start))
 	}
 	return nil
 }
@@ -378,16 +382,16 @@ func (a *app) nextInput() (game.Input, bool) {
 }
 
 func (a *app) Draw(screen *ebiten.Image) {
-	var start time.Time
+	var start time.Duration
 	if a.timing != nil {
-		start = time.Now()
+		start = a.timing.clock.now()
 	}
 	a.rend.DrawWorld(screen, a.game.World(), a.in.CameraX, a.in.CameraY)
 	if a.shots == nil {
 		a.rend.DrawOverlay(screen, a.game, a.in)
 	}
 	if a.timing != nil {
-		a.timing.addDraw(time.Since(start))
+		a.timing.addDraw(a.timing.clock.since(start))
 	}
 }
 

@@ -17,9 +17,19 @@ const frameBudget = time.Second / game.Hz
 // up and one frame holds them all. GPU time is not in it, since Ebitengine
 // sends the draw commands later.
 type timing struct {
+	// clock times the ticks and draws; time.Now is too coarse on Windows.
+	clock             *clock
 	tick, draw, frame spread
 	// pending is the time of the ticks since the last draw.
 	pending time.Duration
+}
+
+func newTiming() (*timing, error) {
+	c, err := newClock()
+	if err != nil {
+		return nil, fmt.Errorf("app: timing: %w", err)
+	}
+	return &timing{clock: c}, nil
 }
 
 func (t *timing) addTick(d time.Duration) {

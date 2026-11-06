@@ -90,11 +90,17 @@ func TestSpreadString(t *testing.T) {
 	}
 }
 
+// Timing a tick and a draw, clock reads included, allocates nothing.
 func TestTimingDoesNotAllocate(t *testing.T) {
-	var tm timing
+	tm, err := newTiming()
+	if err != nil {
+		t.Fatal(err)
+	}
 	if n := testing.AllocsPerRun(100, func() {
-		tm.addTick(3 * ms)
-		tm.addDraw(ms)
+		start := tm.clock.now()
+		tm.addTick(tm.clock.since(start))
+		start = tm.clock.now()
+		tm.addDraw(tm.clock.since(start))
 	}); n != 0 {
 		t.Fatalf("timing allocates %v times a frame", n)
 	}
