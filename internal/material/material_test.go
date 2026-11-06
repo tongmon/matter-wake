@@ -30,6 +30,32 @@ func TestShippedTableLoads(t *testing.T) {
 	if water := tab.Def(tab.MustLookup("water")); water.FallAccel.Float() != 0.375 {
 		t.Errorf("water fallAccel = %v, want 0.375", water.FallAccel)
 	}
+	// Every material a tool may dig says how hard it is to dig.
+	for id := range tab.Len() {
+		if d := tab.Def(ID(id)); d.Kind.Diggable() && d.HP == 0 {
+			t.Errorf("%s is diggable but has no hp", d.Name)
+		}
+	}
+}
+
+func TestDiggable(t *testing.T) {
+	want := map[Kind]bool{Empty: false, Static: true, Powder: true, Liquid: false}
+	for k, dig := range want {
+		if k.Diggable() != dig {
+			t.Errorf("%v.Diggable() = %v, want %v", k, !dig, dig)
+		}
+	}
+}
+
+func TestParseDigValues(t *testing.T) {
+	tab, err := Parse(strings.NewReader(`{"materials":[{"name":"air","kind":"empty"},
+		{"name":"gold","kind":"static","hardness":12,"hp":4000000000}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d := tab.Def(1); d.Hardness != 12 || d.HP != 4000000000 {
+		t.Fatalf("gold has hardness %d and hp %d, want 12 and 4000000000", d.Hardness, d.HP)
+	}
 }
 
 func TestParseRejectsBadTables(t *testing.T) {
@@ -53,6 +79,10 @@ func TestParseRejectsBadTables(t *testing.T) {
 		{"sink over 100", `{"materials":[{"name":"air","kind":"empty"},{"name":"sand","kind":"powder","sinkChance":101}]}`, "percents"},
 		{"negative accel", `{"materials":[{"name":"air","kind":"empty"},{"name":"sand","kind":"powder","fallAccel":-1}]}`, "fallAccel"},
 		{"damping over 1", `{"materials":[{"name":"air","kind":"empty"},{"name":"water","kind":"liquid","flowDamping":1.5}]}`, "flowDamping"},
+		{"hardness on liquid", `{"materials":[{"name":"air","kind":"empty"},{"name":"water","kind":"liquid","hardness":1}]}`, "only powders and statics"},
+		{"hp on air", `{"materials":[{"name":"air","kind":"empty","hp":5}]}`, "only powders and statics"},
+		{"negative hp", `{"materials":[{"name":"air","kind":"empty"},{"name":"sand","kind":"powder","hp":-1}]}`, "hp"},
+		{"hardness over 255", `{"materials":[{"name":"air","kind":"empty"},{"name":"sand","kind":"powder","hardness":256}]}`, "hardness"},
 		{"accel not a number", `{"materials":[{"name":"air","kind":"empty"},{"name":"sand","kind":"powder","fallAccel":"fast"}]}`, "not a number"},
 	}
 	for _, tt := range tests {
@@ -121,6 +151,8 @@ func TestFingerprint(t *testing.T) {
 		{"fallAccel", func(d []Def) []Def { d[1].FallAccel++; return d }},
 		{"slideChance", func(d []Def) []Def { d[1].SlideChance++; return d }},
 		{"color", func(d []Def) []Def { d[1].Color.R++; return d }},
+		{"hardness", func(d []Def) []Def { d[1].Hardness++; return d }},
+		{"hp", func(d []Def) []Def { d[1].HP++; return d }},
 		{"another material", func(d []Def) []Def { return append(d, Def{Name: "stone", Kind: Static}) }},
 	}
 	for _, e := range edits {

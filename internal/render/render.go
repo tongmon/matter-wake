@@ -4,6 +4,7 @@ package render
 import (
 	"fmt"
 	"image/color"
+	"strings"
 
 	"github.com/hajimehoshi/ebiten/v2"
 	"github.com/hajimehoshi/ebiten/v2/ebitenutil"
@@ -26,6 +27,7 @@ type Renderer struct {
 	cells *ebiten.Image
 	pix   []byte
 	pal   *palette.Palette
+	mats  *material.Table
 }
 
 // New returns a renderer for worlds of width × height cells.
@@ -34,6 +36,7 @@ func New(mats *material.Table, width, height int) *Renderer {
 		cells: ebiten.NewImage(width, height),
 		pix:   make([]byte, 4*width*height),
 		pal:   palette.New(mats),
+		mats:  mats,
 	}
 }
 
@@ -45,11 +48,16 @@ func (r *Renderer) DrawWorld(dst *ebiten.Image, w *world.World) {
 	dst.DrawImage(r.cells, nil)
 }
 
-// DrawOverlay draws the brush outline at the cursor and a status line.
+// DrawOverlay draws the brush outline at the cursor, a status line and
+// what the inventory holds of each slot's material.
 func (r *Renderer) DrawOverlay(dst *ebiten.Image, g *game.Game, cursorX, cursorY int) {
-	radius := float32(g.BrushRadius()) + 0.5
+	radius := float32(g.Tool().Radius) + 0.5
 	vector.StrokeCircle(dst, float32(cursorX)+0.5, float32(cursorY)+0.5, radius, 1, brushStroke, false)
-	status := fmt.Sprintf("%s  tick %d  TPS %.0f  FPS %.0f\nLMB place  RMB dig  1-3 material",
-		g.Selected().Name, g.World().Tick(), ebiten.ActualTPS(), ebiten.ActualFPS())
+	var held strings.Builder
+	for i, id := range g.Slots() {
+		fmt.Fprintf(&held, "%d %s %d  ", i+1, r.mats.Def(id).Name, g.Inventory(id))
+	}
+	status := fmt.Sprintf("%s  tick %d  TPS %.0f  FPS %.0f\n%s\nLMB place  RMB dig  1-%d material",
+		g.Selected().Name, g.World().Tick(), ebiten.ActualTPS(), ebiten.ActualFPS(), held.String(), len(g.Slots()))
 	ebitenutil.DebugPrint(dst, status)
 }

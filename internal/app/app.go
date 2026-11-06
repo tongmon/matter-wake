@@ -44,8 +44,10 @@ type Config struct {
 // Slots are the materials keys 1, 2, 3… select. 🧪 sandbox controls.
 var slots = []string{"sand", "water", "stone"}
 
-// brushRadius is the dig and place brush radius in cells. 🧪
-const brushRadius = 4
+// tool is the player's dig and place tool. 🧪 It digs stone (hardness
+// 10, hp 100000) in 50 ticks a cell and sand in one, with a brush of
+// radius 4.
+var tool = game.Tool{Power: 10, Rate: 2000, Radius: 4}
 
 // Run opens the window and plays until it closes, the replay ends or the
 // last shot is taken.
@@ -111,12 +113,12 @@ func Run(cfg *Config) error {
 
 // sessionConfig is the session to start: the replay's when there is one,
 // else the one the command line asks for.
-func sessionConfig(cfg *Config, mats *material.Table, playback *replay.Replay) game.Config {
+func sessionConfig(cfg *Config, mats *material.Table, playback *replay.Replay) *game.Config {
 	if playback == nil {
 		slog.Info("starting", "seed", cfg.Seed, "workers", cfg.Workers)
-		return game.Config{
+		return &game.Config{
 			Width: cfg.Width, Height: cfg.Height, Seed: cfg.Seed, Workers: cfg.Workers,
-			Materials: mats, Slots: slots, BrushRadius: brushRadius,
+			Materials: mats, Slots: slots, Tool: tool,
 		}
 	}
 	slog.Info("replaying", "path", cfg.ReplayPath, "seed", playback.Seed,

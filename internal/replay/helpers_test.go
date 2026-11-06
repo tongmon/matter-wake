@@ -24,7 +24,7 @@ func loadTable(t *testing.T) *material.Table {
 	return tab
 }
 
-func newGame(t *testing.T, cfg game.Config) *game.Game {
+func newGame(t *testing.T, cfg *game.Config) *game.Game {
 	t.Helper()
 	g, err := game.New(cfg)
 	if err != nil {

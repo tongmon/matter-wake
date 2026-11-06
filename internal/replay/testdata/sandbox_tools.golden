@@ -1,21 +1,21 @@
-tick 0 air 115088 stone 5008 sand 4320 water 5184 checksum ca1bf2cdbb59e7b2
-tick 30 air 114990 stone 5106 sand 4320 water 5184 checksum 1a6723cbc9538393
-tick 60 air 114836 stone 5106 sand 4320 water 5338 checksum 9c02bf30382c8cd3
-tick 90 air 114750 stone 5106 sand 4406 water 5338 checksum 4613f176287842fa
-tick 120 air 114962 stone 5018 sand 4282 water 5338 checksum 463ebc7e61175f3f
-tick 150 air 114962 stone 5018 sand 4282 water 5338 checksum 1cd17dc09638b642
-tick 180 air 114998 stone 4988 sand 4282 water 5332 checksum 80f9b8b17c9d20ed
-tick 210 air 115145 stone 4890 sand 4282 water 5283 checksum ef6163160be80654
-tick 240 air 115096 stone 4890 sand 4331 water 5283 checksum ada7da5254ed39af
-tick 270 air 115096 stone 4890 sand 4331 water 5283 checksum af871de10058c617
-tick 300 air 115096 stone 4890 sand 4331 water 5283 checksum ecebc6c6d5cafd43
-tick 330 air 115096 stone 4890 sand 4331 water 5283 checksum d180bd5f09f8fa6b
-tick 360 air 115096 stone 4890 sand 4331 water 5283 checksum 34b7c6a6e3b10e47
-tick 390 air 115096 stone 4890 sand 4331 water 5283 checksum 0420fe2daabc680d
-tick 420 air 115096 stone 4890 sand 4331 water 5283 checksum 0960a5d530236c70
-tick 450 air 115096 stone 4890 sand 4331 water 5283 checksum 8cb0bcdcccf0b031
-tick 480 air 115096 stone 4890 sand 4331 water 5283 checksum 76c569369d792f9c
-tick 510 air 115096 stone 4890 sand 4331 water 5283 checksum 999d8f738b47a368
-tick 540 air 115096 stone 4890 sand 4331 water 5283 checksum b3c9d6921965672e
-tick 570 air 115096 stone 4890 sand 4331 water 5283 checksum 9e537712a40cb6fd
-tick 600 air 115096 stone 4890 sand 4331 water 5283 checksum 5dc210da293f2bc1
+tick 0 air 115088 stone 5008 sand 4320 water 5184 held stone 0 sand 0 water 0 checksum ca1bf2cdbb59e7b2
+tick 30 air 115088 stone 5008 sand 4320 water 5184 held stone 0 sand 0 water 0 checksum c69ee10255c7a588
+tick 60 air 115088 stone 5008 sand 4320 water 5184 held stone 0 sand 0 water 0 checksum 920e37c6362bd2d6
+tick 90 air 115088 stone 5008 sand 4320 water 5184 held stone 0 sand 0 water 0 checksum aa90728f0c8e4a34
+tick 120 air 115195 stone 5008 sand 4213 water 5184 held stone 0 sand 107 water 0 checksum 0368d7e347fd6211
+tick 150 air 115186 stone 5008 sand 4222 water 5184 held stone 0 sand 98 water 0 checksum e313034a2d07ae72
+tick 180 air 115214 stone 4980 sand 4222 water 5184 held stone 28 sand 98 water 0 checksum e55daeb535102c1a
+tick 210 air 115214 stone 4980 sand 4222 water 5184 held stone 28 sand 98 water 0 checksum 0795716250f33236
+tick 240 air 115186 stone 5008 sand 4222 water 5184 held stone 0 sand 98 water 0 checksum 3160328dc7b09057
+tick 270 air 115186 stone 5008 sand 4222 water 5184 held stone 0 sand 98 water 0 checksum 7eda905057b62bc4
+tick 300 air 115214 stone 4980 sand 4222 water 5184 held stone 28 sand 98 water 0 checksum 9e5f0b5b8c7c8e73
+tick 330 air 115196 stone 4998 sand 4222 water 5184 held stone 10 sand 98 water 0 checksum 040929c047fbb324
+tick 360 air 115196 stone 4998 sand 4222 water 5184 held stone 10 sand 98 water 0 checksum 89662b9eb5ac04cb
+tick 390 air 115196 stone 4998 sand 4222 water 5184 held stone 10 sand 98 water 0 checksum 9c9d8ebdf4f6c695
+tick 420 air 115196 stone 4998 sand 4222 water 5184 held stone 10 sand 98 water 0 checksum 353f95a6a7e371ff
+tick 450 air 115196 stone 4998 sand 4222 water 5184 held stone 10 sand 98 water 0 checksum 8bf481e139ddad3e
+tick 480 air 115196 stone 4998 sand 4222 water 5184 held stone 10 sand 98 water 0 checksum a7bd37536cffaf28
+tick 510 air 115196 stone 4998 sand 4222 water 5184 held stone 10 sand 98 water 0 checksum 6637c8ce9a218bbd
+tick 540 air 115196 stone 4998 sand 4222 water 5184 held stone 10 sand 98 water 0 checksum 71a9038fcfdb4bcd
+tick 570 air 115196 stone 4998 sand 4222 water 5184 held stone 10 sand 98 water 0 checksum 921dfd76acdcdcbb
+tick 600 air 115196 stone 4998 sand 4222 water 5184 held stone 10 sand 98 water 0 checksum 7e7e045a7f50a15b
