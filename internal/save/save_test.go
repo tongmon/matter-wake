@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"hash/crc32"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -335,5 +336,30 @@ func BenchmarkDecodeBlock(b *testing.B) {
 		if _, err := DecodeBlock(bytes.NewReader(data), mats); err != nil {
 			b.Fatal(err)
 		}
+	}
+}
+
+// Any table material.NewTable accepts must round-trip: the most materials
+// a table may hold, and names of any length. Found by the Codex review of
+// the block format (2026-11-06).
+func TestBlockTakesAnyMaterialTable(t *testing.T) {
+	long := strings.Repeat("n", 300)
+	defs := []material.Def{{Name: "air", Kind: material.Empty}, {Name: long, Kind: material.Static}}
+	for i := len(defs); i < material.MaxMaterials; i++ {
+		defs = append(defs, material.Def{Name: "m" + strconv.Itoa(i), Kind: material.Static})
+	}
+	mats, err := material.NewTable(defs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := new(world.Block)
+	b[1].Mat = mats.MustLookup(long)
+	b[2].Mat = material.ID(material.MaxMaterials - 1)
+	got, err := DecodeBlock(bytes.NewReader(encode(t, b, mats)), mats)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got[1].Mat != b[1].Mat || got[2].Mat != b[2].Mat {
+		t.Fatalf("cells hold %d and %d after the round trip, want %d and %d", got[1].Mat, got[2].Mat, b[1].Mat, b[2].Mat)
 	}
 }

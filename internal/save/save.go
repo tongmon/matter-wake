@@ -10,7 +10,7 @@
 //
 //	"mw-block"            8 bytes
 //	version               uint16
-//	materials             uint16 count, then each name: uint8 length, bytes
+//	materials             uint32 count, then each name: uint32 length, bytes
 //	fields                uint8 count, then each field:
 //	                        name: uint8 length, bytes
 //	                        bytes per cell: uint8
@@ -133,9 +133,13 @@ func EncodeBlock(w io.Writer, b *world.Block, mats *material.Table) error {
 	// A bufio.Writer keeps its first error and Flush returns it.
 	_, _ = bw.WriteString(blockMagic)
 	writeUint(bw, BlockVersion, 2)
-	writeUint(bw, uint64(mats.Len()), 2)
+	// A table holds up to material.MaxMaterials materials, with names of
+	// any length, so both take 32 bits.
+	writeUint(bw, uint64(mats.Len()), 4)
 	for i := range mats.Len() {
-		writeName(bw, mats.Def(material.ID(i)).Name)
+		name := mats.Def(material.ID(i)).Name
+		writeUint(bw, uint64(len(name)), 4)
+		_, _ = bw.WriteString(name)
 	}
 	writeUint(bw, uint64(len(fields)), 1)
 	raw := make([]byte, 4*cells)
@@ -278,12 +282,15 @@ func (d *decoder) block(mats *material.Table) (*world.Block, error) {
 // materials reads the block's material names and returns, for each, its
 // ID in mats or -1.
 func (d *decoder) materials(mats *material.Table) (ids []int, names []string, err error) {
-	n, err := d.uint(2)
+	n, err := d.uint(4)
 	if err != nil {
 		return nil, nil, err
 	}
+	if n > material.MaxMaterials {
+		return nil, nil, fmt.Errorf("%d materials, at most %d", n, material.MaxMaterials)
+	}
 	for range n {
-		name, err := d.name()
+		name, err := d.text(4)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -298,7 +305,7 @@ func (d *decoder) materials(mats *material.Table) (ids []int, names []string, er
 
 // field reads the field f of every cell into raw.
 func (d *decoder) field(f field, raw []byte) error {
-	name, err := d.name()
+	name, err := d.text(1)
 	if err != nil {
 		return err
 	}
@@ -350,10 +357,14 @@ func (d *decoder) uint(size int) (uint64, error) {
 	return binary.LittleEndian.Uint64(b[:]), nil
 }
 
-func (d *decoder) name() (string, error) {
-	n, err := d.uint(1)
+// text reads a string after its length, which takes size bytes.
+func (d *decoder) text(size int) (string, error) {
+	n, err := d.uint(size)
 	if err != nil {
 		return "", err
+	}
+	if n > uint64(d.r.Len()) {
+		return "", io.ErrUnexpectedEOF
 	}
 	b := make([]byte, n)
 	if _, err := io.ReadFull(d.r, b); err != nil {
