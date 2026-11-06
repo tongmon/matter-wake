@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -25,7 +26,7 @@ func main() {
 	}
 }
 
-func run() (err error) {
+func run() error {
 	var cfg app.Config
 	scene := flag.String("scene", "sandbox", "world to play in: sandbox, a small room, or terrain, the big world")
 	flag.IntVar(&cfg.Width, "width", 0, "world width in cells (default: 480 in the sandbox, 16384 in the terrain)")
@@ -64,19 +65,22 @@ func run() (err error) {
 		return err
 	}
 	cfg.Shots = ticks
-	if *profile != "" {
-		stop, err := startProfile(*profile)
-		if err != nil {
-			return err
-		}
-		defer func() { err = errors.Join(err, stop()) }()
+	if *profile == "" {
+		return app.Run(&cfg)
 	}
-	return app.Run(&cfg)
+	f, err := createProfile(*profile)
+	if err != nil {
+		return err
+	}
+	if err := profileTo(f, func() error { return app.Run(&cfg) }); err != nil {
+		return err
+	}
+	slog.Info("profiled", "path", *profile)
+	return nil
 }
 
-// startProfile starts a CPU profile written to path and returns what stops
-// it.
-func startProfile(path string) (stop func() error, err error) {
+// createProfile creates the file of a CPU profile, and its folder.
+func createProfile(path string) (*os.File, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 		return nil, fmt.Errorf("-cpuprofile: %w", err)
 	}
@@ -84,17 +88,22 @@ func startProfile(path string) (stop func() error, err error) {
 	if err != nil {
 		return nil, fmt.Errorf("-cpuprofile: %w", err)
 	}
-	if err := pprof.StartCPUProfile(f); err != nil {
-		return nil, errors.Join(fmt.Errorf("-cpuprofile: %w", err), f.Close())
+	return f, nil
+}
+
+// profileTo runs fn while a CPU profile is written to w, and closes w. A
+// profile that cannot be finished fails the run even when fn did not.
+func profileTo(w io.WriteCloser, fn func() error) (err error) {
+	if err := pprof.StartCPUProfile(w); err != nil {
+		return errors.Join(fmt.Errorf("-cpuprofile: %w", err), w.Close())
 	}
-	return func() error {
+	defer func() {
 		pprof.StopCPUProfile()
-		if err := f.Close(); err != nil {
-			return fmt.Errorf("-cpuprofile: %w", err)
+		if cerr := w.Close(); cerr != nil {
+			err = errors.Join(err, fmt.Errorf("-cpuprofile: %w", cerr))
 		}
-		slog.Info("profiled", "path", path)
-		return nil
-	}, nil
+	}()
+	return fn()
 }
 
 // setScene sets the scene and fills in the world size the flags left out:
