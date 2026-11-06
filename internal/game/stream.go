@@ -121,6 +121,33 @@ func (g *Game) evict(need blockRange, camX, camY int) error {
 	return nil
 }
 
+// Upcoming returns the blocks the view at (camX, camY) would need with
+// extra more cells of margin on each side that are not in memory: those
+// the camera will likely ask for next, nearest first. The app prepares
+// them in the background, so loading them later does not stall a tick. It
+// changes nothing; which blocks load and when is still Step's alone.
+func (g *Game) Upcoming(camX, camY, extra int) [][2]int {
+	if g.terrain == nil {
+		return nil
+	}
+	near := g.around(camX, camY, g.limits.Margin+extra)
+	var out [][2]int
+	for by := near.y0; by < near.y1; by++ {
+		for bx := near.x0; bx < near.x1; bx++ {
+			if !g.world.Resident(bx, by) {
+				out = append(out, [2]int{bx, by})
+			}
+		}
+	}
+	cx, cy := 2*camX+g.viewW, 2*camY+g.viewH
+	dist := func(b [2]int) int {
+		dx, dy := 2*b[0]*world.BlockSize+world.BlockSize-cx, 2*b[1]*world.BlockSize+world.BlockSize-cy
+		return dx*dx + dy*dy
+	}
+	slices.SortStableFunc(out, func(a, b [2]int) int { return dist(a) - dist(b) })
+	return out
+}
+
 // blockRange is a half-open range of blocks, [x0, x1) × [y0, y1).
 type blockRange struct{ x0, y0, x1, y1 int }
 
@@ -133,8 +160,13 @@ func (r blockRange) has(b [2]int) bool {
 // widens the area by 256 on each side and takes the blocks it overlaps
 // (WORLD_STREAMING:26-32).
 func (g *Game) needed(camX, camY int) blockRange {
+	return g.around(camX, camY, g.limits.Margin)
+}
+
+// around returns the blocks that the view at (camX, camY), widened by m
+// cells on each side, overlaps.
+func (g *Game) around(camX, camY, m int) blockRange {
 	cols, rows := g.world.Blocks()
-	m := g.limits.Margin
 	x0, y0 := max(camX-m, 0), max(camY-m, 0)
 	x1, y1 := min(camX+g.viewW+m, g.world.Width()), min(camY+g.viewH+m, g.world.Height())
 	if x0 >= x1 || y0 >= y1 {

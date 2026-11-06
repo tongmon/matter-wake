@@ -293,3 +293,35 @@ func TestResume(t *testing.T) {
 		})
 	}
 }
+
+// Upcoming lists the blocks a wider margin would need that are not in
+// memory, nearest the camera first, and changes nothing.
+func TestUpcoming(t *testing.T) {
+	g := newTerrainGame(t, 1)
+	x, y := g.Spawn()
+	before := g.world.Checksum()
+	ahead := g.Upcoming(x, y, 512)
+	if len(ahead) == 0 {
+		t.Fatal("no blocks ahead with 512 more cells of margin")
+	}
+	for i, b := range ahead {
+		if g.world.Resident(b[0], b[1]) {
+			t.Fatalf("block %v is in memory but listed as upcoming", b)
+		}
+		if i > 0 {
+			d := func(b [2]int) int {
+				dx, dy := 2*b[0]*512+512-(2*x+480), 2*b[1]*512+512-(2*y+270)
+				return dx*dx + dy*dy
+			}
+			if d(ahead[i-1]) > d(b) {
+				t.Fatalf("block %v comes after the farther %v", b, ahead[i-1])
+			}
+		}
+	}
+	if len(g.Upcoming(x, y, 0)) != 0 {
+		t.Fatal("blocks the view needs now are listed as upcoming, though they are in memory")
+	}
+	if g.world.Checksum() != before || len(g.resident) != 4 {
+		t.Fatal("Upcoming changed the world")
+	}
+}
