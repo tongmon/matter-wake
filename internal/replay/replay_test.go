@@ -40,6 +40,7 @@ func TestWrite(t *testing.T) {
 seed 7
 size 64 32
 tool 10 2000 2
+mode play
 slots sand water
 materials 0123456789abcdef
 ticks 8
@@ -78,6 +79,7 @@ func TestRoundTrip(t *testing.T) {
 		t.Run(fmt.Sprint(i), func(t *testing.T) {
 			r := sample()
 			r.Inputs = inputs
+			r.Creative = i%2 == 1
 			var buf bytes.Buffer
 			if err := Write(&buf, r); err != nil {
 				t.Fatal(err)
@@ -102,7 +104,7 @@ func TestRoundTrip(t *testing.T) {
 func checkHeader(t *testing.T, got, want *Replay) {
 	t.Helper()
 	if got.Seed != want.Seed || got.Width != want.Width || got.Height != want.Height ||
-		got.Tool != want.Tool || got.Materials != want.Materials ||
+		got.Tool != want.Tool || got.Creative != want.Creative || got.Materials != want.Materials ||
 		strings.Join(got.Slots, ",") != strings.Join(want.Slots, ",") {
 		t.Fatalf("header = %+v, want %+v", got, want)
 	}
@@ -117,6 +119,7 @@ func TestReadHandWritten(t *testing.T) {
 		"seed 18446744073709551615\r\n" +
 		"size  64   32 \r\n" +
 		"tool  0 1  0\r\n" +
+		"mode creative \r\n" +
 		"slots stone\r\n" +
 		"materials unknown\r\n" +
 		"ticks 6\r\n" +
@@ -129,7 +132,8 @@ func TestReadHandWritten(t *testing.T) {
 		t.Fatal(err)
 	}
 	checkHeader(t, r, &Replay{
-		Seed: 1<<64 - 1, Width: 64, Height: 32, Tool: game.Tool{Rate: 1}, Slots: []string{"stone"}, Materials: "unknown",
+		Seed: 1<<64 - 1, Width: 64, Height: 32, Tool: game.Tool{Rate: 1}, Creative: true,
+		Slots: []string{"stone"}, Materials: "unknown",
 	})
 	want := []game.Input{none, put, put, put, {Select: 1}, none}
 	if len(r.Inputs) != len(want) {
@@ -143,7 +147,7 @@ func TestReadHandWritten(t *testing.T) {
 }
 
 func TestReadErrors(t *testing.T) {
-	const header = "matter-wake-replay 2\nseed 1\nsize 64 32\ntool 10 2000 4\nslots sand\nmaterials 00\n"
+	const header = "matter-wake-replay 2\nseed 1\nsize 64 32\ntool 10 2000 4\nmode play\nslots sand\nmaterials 00\n"
 	tests := []struct {
 		name, src, wantErr string
 	}{
@@ -161,9 +165,11 @@ func TestReadErrors(t *testing.T) {
 		{"negative radius", "matter-wake-replay 2\nseed 1\nsize 64 32\ntool 10 2000 -1\n", "tool"},
 		{"power over 255", "matter-wake-replay 2\nseed 1\nsize 64 32\ntool 256 2000 4\n", "tool"},
 		{"zero rate", "matter-wake-replay 2\nseed 1\nsize 64 32\ntool 10 0 4\n", "tool"},
-		{"no slots", "matter-wake-replay 2\nseed 1\nsize 64 32\ntool 10 2000 4\nslots\n", "slots"},
-		{"no materials", "matter-wake-replay 2\nseed 1\nsize 64 32\ntool 10 2000 4\nslots sand\nmaterials\n", "materials"},
-		{"two fingerprints", "matter-wake-replay 2\nseed 1\nsize 64 32\ntool 10 2000 4\nslots sand\nmaterials a b\n", "materials"},
+		{"no mode", "matter-wake-replay 2\nseed 1\nsize 64 32\ntool 10 2000 4\nslots sand\n", `"mode`},
+		{"bad mode", "matter-wake-replay 2\nseed 1\nsize 64 32\ntool 10 2000 4\nmode fast\n", "mode"},
+		{"no slots", "matter-wake-replay 2\nseed 1\nsize 64 32\ntool 10 2000 4\nmode play\nslots\n", "slots"},
+		{"no materials", "matter-wake-replay 2\nseed 1\nsize 64 32\ntool 10 2000 4\nmode play\nslots sand\nmaterials\n", "materials"},
+		{"two fingerprints", "matter-wake-replay 2\nseed 1\nsize 64 32\ntool 10 2000 4\nmode play\nslots sand\nmaterials a b\n", "materials"},
 		{"no ticks", header, `"ticks`},
 		{"negative ticks", header + "ticks -1\n", "ticks"},
 		{"too many ticks", header + fmt.Sprintf("ticks %d\n", MaxTicks+1), "at most"},
@@ -224,11 +230,11 @@ func TestNewAndConfig(t *testing.T) {
 	tab := loadTable(t)
 	cfg := &game.Config{
 		Width: 96, Height: 64, Seed: 42, Workers: 3, Materials: tab,
-		Slots: []string{"water", "stone"}, Tool: game.Tool{Power: 3, Rate: 77, Radius: 5},
+		Slots: []string{"water", "stone"}, Tool: game.Tool{Power: 3, Rate: 77, Radius: 5}, Creative: true,
 	}
 	r := New(cfg)
 	want := &Replay{
-		Seed: 42, Width: 96, Height: 64, Tool: game.Tool{Power: 3, Rate: 77, Radius: 5},
+		Seed: 42, Width: 96, Height: 64, Tool: game.Tool{Power: 3, Rate: 77, Radius: 5}, Creative: true,
 		Slots: []string{"water", "stone"}, Materials: tab.Fingerprint(),
 	}
 	checkHeader(t, r, want)
@@ -241,7 +247,7 @@ func TestNewAndConfig(t *testing.T) {
 	}
 	got := r.Config(tab, 2)
 	if got.Width != 96 || got.Height != 64 || got.Seed != 42 || got.Workers != 2 || got.Materials != tab ||
-		strings.Join(got.Slots, ",") != "water,stone" || got.Tool != cfg.Tool {
+		strings.Join(got.Slots, ",") != "water,stone" || got.Tool != cfg.Tool || !got.Creative {
 		t.Fatalf("Config = %+v", got)
 	}
 }

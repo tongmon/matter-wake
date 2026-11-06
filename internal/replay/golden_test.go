@@ -39,6 +39,9 @@ func TestGoldenReplays(t *testing.T) {
 	for _, path := range paths {
 		t.Run(filepath.Base(path), func(t *testing.T) {
 			r := load(t, path)
+			if r.Creative {
+				t.Fatal("a golden replay must be in play mode: creative mode makes cells, so nothing pins their conservation")
+			}
 			got, cov := trace(t, r, tab, 1)
 			// The result must not depend on the worker count.
 			if many, _ := trace(t, r, tab, 4); many != got {

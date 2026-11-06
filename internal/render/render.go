@@ -54,6 +54,9 @@ func (r *Renderer) DrawOverlay(dst *ebiten.Image, g *game.Game, cursorX, cursorY
 	radius := float32(g.Tool().Radius) + 0.5
 	vector.StrokeCircle(dst, float32(cursorX)+0.5, float32(cursorY)+0.5, radius, 1, brushStroke, false)
 	var held strings.Builder
+	if g.Creative() {
+		held.WriteString("creative (places without the inventory)  ")
+	}
 	for i, id := range g.Slots() {
 		fmt.Fprintf(&held, "%d %s %d  ", i+1, r.mats.Def(id).Name, g.Inventory(id))
 	}
