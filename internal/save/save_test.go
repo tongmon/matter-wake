@@ -376,7 +376,7 @@ func TestSessionRoundTrip(t *testing.T) {
 	if err := WriteSession(&buf, in); err != nil {
 		t.Fatal(err)
 	}
-	want := "matter-wake-session 1\ncamera 7952 -3\nslot 3\nheld sand 120\nheld stone 15\nblock 15 1\nblock 16 1\nblock 16 2\n"
+	want := "matter-wake-session 1\ncamera 7952 -3\nslot 3\nheld \"sand\" 120\nheld \"stone\" 15\nblock 15 1\nblock 16 1\nblock 16 2\n"
 	if got := buf.String(); got != want {
 		t.Fatalf("WriteSession wrote %q, want %q", got, want)
 	}
@@ -390,20 +390,27 @@ func TestSessionRoundTrip(t *testing.T) {
 	}
 }
 
-// A material name may be of any length, so a session holding one must read
-// back. Found by the Codex review of the save folder (2026-11-06).
-func TestSessionTakesLongNames(t *testing.T) {
-	long := strings.Repeat("n", 1<<16)
+// A material name may be anything a table takes: of any length, with
+// spaces or quotes. A session holding one must read back. Found by two
+// Codex reviews of the save folder (2026-11-06).
+func TestSessionTakesAnyName(t *testing.T) {
+	names := []string{strings.Repeat("n", 1<<16), "wet sand", "tab\tand \"quote\"", " "}
+	held := map[string]int{}
+	for i, name := range names {
+		held[name] = i + 1
+	}
 	var buf bytes.Buffer
-	if err := WriteSession(&buf, &Session{Slot: 1, Held: map[string]int{long: 2}}); err != nil {
+	if err := WriteSession(&buf, &Session{Slot: 1, Held: held}); err != nil {
 		t.Fatal(err)
 	}
 	got, err := ReadSession(&buf)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Held[long] != 2 {
-		t.Fatalf("the long name reads back holding %d, want 2", got.Held[long])
+	for name, n := range held {
+		if got.Held[name] != n {
+			t.Errorf("%q reads back holding %d, want %d", name, got.Held[name], n)
+		}
 	}
 }
 
@@ -416,9 +423,10 @@ func TestSessionRefusesBadFiles(t *testing.T) {
 		{"newer version", "matter-wake-session 2\n", "format version 2"},
 		{"bad camera", "matter-wake-session 1\ncamera 1 x\n", "camera y"},
 		{"slot 0", "matter-wake-session 1\ncamera 1 2\nslot 0\n", "slot 0"},
-		{"bad held line", head + "held sand\n", "held <material> <count>"},
-		{"negative count", head + "held sand -4\n", "count of sand"},
-		{"held twice", head + "held sand 1\nheld sand 2\n", "twice"},
+		{"bad held line", head + "held \"sand\"\n", "<count>"},
+		{"unquoted name", head + "held sand 4\n", "<count>"},
+		{"negative count", head + "held \"sand\" -4\n", "count of"},
+		{"held twice", head + "held \"sand\" 1\nheld \"sand\" 2\n", "twice"},
 		{"negative block", head + "block -1 2\n", "block x"},
 		{"block twice", head + "block 1 2\nblock 1 2\n", "twice"},
 		{"other line", head + "seed 4\n", "block <x> <y>"},
@@ -434,7 +442,6 @@ func TestSessionRefusesBadFiles(t *testing.T) {
 	bad := []*Session{
 		{Slot: 0},
 		{Slot: 1, Held: map[string]int{"sand": -1}},
-		{Slot: 1, Held: map[string]int{"wet sand": 1}},
 		{Slot: 1, Blocks: [][2]int{{-1, 0}}},
 		{Slot: 1, Blocks: [][2]int{{1, 0}, {1, 0}}},
 	}

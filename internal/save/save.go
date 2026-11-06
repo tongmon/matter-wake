@@ -47,7 +47,6 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-	"unicode"
 
 	"github.com/tongmon/matter-wake/internal/fixed"
 	"github.com/tongmon/matter-wake/internal/material"
@@ -546,13 +545,14 @@ const sessionMagic = "matter-wake-session"
 //	matter-wake-session 1
 //	camera 7952 955
 //	slot 3
-//	held sand 120
-//	held stone 15
+//	held "sand" 120
+//	held "stone" 15
 //	block 15 1
 //	block 16 1
 //
-// Only materials the inventory holds get a held line, in name order; the
-// blocks follow in row order.
+// Only materials the inventory holds get a held line, in name order, the
+// name quoted as in Go, since it may hold spaces; the blocks follow in
+// row order.
 type Session struct {
 	CameraX, CameraY int
 	// Slot is the selected slot, 1-based as the keys are.
@@ -573,7 +573,7 @@ func WriteSession(w io.Writer, s *Session) error {
 	_, _ = fmt.Fprintf(bw, "%s %d\ncamera %d %d\nslot %d\n", sessionMagic, SessionVersion, s.CameraX, s.CameraY, s.Slot)
 	names := make([]string, 0, len(s.Held))
 	for name, n := range s.Held {
-		if n < 0 || strings.ContainsFunc(name, unicode.IsSpace) || name == "" {
+		if n < 0 || name == "" {
 			return fmt.Errorf("save: holding %d of %q", n, name)
 		}
 		if n > 0 {
@@ -582,7 +582,8 @@ func WriteSession(w io.Writer, s *Session) error {
 	}
 	slices.Sort(names)
 	for _, name := range names {
-		_, _ = fmt.Fprintf(bw, "held %s %d\n", name, s.Held[name])
+		// Quoted, since a material name may hold spaces or anything else.
+		_, _ = fmt.Fprintf(bw, "held %s %d\n", strconv.Quote(name), s.Held[name])
 	}
 	blocks := slices.Clone(s.Blocks)
 	slices.SortFunc(blocks, func(a, b [2]int) int {
@@ -603,6 +604,27 @@ func WriteSession(w io.Writer, s *Session) error {
 	return nil
 }
 
+// held reads the rest of a held line, a quoted material name and a count,
+// into held.
+func (l *lines) held(held map[string]int, rest string) {
+	quoted, err := strconv.QuotedPrefix(rest)
+	if err != nil {
+		l.err = fmt.Errorf("line %q, want %q", l.line, `held "<material>" <count>`)
+		return
+	}
+	name, err := strconv.Unquote(quoted)
+	f := strings.Fields(rest[len(quoted):])
+	if err != nil || len(f) != 1 {
+		l.err = fmt.Errorf("line %q, want %q", l.line, `held "<material>" <count>`)
+		return
+	}
+	if _, dup := held[name]; dup {
+		l.err = fmt.Errorf("%q is held twice", name)
+		return
+	}
+	held[name] = int(l.uint("count of "+quoted, f[0], 62))
+}
+
 // ReadSession reads a session file that WriteSession wrote.
 func ReadSession(r io.Reader) (*Session, error) {
 	l := newLines(r)
@@ -619,12 +641,8 @@ func ReadSession(r io.Reader) (*Session, error) {
 	for l.err == nil && l.scan() {
 		f := strings.Fields(l.line)
 		switch {
-		case len(f) == 3 && f[0] == "held":
-			if _, dup := s.Held[f[1]]; dup {
-				l.err = fmt.Errorf("%q is held twice", f[1])
-				break
-			}
-			s.Held[f[1]] = int(l.uint("count of "+f[1], f[2], 62))
+		case strings.HasPrefix(l.line, "held "):
+			l.held(s.Held, strings.TrimPrefix(l.line, "held "))
 		case len(f) == 3 && f[0] == "block":
 			b := [2]int{int(l.uint("block x", f[1], 31)), int(l.uint("block y", f[2], 31))}
 			if seen[b] {
@@ -634,7 +652,7 @@ func ReadSession(r io.Reader) (*Session, error) {
 			seen[b] = true
 			s.Blocks = append(s.Blocks, b)
 		default:
-			l.err = fmt.Errorf("line %q, want %q or %q", l.line, "held <material> <count>", "block <x> <y>")
+			l.err = fmt.Errorf("line %q, want %q or %q", l.line, `held "<material>" <count>`, "block <x> <y>")
 		}
 	}
 	if l.err != nil {

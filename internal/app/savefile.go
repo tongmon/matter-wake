@@ -243,15 +243,14 @@ func readSession(dir string, tick uint32, mats *material.Table) (*game.Resume, e
 // writeSave puts the session into dir: every block in memory, then the
 // world header at the current tick and the session with the camera at
 // (camX, camY). The blocks go first, so a header never runs ahead of its
-// blocks. The session's blocks stay in memory; it may go on.
+// blocks. The header and the session are encoded before anything is
+// written, so a failure to encode them cannot leave half a save. The
+// session's blocks stay in memory; it may go on.
 func writeSave(dir string, g *game.Game, camX, camY int) error {
-	if err := g.SaveBlocks(); err != nil {
-		return err
-	}
 	w := g.World()
-	m := save.Meta{Seed: w.Seed(), Width: w.Width(), Height: w.Height(), Tick: w.Tick()}
-	if err := writeFile(filepath.Join(dir, worldFile), func(out io.Writer) error { return save.WriteMeta(out, m) }); err != nil {
-		return err
+	var meta, session bytes.Buffer
+	if err := save.WriteMeta(&meta, save.Meta{Seed: w.Seed(), Width: w.Width(), Height: w.Height(), Tick: w.Tick()}); err != nil {
+		return fmt.Errorf("app: %w", err)
 	}
 	p := &save.Session{CameraX: camX, CameraY: camY, Slot: g.Slot(), Held: map[string]int{}, Blocks: g.ResidentBlocks()}
 	for id := range g.Materials().Len() {
@@ -259,5 +258,20 @@ func writeSave(dir string, g *game.Game, camX, camY int) error {
 			p.Held[g.Materials().Def(material.ID(id)).Name] = n
 		}
 	}
-	return writeFile(filepath.Join(dir, sessionFile), func(out io.Writer) error { return save.WriteSession(out, p) })
+	if err := save.WriteSession(&session, p); err != nil {
+		return fmt.Errorf("app: %w", err)
+	}
+	if err := g.SaveBlocks(); err != nil {
+		return err
+	}
+	if err := writeFile(filepath.Join(dir, worldFile), func(out io.Writer) error {
+		_, err := out.Write(meta.Bytes())
+		return err
+	}); err != nil {
+		return err
+	}
+	return writeFile(filepath.Join(dir, sessionFile), func(out io.Writer) error {
+		_, err := out.Write(session.Bytes())
+		return err
+	})
 }

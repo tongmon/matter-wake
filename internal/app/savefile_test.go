@@ -271,3 +271,33 @@ func TestOpenSaveRefusesReadOnlyFiles(t *testing.T) {
 		})
 	}
 }
+
+// Only one session at a time may have a save folder open, or the one that
+// closes last would undo what the other saved. A lock left by a process
+// that is gone, after a crash, is taken over. Found by the Codex review of
+// the save folder (2026-11-06).
+func TestSaveFolderIsLocked(t *testing.T) {
+	dir := t.TempDir()
+	unlock, err := lockSave(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := lockSave(dir); err == nil || !strings.Contains(err.Error(), "open") {
+		t.Fatalf("a second lock on the folder: error %v, want one saying it is open", err)
+	}
+	unlock()
+	again, err := lockSave(dir)
+	if err != nil {
+		t.Fatalf("locking again after unlocking: %v", err)
+	}
+	again()
+	// A lock whose process is gone.
+	if err := os.WriteFile(filepath.Join(dir, lockFile), []byte("2147483646\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	stale, err := lockSave(dir)
+	if err != nil {
+		t.Fatalf("taking over a lock left by a process that is gone: %v", err)
+	}
+	stale()
+}

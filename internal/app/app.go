@@ -102,10 +102,12 @@ func Run(cfg *Config) error {
 	if err != nil {
 		return err
 	}
-	sess, saveDir, err := openSession(cfg, mats, playback)
+	sess, saveDir, unlock, err := openSession(cfg, mats, playback)
 	if err != nil {
 		return err
 	}
+	// Deferred first, so it runs last: after the save is written.
+	defer unlock()
 	g, err := game.New(sess)
 	if err != nil {
 		return err
@@ -174,22 +176,28 @@ func sessionConfig(cfg *Config, mats *material.Table, playback *replay.Replay) *
 }
 
 // openSession returns the session to start and the folder it saves in,
-// if any: a saved world goes on from there.
-func openSession(cfg *Config, mats *material.Table, playback *replay.Replay) (*game.Config, string, error) {
-	sess := sessionConfig(cfg, mats, playback)
-	dir, err := saveFolder(cfg, playback)
-	if err != nil || dir == "" {
-		return sess, "", err
+// if any: a saved world goes on from there. The folder stays locked to
+// this process until unlock, which does nothing without a folder.
+func openSession(cfg *Config, mats *material.Table, playback *replay.Replay) (
+	sess *game.Config, dir string, unlock func(), err error,
+) {
+	sess = sessionConfig(cfg, mats, playback)
+	if dir, err = saveFolder(cfg, playback); err != nil || dir == "" {
+		return sess, "", func() {}, err
+	}
+	if unlock, err = lockSave(dir); err != nil {
+		return nil, "", nil, err
 	}
 	if sess, err = openSave(dir, sess, cfg.FixedWorld); err != nil {
-		return nil, "", err
+		unlock()
+		return nil, "", nil, err
 	}
 	if sess.Resume != nil {
 		slog.Info("resuming", "save", dir, "seed", sess.Seed, "tick", sess.Resume.Tick)
 	} else {
 		slog.Info("saving a new world", "save", dir)
 	}
-	return sess, dir, nil
+	return sess, dir, unlock, nil
 }
 
 // saveFolder returns the folder the session saves in: the terrain's, when
