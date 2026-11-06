@@ -140,9 +140,7 @@ func totals(g *game.Game, tab *material.Table) []int {
 
 func countCells(g *game.Game, tab *material.Table) []int {
 	counts := make([]int, tab.Len())
-	for _, c := range g.World().Cells() {
-		counts[c.Mat]++
-	}
+	g.World().Counts(counts)
 	return counts
 }
 

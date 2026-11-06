@@ -84,7 +84,7 @@ Module path: `github.com/tongmon/matter-wake`.
 | `internal/render/` | Draws a session: uploads cell colors, overlay. | yes |
 | `internal/input/` | Maps devices to `game.Input`. | yes |
 | `internal/game/` | A play session: the world plus the player's tools, stepped by `Input`. | **no** |
-| `internal/world/` | The cell grid and its tick. | **no** |
+| `internal/world/` | The cell grid, kept in 512×512 blocks that can be loaded and unloaded, and its tick. | **no** |
 | `internal/material/` | Material kinds and the data loader. | **no** |
 | `internal/palette/` | Cells to premultiplied RGBA, testable without a GPU. | **no** |
 | `internal/scene/` | Starting worlds. | **no** |

@@ -19,6 +19,11 @@
 // decides so from the cell, the two beside it and the three below it, so a
 // cell that did nothing last time does nothing again until one of those
 // changes, and then it is marked (TestSleepMatchesScanningEverything).
+//
+// The cells are kept in blocks of 8×8 chunks (Block). A big world keeps
+// only some blocks in memory, and its owner loads and unloads them
+// (LoadBlock, UnloadBlock). A chunk runs only when every cell its updates
+// could reach is in memory; the others wait as they are.
 package world
 
 import (
@@ -120,23 +125,33 @@ type Config struct {
 	// caller's goroutine.
 	Workers   int
 	Materials *material.Table
+	// Streamed starts the world with no block in memory, for a world too
+	// big to hold: the caller loads the blocks it needs. Otherwise every
+	// block starts in memory, filled with air.
+	Streamed bool
 }
 
 // World is a grid of cells. It is not safe for concurrent use.
 type World struct {
 	width, height int
-	cells         []Cell
 	tick          uint32
 	seed          uint64
+	// blocks holds the blocks of cells row by row, nil for those not in
+	// memory; bcols and brows are how many a row and a column have.
+	blocks       []*Block
+	bcols, brows int
+	// resident lists the indexes of the blocks in memory, in order.
+	resident []int
 	// mats holds every material's values. Indexing an array of
 	// MaxMaterials entries with a material.ID needs no bounds check.
 	mats *[material.MaxMaterials]matProps
 	pool *sched.Pool
 	// bounds are all the cells.
 	bounds rect
-	// chunks holds every chunk, row by row; cols is how many a row has.
-	chunks []chunk
-	cols   int
+	// chunks holds every chunk, row by row; cols and rows are how many a
+	// row and a column have.
+	chunks     []chunk
+	cols, rows int
 	// dirty is each chunk's change rectangle: the cells its next run
 	// scans. An empty one means the chunk sleeps.
 	dirty []rect
@@ -148,9 +163,6 @@ type World struct {
 	// in it.
 	version  uint64
 	versions []uint64
-	// phases run in order: for each row of chunks from the bottom, its even
-	// columns, then its odd columns.
-	phases [][]chunk
 	// jobs are the runs of the phase being run; stepChunk reads them.
 	jobs []job
 	// awake is how many chunks the last tick ran.
@@ -182,19 +194,29 @@ func New(cfg Config) (*World, error) {
 	w := &World{
 		width:  cfg.Width,
 		height: cfg.Height,
-		cells:  make([]Cell, cfg.Width*cfg.Height),
 		seed:   cfg.Seed,
 		mats:   mats,
 		pool:   sched.New(cfg.Workers),
 		bounds: rect{0, 0, cfg.Width, cfg.Height},
+		bcols:  (cfg.Width + BlockSize - 1) / BlockSize,
+		brows:  (cfg.Height + BlockSize - 1) / BlockSize,
 		cols:   (cfg.Width + ChunkSize - 1) / ChunkSize,
+		rows:   (cfg.Height + ChunkSize - 1) / ChunkSize,
 	}
-	rows := (cfg.Height + ChunkSize - 1) / ChunkSize
-	for cy := range rows {
+	w.blocks = make([]*Block, w.bcols*w.brows)
+	if !cfg.Streamed {
+		for i := range w.blocks {
+			// A new block is all air, so nothing in it needs marking.
+			w.blocks[i] = new(Block)
+			w.resident = append(w.resident, i)
+		}
+	}
+	w.chunks = make([]chunk, 0, w.cols*w.rows)
+	for cy := range w.rows {
 		for cx := range w.cols {
 			x0, y0 := cx*ChunkSize, cy*ChunkSize
 			w.chunks = append(w.chunks, chunk{
-				cx: cx, cy: cy, i: len(w.chunks), first: cx%2 == 0,
+				cx: cx, cy: cy, i: len(w.chunks), phase: w.phase(cy, cx%2), first: cx%2 == 0,
 				cells: rect{x0, y0, min(x0+ChunkSize, cfg.Width), min(y0+ChunkSize, cfg.Height)},
 			})
 		}
@@ -202,21 +224,17 @@ func New(cfg Config) (*World, error) {
 	w.dirty = make([]rect, len(w.chunks))
 	w.keep = make([]rect, len(w.chunks))
 	w.versions = make([]uint64, len(w.chunks))
-	for cy := rows - 1; cy >= 0; cy-- {
-		for parity := range 2 {
-			var phase []chunk
-			for cx := parity; cx < w.cols; cx += 2 {
-				w.chunks[cy*w.cols+cx].phase = len(w.phases)
-				phase = append(phase, w.chunks[cy*w.cols+cx])
-			}
-			if len(phase) > 0 {
-				w.phases = append(w.phases, phase)
-				w.jobs = make([]job, max(len(w.jobs), len(phase)))
-			}
-		}
-	}
+	// A phase runs at most every other chunk of a row.
+	w.jobs = make([]job, (w.cols+1)/2)
 	w.stepChunkFn = w.stepChunk
 	return w, nil
+}
+
+// phase returns the index of the phase in which the chunks of row cy and
+// parity run. A tick runs the phases in order: the rows of chunks from the
+// bottom, each its even columns first, then its odd ones.
+func (w *World) phase(cy, parity int) int {
+	return (w.rows-1-cy)*2 + parity
 }
 
 // Close releases the world's worker goroutines.
@@ -256,38 +274,39 @@ func (w *World) ChunkVersion(cx, cy int) uint64 {
 	return w.versions[cy*w.cols+cx]
 }
 
-// Cells returns the grid in row-major order. Callers must not modify it.
-func (w *World) Cells() []Cell { return w.cells }
-
 // InBounds reports whether (x, y) is inside the grid.
 func (w *World) InBounds(x, y int) bool {
 	return x >= 0 && y >= 0 && x < w.width && y < w.height
 }
 
-// At returns the cell at (x, y), or false if it is outside the grid.
+// At returns the cell at (x, y), or false if it is outside the grid or
+// its block is not in memory.
 func (w *World) At(x, y int) (Cell, bool) {
-	if !w.InBounds(x, y) {
+	if !w.has(x, y) {
 		return Cell{}, false
 	}
-	return w.cells[y*w.width+x], true
+	return *w.cell(w.pos(x, y)), true
 }
 
 // Set puts a new cell of material id at (x, y). Positions outside the grid
-// are ignored.
+// or in a block not in memory are ignored.
 func (w *World) Set(x, y int, id material.ID) {
-	if !w.InBounds(x, y) {
+	if !w.has(x, y) {
 		return
 	}
-	w.cells[y*w.width+x] = Cell{Mat: id, Tone: w.tone(x, y)}
+	*w.cell(w.pos(x, y)) = Cell{Mat: id, Tone: w.tone(x, y)}
 	w.touch(rect{x, y, x + 1, y + 1})
 }
 
-// Fill sets every cell in the half-open rectangle [x0, x1) × [y0, y1) to id.
+// Fill sets every cell in the half-open rectangle [x0, x1) × [y0, y1) to
+// id, except those in blocks not in memory.
 func (w *World) Fill(x0, y0, x1, y1 int, id material.ID) {
 	r := rect{x0, y0, x1, y1}.clip(w.bounds)
 	for y := r.y0; y < r.y1; y++ {
 		for x := r.x0; x < r.x1; x++ {
-			w.cells[y*w.width+x] = Cell{Mat: id, Tone: w.tone(x, y)}
+			if w.has(x, y) {
+				*w.cell(w.pos(x, y)) = Cell{Mat: id, Tone: w.tone(x, y)}
+			}
 		}
 	}
 	w.touch(r)
@@ -300,10 +319,10 @@ func (w *World) Paint(cx, cy, r int, id material.ID, onlyEmpty bool) int {
 	for y := cy - r; y <= cy+r; y++ {
 		for x := cx - r; x <= cx+r; x++ {
 			dx, dy := x-cx, y-cy
-			if dx*dx+dy*dy > r*r || !w.InBounds(x, y) {
+			if dx*dx+dy*dy > r*r || !w.has(x, y) {
 				continue
 			}
-			c := &w.cells[y*w.width+x]
+			c := w.cell(w.pos(x, y))
 			if c.Mat == id || (onlyEmpty && w.mats[c.Mat].kind != material.Empty) {
 				continue
 			}
@@ -317,36 +336,63 @@ func (w *World) Paint(cx, cy, r int, id material.ID, onlyEmpty bool) int {
 	return changed
 }
 
-// Count returns how many cells hold id.
+// Count returns how many cells in memory hold id.
 func (w *World) Count(id material.ID) int {
 	n := 0
-	for _, c := range w.cells {
-		if c.Mat == id {
-			n++
+	w.eachRow(func(row []Cell) {
+		for _, c := range row {
+			if c.Mat == id {
+				n++
+			}
 		}
-	}
+	})
 	return n
 }
 
-// Checksum hashes the whole grid. Equal grids give equal checksums, so
-// tests use it to compare runs.
+// Counts adds to n[id], for every material id, how many cells in memory
+// hold it, in one pass. n must have an entry for every material.
+func (w *World) Counts(n []int) {
+	w.eachRow(func(row []Cell) {
+		for _, c := range row {
+			n[c.Mat]++
+		}
+	})
+}
+
+// Checksum hashes the cells in memory. Worlds with the same blocks in
+// memory and equal cells give equal checksums, so tests use it to compare
+// runs. It hashes the blocks in order, each row by row, so a world of one
+// block is hashed row by row.
 func (w *World) Checksum() uint64 {
 	h := fnv.New64a()
-	var b [14]byte
-	for _, c := range w.cells {
-		b[0], b[1] = byte(c.Mat), byte(c.Mat>>8)
-		b[2] = c.Tone
-		b[3], b[4], b[5], b[6] = byte(c.Last), byte(c.Last>>8), byte(c.Last>>16), byte(c.Last>>24)
-		b[7], b[8] = byte(c.Vy), byte(c.Vy>>8)
-		b[9], b[10] = byte(c.Ax), byte(c.Ax>>8)
-		b[11] = 0
-		if c.Falling {
-			b[11] = 1
+	// 14 bytes a cell, hashed a row at a time.
+	buf := make([]byte, 0, 14*BlockSize)
+	w.eachRow(func(row []Cell) {
+		buf = buf[:0]
+		for _, c := range row {
+			falling := byte(0)
+			if c.Falling {
+				falling = 1
+			}
+			buf = append(buf, byte(c.Mat), byte(c.Mat>>8), c.Tone,
+				byte(c.Last), byte(c.Last>>8), byte(c.Last>>16), byte(c.Last>>24),
+				byte(c.Vy), byte(c.Vy>>8), byte(c.Ax), byte(c.Ax>>8), falling,
+				byte(c.Damage), byte(c.Damage>>8))
 		}
-		b[12], b[13] = byte(c.Damage), byte(c.Damage>>8)
-		_, _ = h.Write(b[:])
-	}
+		_, _ = h.Write(buf)
+	})
 	return h.Sum64()
+}
+
+// eachRow calls f with each row of cells in the world of each block in
+// memory, the blocks in order.
+func (w *World) eachRow(f func(row []Cell)) {
+	for _, i := range w.resident {
+		r := w.blockCells(i%w.bcols, i/w.bcols)
+		for y := r.y0; y < r.y1; y++ {
+			f(w.Row(r.x0, r.x1, y))
+		}
+	}
 }
 
 func (w *World) tone(x, y int) uint8 {
@@ -361,30 +407,54 @@ func (w *World) Step() {
 	w.tick++
 	w.version++
 	w.awake = 0
-	for p, phase := range w.phases {
-		n := 0
-		for _, c := range phase {
+	// Only the rows of blocks in memory have chunks to run, so a big world
+	// costs what its loaded blocks do.
+	for end := len(w.resident); end > 0; {
+		by := w.resident[end-1] / w.bcols
+		start := end - 1
+		for start > 0 && w.resident[start-1]/w.bcols == by {
+			start--
+		}
+		for cy := min((by+1)*blockChunks, w.rows) - 1; cy >= by*blockChunks; cy-- {
+			for parity := range 2 {
+				w.runPhase(w.resident[start:end], cy, parity)
+			}
+		}
+		end = start
+	}
+}
+
+// runPhase runs the chunks of row cy and the given parity in the blocks
+// listed, those whose change rectangle is not empty and whose reach is in
+// memory, and then merges what they marked around them.
+func (w *World) runPhase(blocks []int, cy, parity int) {
+	n := 0
+	for _, b := range blocks {
+		bx := b % w.bcols
+		for cx := bx*blockChunks + parity; cx < min((bx+1)*blockChunks, w.cols); cx += 2 {
+			c := &w.chunks[cy*w.cols+cx]
 			live := w.dirty[c.i]
 			if w.scanAll {
 				live = c.cells
 			}
-			if live.empty() {
+			if live.empty() || !w.reachable(c) {
 				continue
 			}
 			w.dirty[c.i], w.keep[c.i] = w.keep[c.i], rect{}
-			w.jobs[n] = job{c: c, live: live}
+			w.jobs[n] = job{c: *c, live: live}
 			n++
 		}
-		if n == 0 {
-			continue
-		}
-		w.awake += n
-		w.pool.Run(n, w.stepChunkFn)
-		// Bounding boxes merge in any order to the same result, so the
-		// worker count does not matter.
-		for k := range n {
-			w.wake(w.jobs[k].out, p)
-		}
+	}
+	if n == 0 {
+		return
+	}
+	w.awake += n
+	w.pool.Run(n, w.stepChunkFn)
+	// Bounding boxes merge in any order to the same result, so the worker
+	// count does not matter.
+	p := w.phase(cy, parity)
+	for k := range n {
+		w.wake(w.jobs[k].out, p)
 	}
 }
 
@@ -431,7 +501,7 @@ func (w *World) mark(j *job, r rect) {
 // cell whose update reads them is updated in the next tick.
 func (w *World) touch(r rect) {
 	w.version++
-	w.wake(r.readers(), len(w.phases))
+	w.wake(r.readers(), 2*w.rows)
 }
 
 // wake adds the cells of r, marked in phase p of a tick, to the change

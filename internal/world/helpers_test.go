@@ -77,12 +77,32 @@ func newTestWorldWith(tb testing.TB, width, height, workers int, edit func(defs 
 
 // find returns where the only cell of material id is, or false.
 func find(w *World, id material.ID) (x, y int, ok bool) {
-	for i, c := range w.Cells() {
-		if c.Mat == id {
-			return i % w.Width(), i / w.Width(), true
+	for y := range w.Height() {
+		for x := range w.Width() {
+			if c, _ := w.At(x, y); c.Mat == id {
+				return x, y, true
+			}
 		}
 	}
 	return 0, 0, false
+}
+
+// at returns the cell at (x, y), which must be in memory, for a test to
+// read or change in place.
+func (w *World) at(x, y int) *Cell {
+	return w.cell(w.pos(x, y))
+}
+
+// snapshot returns a copy of every cell of w, row by row. Every block must
+// be in memory.
+func snapshot(w *World) []Cell {
+	cells := make([]Cell, 0, w.Width()*w.Height())
+	for y := range w.Height() {
+		for x := range w.Width() {
+			cells = append(cells, *w.at(x, y))
+		}
+	}
+	return cells
 }
 
 // scatter fills the top 40% of the world with a random mix and lays a few

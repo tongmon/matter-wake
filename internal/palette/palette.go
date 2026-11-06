@@ -37,12 +37,13 @@ func (p *Palette) Fill(dst []byte, cells []world.Cell) {
 }
 
 // FillRect writes the colors of the cells of w in [x0, x1) × [y0, y1)
-// into dst, row by row, four bytes per cell as Fill does. It panics if the
-// rectangle is not inside w or dst is shorter than 4 bytes per cell.
+// into dst, row by row, four bytes per cell as Fill does. The rectangle
+// must lie in one block in memory (world.World.Row), as a chunk does, and
+// dst must hold 4 bytes per cell.
 func (p *Palette) FillRect(dst []byte, w *world.World, x0, y0, x1, y1 int) {
-	cells, width, n := w.Cells(), w.Width(), x1-x0
+	n := x1 - x0
 	for y := y0; y < y1; y++ {
-		p.Fill(dst[4*(y-y0)*n:], cells[y*width+x0:y*width+x1])
+		p.Fill(dst[4*(y-y0)*n:], w.Row(x0, x1, y))
 	}
 }
 

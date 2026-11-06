@@ -362,9 +362,7 @@ func TestDigAndPlaceConserveCells(t *testing.T) {
 // totals returns each material's cells plus its inventory.
 func totals(g *Game) []int {
 	n := make([]int, g.mats.Len())
-	for _, c := range g.world.Cells() {
-		n[c.Mat]++
-	}
+	g.world.Counts(n)
 	for id := 1; id < len(n); id++ {
 		n[id] += g.Inventory(material.ID(id))
 	}

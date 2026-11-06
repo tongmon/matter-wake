@@ -78,7 +78,7 @@ func TestLiquidKeepsFlowDirection(t *testing.T) {
 		w, ids := newTestWorld(t, 60, 2, 1)
 		w.Set(0, 1, ids.stone)
 		w.Set(start, 1, ids.water)
-		w.cells[w.Width()+start].Ax = fixed.FromInt(tc.push)
+		w.at(start, 1).Ax = fixed.FromInt(tc.push)
 		prevX, dir := start, 0
 		for range 300 {
 			w.Step()
@@ -150,7 +150,7 @@ func TestSlideChanceZeroStacksAColumn(t *testing.T) {
 		w.Step()
 		w.Step()
 	}
-	for i, c := range w.Cells() {
+	for i, c := range snapshot(w) {
 		if c.Mat == ids.sand && i%w.Width() != 10 {
 			t.Fatalf("sand with slideChance 0 left its column:\n%s", render(w, ids))
 		}
@@ -165,7 +165,7 @@ func TestLiquidKeepsPushWhenBlocked(t *testing.T) {
 	w.Set(3, 0, ids.stone)
 	w.Set(2, 0, ids.water)
 	push := 2 * fixed.One
-	w.cells[2].Ax = push
+	w.at(2, 0).Ax = push
 	w.Step()
 	if c, _ := w.At(2, 0); c.Ax != push {
 		t.Fatalf("blocked water has push %v, want %v kept", c.Ax, push)
@@ -206,7 +206,7 @@ func TestLiquidSlideSetsPush(t *testing.T) {
 func TestLiquidFlowsInTheTickItLands(t *testing.T) {
 	w, ids := newTestWorld(t, 20, 2, 1)
 	w.Set(5, 0, ids.water)
-	w.cells[5].Ax = 2 * fixed.One
+	w.at(5, 0).Ax = 2 * fixed.One
 	w.Step()
 	if x, y, _ := find(w, ids.water); y != 1 || x <= 5 {
 		t.Fatalf("water at (%d, %d) after one tick, want it on the floor right of x=5", x, y)
@@ -302,7 +302,7 @@ func TestPowderKeepsSpeedUntilItRests(t *testing.T) {
 	w, ids := newTestWorld(t, 9, 3, 1)
 	w.Fill(0, 2, 9, 3, ids.stone)
 	w.Set(4, 1, ids.sand)
-	c := &w.cells[w.Width()+4]
+	c := w.at(4, 1)
 	c.Vy, c.Falling = 3*fixed.One, true
 	w.Step()
 	if got, _ := w.At(4, 1); got.Vy != 3*fixed.One || !got.Falling {
@@ -367,7 +367,7 @@ func TestRestingCellsDrawNoRandomNumbers(t *testing.T) {
 	stone := run(func(w *World, ids testIDs) { w.Fill(0, 44, 30, 63, ids.stone) })
 	for y := range 64 {
 		for x := 31; x < 64; x++ {
-			if a, b := resting.cells[y*64+x], stone.cells[y*64+x]; a != b {
+			if a, b := *resting.at(x, y), *stone.at(x, y); a != b {
 				t.Fatalf("cell (%d, %d) differs when a resting sand bed and pool share the chunk: %+v, %+v", x, y, a, b)
 			}
 		}
@@ -402,7 +402,7 @@ func TestRowsWithNothingToMoveDrawNoRandomNumbers(t *testing.T) {
 	short, tall := run(40), run(60)
 	for y := range 31 {
 		for x := range 64 {
-			if a, b := short.cells[y*64+x], tall.cells[y*64+x]; a != b {
+			if a, b := *short.at(x, y), *tall.at(x, y); a != b {
 				t.Fatalf("cell (%d, %d) differs with 9 or 29 rows of air below the floor: %+v, %+v", x, y, a, b)
 			}
 		}
@@ -443,7 +443,7 @@ func TestDisplacedCellIsNotUpdatedTwice(t *testing.T) {
 	w.Fill(0, 4, 128, 5, stone)
 	w.Set(63, 3, water)
 	w.Set(63, 0, sand)
-	w.cells[63].Vy, w.cells[63].Falling = maxFall, true
+	w.at(63, 0).Vy, w.at(63, 0).Falling = maxFall, true
 	w.Step()
 	if c, _ := w.At(63, 3); c.Mat != sand {
 		t.Fatalf("the sand did not sink into the water at (63, 3); the setup no longer pushes the water out:%s", render(w, testIDs{stone, sand, water}))

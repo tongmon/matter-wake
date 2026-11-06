@@ -105,8 +105,10 @@ func TestFillRectMatchesFill(t *testing.T) {
 	p.FillRect(got, w, x0, y0, x1, y1)
 	want := make([]byte, len(got))
 	for y := y0; y < y1; y++ {
-		row := w.Cells()[y*w.Width()+x0 : y*w.Width()+x1]
-		p.Fill(want[4*(y-y0)*(x1-x0):], row)
+		for x := x0; x < x1; x++ {
+			c, _ := w.At(x, y)
+			p.Fill(want[4*((y-y0)*(x1-x0)+x-x0):], []world.Cell{c})
+		}
 	}
 	if !bytes.Equal(got, want) {
 		t.Fatalf("FillRect = %v, want %v", got, want)
