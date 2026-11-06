@@ -2,11 +2,14 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"runtime"
+	"runtime/pprof"
 	"strconv"
 	"strings"
 	"time"
@@ -22,7 +25,7 @@ func main() {
 	}
 }
 
-func run() error {
+func run() (err error) {
 	var cfg app.Config
 	scene := flag.String("scene", "sandbox", "world to play in: sandbox, a small room, or terrain, the big world")
 	flag.IntVar(&cfg.Width, "width", 0, "world width in cells (default: 480 in the sandbox, 16384 in the terrain)")
@@ -37,6 +40,8 @@ func run() error {
 	flag.StringVar(&cfg.RecordPath, "record", "", "save this session's inputs to this replay file on exit")
 	flag.BoolVar(&cfg.Creative, "creative", false, "place without taking from the inventory, to try materials out")
 	flag.StringVar(&cfg.SavePath, "save", "", "save folder of the terrain (default: matter-wake/saves/world in the user's config folder)")
+	flag.BoolVar(&cfg.Timing, "timing", false, "log how long ticks, draws and frames took, on exit")
+	profile := flag.String("cpuprofile", "", "write a CPU profile of the session to this file, for go tool pprof")
 	flag.Parse()
 
 	if cfg.ReplayPath != "" {
@@ -59,7 +64,37 @@ func run() error {
 		return err
 	}
 	cfg.Shots = ticks
+	if *profile != "" {
+		stop, err := startProfile(*profile)
+		if err != nil {
+			return err
+		}
+		defer func() { err = errors.Join(err, stop()) }()
+	}
 	return app.Run(&cfg)
+}
+
+// startProfile starts a CPU profile written to path and returns what stops
+// it.
+func startProfile(path string) (stop func() error, err error) {
+	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+		return nil, fmt.Errorf("-cpuprofile: %w", err)
+	}
+	f, err := os.Create(path)
+	if err != nil {
+		return nil, fmt.Errorf("-cpuprofile: %w", err)
+	}
+	if err := pprof.StartCPUProfile(f); err != nil {
+		return nil, errors.Join(fmt.Errorf("-cpuprofile: %w", err), f.Close())
+	}
+	return func() error {
+		pprof.StopCPUProfile()
+		if err := f.Close(); err != nil {
+			return fmt.Errorf("-cpuprofile: %w", err)
+		}
+		slog.Info("profiled", "path", path)
+		return nil
+	}, nil
 }
 
 // setScene sets the scene and fills in the world size the flags left out:

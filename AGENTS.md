@@ -129,6 +129,8 @@ Choose checks in proportion to the change:
   - `go run ./cmd/matter-wake -record out/replays/a.rpl` saves the session's inputs on exit.
   - `go run ./cmd/matter-wake -replay out/replays/a.rpl -shots 0,120,600 -shots-dir out/shots` captures it.
 - **Performance:** `go test -run '^$' -bench . -count 5 ./internal/world/` before and after the change.
+  - In the game, `-timing` logs on exit how much CPU time the ticks, the draws and the frames took (median, p99, max, and frames over the 16.7 ms budget). With `-shots` or `-replay` the run is repeatable: `go run ./cmd/matter-wake -seed 1 -shots 600 -timing`. `-workers 2` stands in for the reference CPU's two cores (design.md 2절).
+  - `-cpuprofile out/prof/cpu.pprof` writes a CPU profile of the run. Read it with `go tool pprof -top -focus matter-wake/internal out/prof/cpu.pprof`; without the focus, waiting for the screen fills it (pitfalls.md).
 - **Visual and render changes:** capture PNGs at chosen ticks and inspect them:
   - `go run ./cmd/matter-wake -seed 1 -shots 0,60,300 -shots-dir out/shots` (the sandbox; add `-scene terrain` for the big world, shot from where the camera starts)
   - The game saves `out/shots/tick_000060.png` etc. at the logical resolution, without the overlay, ignores the mouse and keyboard, and exits after the last tick. A window opens briefly while it runs.

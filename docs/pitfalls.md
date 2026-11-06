@@ -26,6 +26,7 @@
 - **`vector` 패키지는 한 경로가 같은 픽셀을 덮은 횟수를 4비트로 셉니다.** 수십 번 겹치는 경로는 사라집니다(uplunge에서 발견).
 - **`ebiten.SetWindowSize`는 0 이하 크기에 panic합니다.** 명령줄 값은 Ebitengine에 넘기기 전에 검사해 에러로 돌려줍니다(`app.Run`, 2026-11-06 Codex 리뷰).
 - **`ebiten.CursorPosition()`은 논리 화면 좌표를 돌려줍니다.** 창 배율을 직접 나눌 필요가 없습니다.
+- **Windows에서 게임의 CPU 프로파일은 대부분 `IDXGISwapChain.Present`입니다.** 렌더 스레드가 화면 표시를 기다리는 시간이고, `runtime.cgocall`로 보입니다. 샌드박스 600틱에서 89%였습니다(2026-11-07). 게임 코드는 `go tool pprof -focus matter-wake/internal`로 봅니다.
 
 ## 도구
 
