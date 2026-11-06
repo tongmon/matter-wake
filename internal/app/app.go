@@ -45,6 +45,13 @@ type Config struct {
 	// Creative places without taking from the inventory, for trying
 	// materials out in development. A replay sets it instead.
 	Creative bool
+	// SavePath is the save folder of the terrain; empty for the default
+	// in the user's config folder. A folder that holds a world goes on
+	// with it. Replays, recordings and shots never touch it.
+	SavePath string
+	// FixedWorld is set when the command line chose the seed or the
+	// world size, which a saved world refuses to change.
+	FixedWorld bool
 }
 
 // Slots are the materials keys 1, 2, 3… select. 🧪 sandbox controls.
@@ -95,7 +102,12 @@ func Run(cfg *Config) error {
 	if err != nil {
 		return err
 	}
-	sess := sessionConfig(cfg, mats, playback)
+	sess, saveDir, unlock, err := openSession(cfg, mats, playback)
+	if err != nil {
+		return err
+	}
+	// Deferred first, so it runs last: after the save is written.
+	defer unlock()
 	g, err := game.New(sess)
 	if err != nil {
 		return err
@@ -122,6 +134,13 @@ func Run(cfg *Config) error {
 	ebiten.SetWindowResizingMode(ebiten.WindowResizingModeEnabled)
 	// RunGame returns nil when Update returns ebiten.Termination.
 	runErr := ebiten.RunGame(a)
+	if saveDir != "" {
+		if err := writeSave(saveDir, g, a.in.CameraX, a.in.CameraY); err != nil {
+			runErr = errors.Join(runErr, err)
+		} else {
+			slog.Info("saved", "save", saveDir, "tick", g.World().Tick())
+		}
+	}
 	if a.record != nil {
 		if err := saveReplay(cfg.RecordPath, a.record); err != nil {
 			return errors.Join(runErr, err)
@@ -154,6 +173,44 @@ func sessionConfig(cfg *Config, mats *material.Table, playback *replay.Replay) *
 			"path", cfg.ReplayPath, "recorded", playback.Materials, "now", now, "materials", cfg.MaterialsPath)
 	}
 	return playback.Config(mats, cfg.Workers)
+}
+
+// openSession returns the session to start and the folder it saves in,
+// if any: a saved world goes on from there. The folder stays locked to
+// this process until unlock, which does nothing without a folder.
+func openSession(cfg *Config, mats *material.Table, playback *replay.Replay) (
+	sess *game.Config, dir string, unlock func(), err error,
+) {
+	sess = sessionConfig(cfg, mats, playback)
+	if dir, err = saveFolder(cfg, playback); err != nil || dir == "" {
+		return sess, "", func() {}, err
+	}
+	if unlock, err = lockSave(dir); err != nil {
+		return nil, "", nil, err
+	}
+	if sess, err = openSave(dir, sess, cfg.FixedWorld); err != nil {
+		unlock()
+		return nil, "", nil, err
+	}
+	if sess.Resume != nil {
+		slog.Info("resuming", "save", dir, "seed", sess.Seed, "tick", sess.Resume.Tick)
+	} else {
+		slog.Info("saving a new world", "save", dir)
+	}
+	return sess, dir, unlock, nil
+}
+
+// saveFolder returns the folder the session saves in: the terrain's, when
+// the player plays, and none for replays, recordings and shots, which must
+// start from a new world and never change a saved one.
+func saveFolder(cfg *Config, playback *replay.Replay) (string, error) {
+	if cfg.Scene != game.SceneTerrain || playback != nil || cfg.RecordPath != "" || len(cfg.Shots) > 0 {
+		return "", nil
+	}
+	if cfg.SavePath != "" {
+		return cfg.SavePath, nil
+	}
+	return defaultSave()
 }
 
 func loadMaterials(path string) (*material.Table, error) {

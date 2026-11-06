@@ -44,6 +44,7 @@ import (
 	"hash/crc32"
 	"io"
 	"math"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -431,7 +432,7 @@ func WriteMeta(w io.Writer, m Meta) error {
 // ReadMeta reads a world header that WriteMeta wrote. It refuses other
 // versions and lines it does not expect.
 func ReadMeta(r io.Reader) (Meta, error) {
-	l := &lines{sc: bufio.NewScanner(r)}
+	l := newLines(r)
 	if v := l.uint("version", l.next(metaMagic, 1)[0], 16); l.err == nil && v != MetaVersion {
 		l.err = fmt.Errorf("format version %d; this build reads version %d", v, MetaVersion)
 	}
@@ -451,10 +452,31 @@ func ReadMeta(r io.Reader) (Meta, error) {
 }
 
 // lines reads a header of "key values..." lines in a fixed order. It keeps
-// the first error, and after one returns zero values.
+// the first error, and after one returns zero values. Lines may be of any
+// length: a material name has no limit.
 type lines struct {
-	sc  *bufio.Scanner
-	err error
+	r    *bufio.Reader
+	line string
+	err  error
+}
+
+func newLines(r io.Reader) *lines {
+	return &lines{r: bufio.NewReader(r)}
+}
+
+// scan reads the next line into l.line, without its line end, and reports
+// whether there was one.
+func (l *lines) scan() bool {
+	s, err := l.r.ReadString('\n')
+	if err != nil && !errors.Is(err, io.EOF) {
+		l.err = err
+		return false
+	}
+	if s == "" {
+		return false
+	}
+	l.line = strings.TrimRight(s, "\r\n")
+	return true
 }
 
 // next returns the n values of the next line, which must start with key.
@@ -463,15 +485,15 @@ func (l *lines) next(key string, n int) []string {
 	if l.err != nil {
 		return values
 	}
-	if !l.sc.Scan() {
-		if l.err = l.sc.Err(); l.err == nil {
+	if !l.scan() {
+		if l.err == nil {
 			l.err = fmt.Errorf("missing %q line", key)
 		}
 		return values
 	}
-	f := strings.Fields(l.sc.Text())
+	f := strings.Fields(l.line)
 	if len(f) != n+1 || f[0] != key {
-		l.err = fmt.Errorf("line %q, want %q and %d values", l.sc.Text(), key, n)
+		l.err = fmt.Errorf("line %q, want %q and %d values", l.line, key, n)
 		return values
 	}
 	return f[1:]
@@ -489,12 +511,152 @@ func (l *lines) uint(name, v string, bits int) uint64 {
 	return n
 }
 
+// int parses the value v of name as a signed number.
+func (l *lines) int(name, v string) int {
+	if l.err != nil {
+		return 0
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil {
+		l.err = fmt.Errorf("%s %q is not a number", name, v)
+	}
+	return n
+}
+
 // end checks that no line follows.
 func (l *lines) end() {
-	if l.err == nil && l.sc.Scan() {
-		l.err = fmt.Errorf("unexpected line %q", l.sc.Text())
+	if l.err == nil && l.scan() {
+		l.err = fmt.Errorf("unexpected line %q", l.line)
 	}
-	if l.err == nil {
-		l.err = l.sc.Err()
+}
+
+// SessionVersion is the session file layout this build reads and writes.
+const SessionVersion = 1
+
+const sessionMagic = "matter-wake-session"
+
+// Session is what a save holds about the session besides the world: where
+// the camera was, the selected slot, what the inventory held by material
+// name, and which blocks were in memory, so a reopened session goes on as
+// the saved one would have.
+//
+// It is line-based text, like the world header:
+//
+//	matter-wake-session 1
+//	camera 7952 955
+//	slot 3
+//	held "sand" 120
+//	held "stone" 15
+//	block 15 1
+//	block 16 1
+//
+// Only materials the inventory holds get a held line, in name order, the
+// name quoted as in Go, since it may hold spaces; the blocks follow in
+// row order.
+type Session struct {
+	CameraX, CameraY int
+	// Slot is the selected slot, 1-based as the keys are.
+	Slot int
+	// Held is how many cells of each material the inventory holds.
+	Held map[string]int
+	// Blocks lists the blocks that were in memory, as (bx, by).
+	Blocks [][2]int
+}
+
+// WriteSession writes s.
+func WriteSession(w io.Writer, s *Session) error {
+	if s.Slot < 1 {
+		return fmt.Errorf("save: slot %d is not 1 or more", s.Slot)
 	}
+	bw := bufio.NewWriter(w)
+	// A bufio.Writer keeps its first error and Flush returns it.
+	_, _ = fmt.Fprintf(bw, "%s %d\ncamera %d %d\nslot %d\n", sessionMagic, SessionVersion, s.CameraX, s.CameraY, s.Slot)
+	names := make([]string, 0, len(s.Held))
+	for name, n := range s.Held {
+		if n < 0 || name == "" {
+			return fmt.Errorf("save: holding %d of %q", n, name)
+		}
+		if n > 0 {
+			names = append(names, name)
+		}
+	}
+	slices.Sort(names)
+	for _, name := range names {
+		// Quoted, since a material name may hold spaces or anything else.
+		_, _ = fmt.Fprintf(bw, "held %s %d\n", strconv.Quote(name), s.Held[name])
+	}
+	blocks := slices.Clone(s.Blocks)
+	slices.SortFunc(blocks, func(a, b [2]int) int {
+		if a[1] != b[1] {
+			return a[1] - b[1]
+		}
+		return a[0] - b[0]
+	})
+	for i, b := range blocks {
+		if b[0] < 0 || b[1] < 0 || i > 0 && b == blocks[i-1] {
+			return fmt.Errorf("save: block %v", b)
+		}
+		_, _ = fmt.Fprintf(bw, "block %d %d\n", b[0], b[1])
+	}
+	if err := bw.Flush(); err != nil {
+		return fmt.Errorf("save: %w", err)
+	}
+	return nil
+}
+
+// held reads the rest of a held line, a quoted material name and a count,
+// into held.
+func (l *lines) held(held map[string]int, rest string) {
+	quoted, err := strconv.QuotedPrefix(rest)
+	if err != nil {
+		l.err = fmt.Errorf("line %q, want %q", l.line, `held "<material>" <count>`)
+		return
+	}
+	name, err := strconv.Unquote(quoted)
+	f := strings.Fields(rest[len(quoted):])
+	if err != nil || len(f) != 1 {
+		l.err = fmt.Errorf("line %q, want %q", l.line, `held "<material>" <count>`)
+		return
+	}
+	if _, dup := held[name]; dup {
+		l.err = fmt.Errorf("%q is held twice", name)
+		return
+	}
+	held[name] = int(l.uint("count of "+quoted, f[0], 62))
+}
+
+// ReadSession reads a session file that WriteSession wrote.
+func ReadSession(r io.Reader) (*Session, error) {
+	l := newLines(r)
+	if v := l.uint("version", l.next(sessionMagic, 1)[0], 16); l.err == nil && v != SessionVersion {
+		l.err = fmt.Errorf("format version %d; this build reads version %d", v, SessionVersion)
+	}
+	camera := l.next("camera", 2)
+	s := &Session{Held: map[string]int{}}
+	s.CameraX, s.CameraY = l.int("camera x", camera[0]), l.int("camera y", camera[1])
+	if s.Slot = l.int("slot", l.next("slot", 1)[0]); l.err == nil && s.Slot < 1 {
+		l.err = fmt.Errorf("slot %d is not 1 or more", s.Slot)
+	}
+	seen := map[[2]int]bool{}
+	for l.err == nil && l.scan() {
+		f := strings.Fields(l.line)
+		switch {
+		case strings.HasPrefix(l.line, "held "):
+			l.held(s.Held, strings.TrimPrefix(l.line, "held "))
+		case len(f) == 3 && f[0] == "block":
+			b := [2]int{int(l.uint("block x", f[1], 31)), int(l.uint("block y", f[2], 31))}
+			if seen[b] {
+				l.err = fmt.Errorf("block %v is listed twice", b)
+				break
+			}
+			seen[b] = true
+			s.Blocks = append(s.Blocks, b)
+		default:
+			l.err = fmt.Errorf("line %q, want %q or %q", l.line, `held "<material>" <count>`, "block <x> <y>")
+		}
+	}
+	if l.err != nil {
+		return nil, fmt.Errorf("save: session: %w", l.err)
+	}
+	return s, nil
 }

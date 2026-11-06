@@ -28,7 +28,8 @@ type Store interface {
 	// Load returns block (bx, by) as it was last saved, or nil if it never
 	// was.
 	Load(bx, by int) (*world.Block, error)
-	// Save keeps block (bx, by). The store owns b afterwards.
+	// Save keeps a copy of block (bx, by): it must not hold on to b,
+	// which the session may go on using.
 	Save(bx, by int, b *world.Block) error
 }
 
@@ -38,32 +39,43 @@ type Store interface {
 // saved, else from the terrain.
 func (g *Game) stream(camX, camY int) error {
 	need := g.needed(camX, camY)
-	if err := g.load(need); err != nil {
-		return err
+	for by := need.y0; by < need.y1; by++ {
+		for bx := need.x0; bx < need.x1; bx++ {
+			if err := g.loadBlock(bx, by); err != nil {
+				return err
+			}
+		}
 	}
 	return g.evict(need, camX, camY)
 }
 
-// load puts in memory the blocks of need that are not.
-func (g *Game) load(need blockRange) error {
-	for by := need.y0; by < need.y1; by++ {
-		for bx := need.x0; bx < need.x1; bx++ {
-			if g.world.Resident(bx, by) {
-				continue
-			}
-			b, err := g.store.Load(bx, by)
-			if err != nil {
-				return fmt.Errorf("game: block (%d, %d): %w", bx, by, err)
-			}
-			if b == nil {
-				b = g.terrain.Block(bx, by)
-			}
-			if err := g.world.LoadBlock(bx, by, b); err != nil {
-				return fmt.Errorf("game: %w", err)
-			}
-			g.resident = append(g.resident, [2]int{bx, by})
+// load puts in memory the blocks listed that are not.
+func (g *Game) load(blocks [][2]int) error {
+	for _, b := range blocks {
+		if err := g.loadBlock(b[0], b[1]); err != nil {
+			return err
 		}
 	}
+	return nil
+}
+
+// loadBlock puts block (bx, by) in memory, unless it is already: from the
+// store if it was saved, else from the terrain.
+func (g *Game) loadBlock(bx, by int) error {
+	if g.world.Resident(bx, by) {
+		return nil
+	}
+	b, err := g.store.Load(bx, by)
+	if err != nil {
+		return fmt.Errorf("game: block (%d, %d): %w", bx, by, err)
+	}
+	if b == nil {
+		b = g.terrain.Block(bx, by)
+	}
+	if err := g.world.LoadBlock(bx, by, b); err != nil {
+		return fmt.Errorf("game: %w", err)
+	}
+	g.resident = append(g.resident, [2]int{bx, by})
 	return nil
 }
 

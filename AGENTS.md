@@ -80,7 +80,7 @@ Module path: `github.com/tongmon/matter-wake`.
 | Path | Role | Ebitengine |
 |---|---|---|
 | `cmd/matter-wake/` | Entry point. Parses flags and calls `app.Run`. | via app |
-| `internal/app/` | Window, fixed-step loop, `-shots` capture, replay files (`-record`, `-replay`). | yes |
+| `internal/app/` | Window, fixed-step loop, `-shots` capture, replay files (`-record`, `-replay`), the terrain's save folder (`-save`). | yes |
 | `internal/render/` | Draws a session: uploads cell colors, overlay. | yes |
 | `internal/input/` | Maps devices to `game.Input`. | yes |
 | `internal/game/` | A play session: the world plus the player's tools, stepped by `Input`; in the big world it keeps the blocks around the camera in memory. | **no** |
