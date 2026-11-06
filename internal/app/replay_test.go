@@ -13,7 +13,8 @@ import (
 
 func testReplay() *replay.Replay {
 	return &replay.Replay{
-		Seed: 3, Width: 64, Height: 32, Tool: game.Tool{Power: 10, Rate: 2000, Radius: 4}, Slots: []string{"sand"}, Materials: "00",
+		Seed: 3, Width: 64, Height: 32, ViewWidth: 64, ViewHeight: 32, Stream: stream,
+		Tool: game.Tool{Power: 10, Rate: 2000, Radius: 4}, Slots: []string{"sand"}, Materials: "00",
 		Inputs: []game.Input{{}, {CursorX: 5, CursorY: 6, Place: true}, {Select: 1}},
 	}
 }
@@ -115,6 +116,7 @@ func TestRunRejectsBadReplays(t *testing.T) {
 	}{
 		{"missing file", Config{Scale: 2, ReplayPath: filepath.Join(t.TempDir(), "none.rpl")}, "none.rpl"},
 		{"shot past the end", Config{Scale: 2, ReplayPath: short, Shots: []uint32{1, 4}}, "past"},
+		{"terrain", Config{Scale: 2, ReplayPath: filepath.Join("..", "replay", "testdata", "terrain_walk.rpl")}, "cannot draw"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

@@ -53,6 +53,10 @@ var slots = []string{"sand", "water", "stone"}
 // radius 4.
 var tool = game.Tool{Power: 10, Rate: 2000, Radius: 4}
 
+// stream keeps the blocks within 256 cells of the view and at most 12 in
+// memory, as Noita does (🧪, design.md 7절).
+var stream = game.Stream{Margin: 256, MaxBlocks: 12}
+
 // Run opens the window and plays until it closes, the replay ends or the
 // last shot is taken.
 func Run(cfg *Config) error {
@@ -66,6 +70,11 @@ func Run(cfg *Config) error {
 		var err error
 		if playback, err = loadReplay(cfg.ReplayPath); err != nil {
 			return err
+		}
+		// The renderer draws the whole world, and the terrain keeps only
+		// the blocks around the camera in memory.
+		if playback.Scene != game.SceneSandbox {
+			return fmt.Errorf("app: %s plays the terrain, which this build cannot draw yet", cfg.ReplayPath)
 		}
 		if err := checkShots(cfg.Shots, len(playback.Inputs)); err != nil {
 			return err
@@ -122,6 +131,7 @@ func sessionConfig(cfg *Config, mats *material.Table, playback *replay.Replay) *
 		slog.Info("starting", "seed", cfg.Seed, "workers", cfg.Workers, "creative", cfg.Creative)
 		return &game.Config{
 			Width: cfg.Width, Height: cfg.Height, Seed: cfg.Seed, Workers: cfg.Workers,
+			ViewWidth: cfg.Width, ViewHeight: cfg.Height, Stream: stream,
 			Materials: mats, Slots: slots, Tool: tool, Creative: cfg.Creative,
 		}
 	}
@@ -180,8 +190,7 @@ func (a *app) Update() error {
 		a.recordInput(in)
 	}
 	a.in = in
-	a.game.Step(in)
-	return nil
+	return a.game.Step(in)
 }
 
 // recordInput keeps in for the replay. At the limit it stops recording

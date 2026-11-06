@@ -18,8 +18,8 @@ var (
 
 func sample() *Replay {
 	return &Replay{
-		Seed: 7, Width: 64, Height: 32, Tool: game.Tool{Power: 10, Rate: 2000, Radius: 2},
-		Slots: []string{"sand", "water"}, Materials: "0123456789abcdef",
+		Seed: 7, Width: 64, Height: 32, ViewWidth: 64, ViewHeight: 32, Stream: game.Stream{Margin: 256, MaxBlocks: 12},
+		Tool: game.Tool{Power: 10, Rate: 2000, Radius: 2}, Slots: []string{"sand", "water"}, Materials: "0123456789abcdef",
 	}
 }
 
@@ -30,25 +30,30 @@ func TestWrite(t *testing.T) {
 		{CursorX: 11, CursorY: 5, Place: true, Select: 2},
 		{CursorX: 11, CursorY: 5, Dig: true},
 		{CursorX: -3, CursorY: 40, Place: true, Dig: true},
+		{CursorX: -3, CursorY: 40, Place: true, Dig: true, CameraX: 512, CameraY: -1},
 		none,
 	}
 	var buf bytes.Buffer
 	if err := Write(&buf, r); err != nil {
 		t.Fatal(err)
 	}
-	want := `matter-wake-replay 2
+	want := `matter-wake-replay 3
 seed 7
 size 64 32
+scene sandbox
+view 64 32
+stream 256 12
 tool 10 2000 2
 mode play
 slots sand water
 materials 0123456789abcdef
-ticks 8
-2 10 5 P 0
-4 11 5 P 2
-5 11 5 D 0
-6 -3 40 PD 0
-7 0 0 - 0
+ticks 9
+2 10 5 P 0 0 0
+4 11 5 P 2 0 0
+5 11 5 D 0 0 0
+6 -3 40 PD 0 0 0
+7 -3 40 PD 0 512 -1
+8 0 0 - 0 0 0
 `
 	if got := buf.String(); got != want {
 		t.Fatalf("got\n%s\nwant\n%s", got, want)
@@ -66,6 +71,7 @@ func TestRoundTrip(t *testing.T) {
 		long[i] = game.Input{
 			CursorX: s.IntN(600) - 60, CursorY: s.IntN(400) - 60,
 			Place: s.Bool(), Dig: s.IntN(4) == 0, Select: s.IntN(12),
+			CameraX: s.IntN(20000) - 100, CameraY: s.IntN(20000) - 100,
 		}
 	}
 	tests := [][]game.Input{
@@ -80,6 +86,9 @@ func TestRoundTrip(t *testing.T) {
 			r := sample()
 			r.Inputs = inputs
 			r.Creative = i%2 == 1
+			if i%2 == 0 {
+				r.Scene = game.SceneTerrain
+			}
 			var buf bytes.Buffer
 			if err := Write(&buf, r); err != nil {
 				t.Fatal(err)
@@ -104,8 +113,9 @@ func TestRoundTrip(t *testing.T) {
 func checkHeader(t *testing.T, got, want *Replay) {
 	t.Helper()
 	if got.Seed != want.Seed || got.Width != want.Width || got.Height != want.Height ||
-		got.Tool != want.Tool || got.Creative != want.Creative || got.Materials != want.Materials ||
-		strings.Join(got.Slots, ",") != strings.Join(want.Slots, ",") {
+		got.Scene != want.Scene || got.ViewWidth != want.ViewWidth || got.ViewHeight != want.ViewHeight ||
+		got.Stream != want.Stream || got.Tool != want.Tool || got.Creative != want.Creative ||
+		got.Materials != want.Materials || strings.Join(got.Slots, ",") != strings.Join(want.Slots, ",") {
 		t.Fatalf("header = %+v, want %+v", got, want)
 	}
 }
@@ -113,26 +123,30 @@ func checkHeader(t *testing.T, got, want *Replay) {
 // Replays are text so they can be written by hand: blank lines, comments,
 // extra spaces and Windows line ends are all accepted.
 func TestReadHandWritten(t *testing.T) {
-	src := "matter-wake-replay 2\r\n" +
+	src := "matter-wake-replay 3\r\n" +
 		"# A hand-written replay.\r\n" +
 		"\r\n" +
 		"seed 18446744073709551615\r\n" +
 		"size  64   32 \r\n" +
+		"scene terrain\r\n" +
+		"view 64  32\r\n" +
+		"stream 0 1\r\n" +
 		"tool  0 1  0\r\n" +
 		"mode creative \r\n" +
 		"slots stone\r\n" +
 		"materials unknown\r\n" +
 		"ticks 6\r\n" +
-		"  1 10 5 P 0\r\n" +
+		"  1 10 5 P 0 0 0\r\n" +
 		"# hold, then stop\r\n" +
-		"4 0 0 - 1\r\n" +
-		"5 0 0 - 0"
+		"4 0 0 - 1 0 0\r\n" +
+		"5 0 0 - 0 0 0"
 	r, err := Read(strings.NewReader(src))
 	if err != nil {
 		t.Fatal(err)
 	}
 	checkHeader(t, r, &Replay{
-		Seed: 1<<64 - 1, Width: 64, Height: 32, Tool: game.Tool{Rate: 1}, Creative: true,
+		Seed: 1<<64 - 1, Width: 64, Height: 32, Scene: game.SceneTerrain, ViewWidth: 64, ViewHeight: 32,
+		Stream: game.Stream{MaxBlocks: 1}, Tool: game.Tool{Rate: 1}, Creative: true,
 		Slots: []string{"stone"}, Materials: "unknown",
 	})
 	want := []game.Input{none, put, put, put, {Select: 1}, none}
@@ -147,42 +161,53 @@ func TestReadHandWritten(t *testing.T) {
 }
 
 func TestReadErrors(t *testing.T) {
-	const header = "matter-wake-replay 2\nseed 1\nsize 64 32\ntool 10 2000 4\nmode play\nslots sand\nmaterials 00\n"
+	const (
+		v      = "matter-wake-replay 3\n"
+		sized  = v + "seed 1\nsize 64 32\n"
+		viewed = sized + "scene sandbox\nview 64 32\nstream 256 12\n"
+		header = viewed + "tool 10 2000 4\nmode play\nslots sand\nmaterials 00\n"
+	)
 	tests := []struct {
 		name, src, wantErr string
 	}{
 		{"empty", "", "not a matter-wake replay"},
-		{"other file", "uplunge-replay 1\n", "not a matter-wake replay"},
-		{"newer version", "matter-wake-replay 3\n", "version 3"},
-		{"older version", "matter-wake-replay 1\nseed 1\n", "version 1"},
+		{"newer version", "matter-wake-replay 4\n", "version 4"},
+		{"older version", "matter-wake-replay 2\nseed 1\n", "version 2"},
 		{"bad version", "matter-wake-replay one\n", "version"},
-		{"missing seed", "matter-wake-replay 2\nsize 64 32\n", `"seed`},
-		{"negative seed", "matter-wake-replay 2\nseed -1\n", "seed"},
-		{"one size", "matter-wake-replay 2\nseed 1\nsize 64\n", "size"},
-		{"zero width", "matter-wake-replay 2\nseed 1\nsize 0 32\n", "size"},
-		{"old brush line", "matter-wake-replay 2\nseed 1\nsize 64 32\nbrush 4\n", `"tool`},
-		{"short tool", "matter-wake-replay 2\nseed 1\nsize 64 32\ntool 10 2000\n", `"tool`},
-		{"negative radius", "matter-wake-replay 2\nseed 1\nsize 64 32\ntool 10 2000 -1\n", "tool"},
-		{"power over 255", "matter-wake-replay 2\nseed 1\nsize 64 32\ntool 256 2000 4\n", "tool"},
-		{"zero rate", "matter-wake-replay 2\nseed 1\nsize 64 32\ntool 10 0 4\n", "tool"},
-		{"no mode", "matter-wake-replay 2\nseed 1\nsize 64 32\ntool 10 2000 4\nslots sand\n", `"mode`},
-		{"bad mode", "matter-wake-replay 2\nseed 1\nsize 64 32\ntool 10 2000 4\nmode fast\n", "mode"},
-		{"no slots", "matter-wake-replay 2\nseed 1\nsize 64 32\ntool 10 2000 4\nmode play\nslots\n", "slots"},
-		{"no materials", "matter-wake-replay 2\nseed 1\nsize 64 32\ntool 10 2000 4\nmode play\nslots sand\nmaterials\n", "materials"},
-		{"two fingerprints", "matter-wake-replay 2\nseed 1\nsize 64 32\ntool 10 2000 4\nmode play\nslots sand\nmaterials a b\n", "materials"},
+		{"missing seed", v + "size 64 32\n", `"seed`},
+		{"negative seed", v + "seed -1\n", "seed"},
+		{"one size", v + "seed 1\nsize 64\n", "size"},
+		{"zero width", v + "seed 1\nsize 0 32\n", "size"},
+		{"no scene", sized + "tool 10 2000 4\n", `"scene`},
+		{"unknown scene", sized + "scene cave\n", "scene"},
+		{"zero view", sized + "scene sandbox\nview 0 32\n", "view"},
+		{"negative margin", sized + "scene sandbox\nview 64 32\nstream -1 12\n", "stream"},
+		{"no blocks", sized + "scene terrain\nview 64 32\nstream 256 0\n", "stream"},
+		{"old brush line", viewed + "brush 4\n", `"tool`},
+		{"short tool", viewed + "tool 10 2000\n", `"tool`},
+		{"negative radius", viewed + "tool 10 2000 -1\n", "tool"},
+		{"power over 255", viewed + "tool 256 2000 4\n", "tool"},
+		{"zero rate", viewed + "tool 10 0 4\n", "tool"},
+		{"no mode", viewed + "tool 10 2000 4\nslots sand\n", `"mode`},
+		{"bad mode", viewed + "tool 10 2000 4\nmode fast\n", "mode"},
+		{"no slots", viewed + "tool 10 2000 4\nmode play\nslots\n", "slots"},
+		{"no materials", viewed + "tool 10 2000 4\nmode play\nslots sand\nmaterials\n", "materials"},
+		{"two fingerprints", viewed + "tool 10 2000 4\nmode play\nslots sand\nmaterials a b\n", "materials"},
 		{"no ticks", header, `"ticks`},
 		{"negative ticks", header + "ticks -1\n", "ticks"},
 		{"too many ticks", header + fmt.Sprintf("ticks %d\n", MaxTicks+1), "at most"},
-		{"short line", header + "ticks 5\n1 2 3 P\n", "want"},
-		{"long line", header + "ticks 5\n1 2 3 P 0 0\n", "want"},
-		{"tick past the end", header + "ticks 5\n5 0 0 - 0\n", "below 5"},
-		{"tick goes back", header + "ticks 5\n2 0 0 - 0\n1 0 0 - 0\n", "increase"},
-		{"repeated tick", header + "ticks 5\n2 0 0 - 0\n2 0 0 P 0\n", "increase"},
-		{"bad cursor", header + "ticks 5\n1 x 0 - 0\n", "cursor"},
-		{"bad buttons", header + "ticks 5\n1 0 0 X 0\n", "buttons"},
-		{"buttons out of order", header + "ticks 5\n1 0 0 DP 0\n", "buttons"},
-		{"repeated button", header + "ticks 5\n1 0 0 PP 0\n", "buttons"},
-		{"negative slot", header + "ticks 5\n1 0 0 - -1\n", "slot"},
+		{"short line", header + "ticks 5\n1 2 3 P 0 0\n", "want"},
+		{"long line", header + "ticks 5\n1 2 3 P 0 0 0 0\n", "want"},
+		{"version 2 line", header + "ticks 5\n1 2 3 P 0\n", "want"},
+		{"tick past the end", header + "ticks 5\n5 0 0 - 0 0 0\n", "below 5"},
+		{"tick goes back", header + "ticks 5\n2 0 0 - 0 0 0\n1 0 0 - 0 0 0\n", "increase"},
+		{"repeated tick", header + "ticks 5\n2 0 0 - 0 0 0\n2 0 0 P 0 0 0\n", "increase"},
+		{"bad cursor", header + "ticks 5\n1 x 0 - 0 0 0\n", "cursor"},
+		{"bad buttons", header + "ticks 5\n1 0 0 X 0 0 0\n", "buttons"},
+		{"buttons out of order", header + "ticks 5\n1 0 0 DP 0 0 0\n", "buttons"},
+		{"repeated button", header + "ticks 5\n1 0 0 PP 0 0 0\n", "buttons"},
+		{"negative slot", header + "ticks 5\n1 0 0 - -1 0 0\n", "slot"},
+		{"bad camera", header + "ticks 5\n1 0 0 - 0 0 y\n", "camera"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -208,6 +233,9 @@ func TestWriteRejectsBadReplays(t *testing.T) {
 		{"slot with a space", func(r *Replay) { r.Slots = []string{"wet sand"} }},
 		{"slot with a newline", func(r *Replay) { r.Slots = []string{"sand\nticks"} }},
 		{"zero height", func(r *Replay) { r.Height = 0 }},
+		{"unknown scene", func(r *Replay) { r.Scene = "cave" }},
+		{"zero view", func(r *Replay) { r.ViewWidth = 0 }},
+		{"no blocks", func(r *Replay) { r.Stream.MaxBlocks = 0 }},
 		{"negative radius", func(r *Replay) { r.Tool.Radius = -1 }},
 		{"tool deals no damage", func(r *Replay) { r.Tool.Rate = 0 }},
 		{"no fingerprint", func(r *Replay) { r.Materials = "" }},
@@ -230,11 +258,13 @@ func TestNewAndConfig(t *testing.T) {
 	tab := loadTable(t)
 	cfg := &game.Config{
 		Width: 96, Height: 64, Seed: 42, Workers: 3, Materials: tab,
+		Scene: game.SceneTerrain, ViewWidth: 40, ViewHeight: 30, Stream: game.Stream{Margin: 9, MaxBlocks: 3},
 		Slots: []string{"water", "stone"}, Tool: game.Tool{Power: 3, Rate: 77, Radius: 5}, Creative: true,
 	}
 	r := New(cfg)
 	want := &Replay{
-		Seed: 42, Width: 96, Height: 64, Tool: game.Tool{Power: 3, Rate: 77, Radius: 5}, Creative: true,
+		Seed: 42, Width: 96, Height: 64, Scene: game.SceneTerrain, ViewWidth: 40, ViewHeight: 30,
+		Stream: game.Stream{Margin: 9, MaxBlocks: 3}, Tool: game.Tool{Power: 3, Rate: 77, Radius: 5}, Creative: true,
 		Slots: []string{"water", "stone"}, Materials: tab.Fingerprint(),
 	}
 	checkHeader(t, r, want)
@@ -247,53 +277,76 @@ func TestNewAndConfig(t *testing.T) {
 	}
 	got := r.Config(tab, 2)
 	if got.Width != 96 || got.Height != 64 || got.Seed != 42 || got.Workers != 2 || got.Materials != tab ||
-		strings.Join(got.Slots, ",") != "water,stone" || got.Tool != cfg.Tool || !got.Creative {
+		got.Scene != cfg.Scene || got.ViewWidth != 40 || got.ViewHeight != 30 || got.Stream != cfg.Stream ||
+		got.Store != nil || strings.Join(got.Slots, ",") != "water,stone" || got.Tool != cfg.Tool || !got.Creative {
 		t.Fatalf("Config = %+v", got)
 	}
 }
 
 // The point of a replay: record a session's inputs, save and load them, and
-// playing them back gives the same world, on any number of workers.
+// playing them back gives the same world, on any number of workers. In the
+// terrain the camera wanders, so blocks leave memory and come back.
 func TestReplayReproducesASession(t *testing.T) {
 	tab := loadTable(t)
-	cfg := &game.Config{
-		Width: 160, Height: 96, Seed: 9, Workers: 1, Materials: tab,
-		Slots: []string{"sand", "water", "stone"}, Tool: game.Tool{Power: 10, Rate: 400, Radius: 3},
+	tests := []struct {
+		name string
+		cfg  game.Config
+	}{
+		{"sandbox", game.Config{Width: 160, Height: 96, ViewWidth: 160, ViewHeight: 96}},
+		{"terrain", game.Config{
+			Width: 3072, Height: 3072, Scene: game.SceneTerrain, ViewWidth: 480, ViewHeight: 270,
+		}},
 	}
-	rec := New(cfg)
-	g := newGame(t, cfg)
-	s := rng.New(11)
-	var in game.Input
-	for range 240 {
-		if s.IntN(8) == 0 {
-			in = game.Input{
-				CursorX: s.IntN(cfg.Width), CursorY: s.IntN(cfg.Height),
-				Place: s.Bool(), Dig: s.IntN(3) == 0, Select: s.IntN(4),
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := tt.cfg
+			cfg.Seed, cfg.Workers, cfg.Materials = 9, 1, tab
+			cfg.Stream = game.Stream{Margin: 256, MaxBlocks: 6}
+			cfg.Slots, cfg.Tool = []string{"sand", "water", "stone"}, game.Tool{Power: 10, Rate: 400, Radius: 3}
+			rec := New(&cfg)
+			g := newGame(t, &cfg)
+			camX, camY := g.Spawn()
+			s := rng.New(11)
+			var in game.Input
+			for range 240 {
+				camX = min(max(camX+s.IntN(129)-64, 0), cfg.Width-cfg.ViewWidth)
+				camY = min(max(camY+s.IntN(65)-32, 0), cfg.Height-cfg.ViewHeight)
+				if s.IntN(8) == 0 {
+					in = game.Input{
+						CursorX: camX + s.IntN(cfg.ViewWidth), CursorY: camY + s.IntN(cfg.ViewHeight),
+						Place: s.Bool(), Dig: s.IntN(3) == 0, Select: s.IntN(4),
+					}
+				}
+				in.CameraX, in.CameraY = camX, camY
+				rec.Inputs = append(rec.Inputs, in)
+				if err := g.Step(in); err != nil {
+					t.Fatal(err)
+				}
 			}
-		}
-		rec.Inputs = append(rec.Inputs, in)
-		g.Step(in)
-	}
-	var buf bytes.Buffer
-	if err := Write(&buf, rec); err != nil {
-		t.Fatal(err)
-	}
-	loaded, err := Read(&buf)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, workers := range []int{1, 4} {
-		p := newGame(t, loaded.Config(tab, workers))
-		for _, in := range loaded.Inputs {
-			p.Step(in)
-		}
-		if got, want := p.World().Checksum(), g.World().Checksum(); got != want {
-			t.Fatalf("%d workers: playback checksum %016x, recording %016x", workers, got, want)
-		}
-		for id := range tab.Len() {
-			if got, want := p.Inventory(material.ID(id)), g.Inventory(material.ID(id)); got != want {
-				t.Fatalf("%d workers: playback holds %d %s, recording %d", workers, got, tab.Def(material.ID(id)).Name, want)
+			var buf bytes.Buffer
+			if err := Write(&buf, rec); err != nil {
+				t.Fatal(err)
 			}
-		}
+			loaded, err := Read(&buf)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, workers := range []int{1, 4} {
+				p := newGame(t, loaded.Config(tab, workers))
+				for _, in := range loaded.Inputs {
+					if err := p.Step(in); err != nil {
+						t.Fatal(err)
+					}
+				}
+				if got, want := p.World().Checksum(), g.World().Checksum(); got != want {
+					t.Fatalf("%d workers: playback checksum %016x, recording %016x", workers, got, want)
+				}
+				for id := range tab.Len() {
+					if got, want := p.Inventory(material.ID(id)), g.Inventory(material.ID(id)); got != want {
+						t.Fatalf("%d workers: playback holds %d %s, recording %d", workers, got, tab.Def(material.ID(id)).Name, want)
+					}
+				}
+			}
+		})
 	}
 }
