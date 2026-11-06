@@ -2,6 +2,8 @@
 
 Where the analysis covers each mechanic. `C49` is a section of `clone-spec/COMPLETION_PROGRESS.txt` (`noitaref section C49`); a NAME in capitals is a document (`noitaref doc NAME`); a lowercase name is an executable model in the analysis's `tools/` (`noitaref model NAME`). Read the related rows too.
 
+This map covers the Noita analysis only. For a gap it leaves, [tpt.md](tpt.md) lists where The Powder Toy handles the same mechanic.
+
 | Mechanic | Rules | Models | Material fields (`-fields`) | Related |
 |---|---|---|---|---|
 | Cell tick: order, work regions, double updates, request queues | MATERIAL_TICK, C33, C40, C112, C113 | native_probe_cell_update, native_probe_queue_flush, native_probe_queue_merge, native_probe_worker_merge_order | | parallel groups, sleep |

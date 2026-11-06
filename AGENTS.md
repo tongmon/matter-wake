@@ -45,6 +45,12 @@ The Noita reverse-engineering analysis lives outside the repo at `C:\Users\tongm
 - When you rely on an observed number, cite the analysis file and line in docs/references.md or in the PR. Do not cite it in code comments.
 - Its constants (512-cell blocks, 466 materials, ...) are references, not requirements.
 
+The source of **The Powder Toy** (release v100.1.400) lives outside the repo at `C:\Users\tongm\Downloads\the-powder-toy-analysis`. It is a secondary reference for gaps the Noita analysis leaves: pressure, heat conduction, phase changes, gases, electricity.
+
+- Consult it only through the `noita-reference` skill, while designing for a gap (`references/tpt.md` in the skill). Noita's observed rules come first, and TPT never overrides them.
+- **It is GPL-3.0. Never copy, paraphrase line by line or translate its code, comments or element table into this repo.** Doing so would make matter-wake a GPL derivative. Learn the approach and write the design in your own words.
+- Mark each idea taken from it as "TPT 방식" in the brief. Cite its file and function in docs/references.md or in the PR, not in code comments.
+
 ## Architecture boundaries
 
 - **Game logic must not import Ebitengine.** Logic is every package under `internal/` except `app`, `input` and `render`.
@@ -90,7 +96,7 @@ Module path: `github.com/tongmon/matter-wake`.
 | `tools/fmthook/` | Claude Code hook that formats an edited Go file. | no |
 | `tools/review/` | Runs a Codex review in its sandbox and saves the report (see Verification). | no |
 | `tools/noitaref/` | Looks up sections, documents and material values in the Noita analysis (used by the `noita-reference` skill). | no |
-| `.claude/skills/noita-reference/` | The procedure for consulting the analysis, its mechanics map and the brief template. | |
+| `.claude/skills/noita-reference/` | The procedure for consulting the analysis, its mechanics map, the map of The Powder Toy's source, and the brief template. | |
 | `docs/briefs/` | Reference briefs, one per mechanic (Korean). | |
 
 ## Go conventions
