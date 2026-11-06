@@ -1,7 +1,9 @@
 package world
 
 import (
+	"cmp"
 	"fmt"
+	"math"
 	"slices"
 )
 
@@ -24,15 +26,29 @@ func (w *World) scanned(c *chunk) rect {
 	return w.dirty[c.i]
 }
 
-// hold sorts one entry a chunk: its priority, then how long it has waited
-// (longest first), then its index. maxPriority and maxChunks keep the
-// parts apart.
-const (
-	maxPriority = 1<<31 - 1
-	waitShift   = 24
-	maxChunks   = 1 << waitShift
-	prioShift   = 32
-)
+// candidate is a chunk that would run this tick, as hold ranks it.
+type candidate struct {
+	priority uint64
+	waited   uint32
+	i        int
+}
+
+// byRank orders candidates for the budget: lower priority first, then the
+// one that has waited longer, then the lower chunk index, so the order is
+// the same on every run.
+func byRank(a, b candidate) int {
+	switch {
+	case a.priority != b.priority:
+		return cmp.Compare(a.priority, b.priority)
+	case a.waited != b.waited:
+		return cmp.Compare(b.waited, a.waited)
+	}
+	return cmp.Compare(a.i, b.i)
+}
+
+// halvings caps how many times a wait halves a chunk's distance: past it
+// the distance is 0, and the wait alone decides.
+const halvings = 63
 
 // hold picks the chunks that wait this tick. When the chunks that would
 // run hold more cells to scan than the budget, they are taken nearest the
@@ -42,8 +58,10 @@ const (
 //
 // The distance a chunk is ranked by halves for every tick in a row it has
 // waited, so a far chunk comes before the near ones within a few dozen
-// ticks however busy they are. Chunks woken later in the tick that were
-// not made to wait run as they would without a budget.
+// ticks however busy they are. Among equal distances the chunk that has
+// waited longer goes first; once every distance is 0 they take turns, so
+// any number of busy chunks gets through. Chunks woken later in the tick
+// that were not made to wait run as they would without a budget.
 func (w *World) hold() {
 	total := 0
 	w.order = w.order[:0]
@@ -57,27 +75,27 @@ func (w *World) hold() {
 					continue
 				}
 				total += r.area()
-				w.order = append(w.order, w.priority(c)<<prioShift|uint64(maxWaited-w.waited[c.i])<<waitShift|uint64(c.i))
+				w.order = append(w.order, candidate{priority: w.priority(c), waited: w.waited[c.i], i: c.i})
 			}
 		}
 	}
 	if total <= w.budget {
 		return
 	}
-	// Ties go to the chunk that has waited longer, then to the lower chunk
-	// index, so the order is the same on every run. The chunk under the
-	// focus has priority 0 however often it runs; one that waits reaches 0
-	// too and then comes first (TestBudgetLetsWaitingChunksPassTheFocusChunk).
-	slices.Sort(w.order)
+	// The chunk under the focus has priority 0 however often it runs; one
+	// that waits reaches 0 too and then comes first
+	// (TestBudgetLetsWaitingChunksPassTheFocusChunk).
+	slices.SortFunc(w.order, byRank)
 	used := 0
 	for k, o := range w.order {
-		i := int(o & (maxChunks - 1))
-		if cost := w.scanned(&w.chunks[i]).area(); k == 0 || used+cost <= w.budget {
+		if cost := w.scanned(&w.chunks[o.i]).area(); k == 0 || used+cost <= w.budget {
 			used += cost
 			continue
 		}
-		w.held[i] = w.tick
-		w.waited[i] = min(w.waited[i]+1, maxWaited)
+		w.held[o.i] = w.tick
+		if w.waited[o.i] < maxWaited {
+			w.waited[o.i]++
+		}
 		w.waiting++
 	}
 }
@@ -89,11 +107,12 @@ func (w *World) priority(c *chunk) uint64 {
 	dx := (c.cells.x0+c.cells.x1)/2 - w.focusX
 	dy := (c.cells.y0+c.cells.y1)/2 - w.focusY
 	d := uint64(dx)*uint64(dx) + uint64(dy)*uint64(dy)
-	return min(d>>w.waited[c.i], maxPriority)
+	return d >> min(w.waited[c.i], halvings)
 }
 
-// maxWaited caps how many ticks in a row a chunk's wait is counted.
-const maxWaited = 63
+// maxWaited caps how many ticks in a row a chunk's wait is counted, far
+// more than any chunk waits.
+const maxWaited = math.MaxUint32
 
 // ChunkState is where one chunk stands between ticks: what it has left to
 // scan and how long it has waited for the budget. A save keeps it, so a
@@ -105,7 +124,7 @@ type ChunkState struct {
 	// again. Each is x0, y0, x1, y1, half-open, all zero when empty.
 	Dirty, Keep [4]int
 	// Waited is how many ticks in a row the chunk has waited for the
-	// budget, at most 63.
+	// budget, at most math.MaxUint32.
 	Waited int
 }
 
@@ -154,7 +173,7 @@ func (w *World) SetChunkStates(states []ChunkState) error {
 	}
 	for _, s := range states {
 		i := s.CY*w.cols + s.CX
-		w.dirty[i], w.keep[i], w.waited[i] = rectOf(s.Dirty), rectOf(s.Keep), uint8(s.Waited)
+		w.dirty[i], w.keep[i], w.waited[i] = rectOf(s.Dirty), rectOf(s.Keep), uint32(s.Waited)
 	}
 	return nil
 }

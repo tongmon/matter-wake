@@ -279,7 +279,7 @@ func TestSetChunkStatesRejectsBadStates(t *testing.T) {
 		{"rectangle outside the chunk", ChunkState{CX: 1, CY: 0, Dirty: [4]int{0, 0, 10, 10}}},
 		{"keep outside the chunk", ChunkState{CX: 0, CY: 1, Keep: [4]int{0, 0, 10, 10}}},
 		{"negative wait", ChunkState{CX: 0, CY: 0, Waited: -1}},
-		{"wait past the cap", ChunkState{CX: 0, CY: 0, Waited: 64}},
+		{"wait past the cap", ChunkState{CX: 0, CY: 0, Waited: maxWaited + 1}},
 	}
 	for _, tt := range tests {
 		if err := w.SetChunkStates([]ChunkState{tt.s}); err == nil {
@@ -332,4 +332,30 @@ func TestUnloadingForgetsTheWaits(t *testing.T) {
 			t.Fatalf("chunk (%d, %d) still counts %d ticks of waiting after its block left memory", s.CX, s.CY, s.Waited)
 		}
 	}
+}
+
+// With more chunks busy than a wait can count to in its distance halving,
+// the longest-waiting chunk still goes first, so every chunk takes its
+// turn (third Codex review).
+func TestBudgetServesEveryBusyChunk(t *testing.T) {
+	const n = 128
+	w, ids := newBudgetWorld(t, n*ChunkSize, ChunkSize, 1, 1)
+	ran := make([]bool, n)
+	left := n
+	for tick := range 4 * n {
+		// Sand lands on every chunk every tick, so all of them stay busy.
+		w.Fill(0, 0, w.Width(), 1, ids.sand)
+		w.Step()
+		for cx := range n {
+			if !ran[cx] && w.waited[cx] == 0 {
+				ran[cx] = true
+				left--
+			}
+		}
+		if left == 0 {
+			t.Logf("every chunk ran by tick %d", tick+1)
+			return
+		}
+	}
+	t.Fatalf("%d of %d busy chunks never ran in %d ticks", left, n, 4*n)
 }

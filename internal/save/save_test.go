@@ -478,7 +478,7 @@ func TestSessionRefusesBadFiles(t *testing.T) {
 		{"short chunk line", head + "chunk 0 0 0 0 1 1 0 0 0 0\n", "chunk <x>"},
 		{"negative chunk", head + "chunk -1 0 0 0 1 1 0 0 0 0 0\n", "chunk x"},
 		{"chunk twice", head + "chunk 0 0 0 0 1 1 0 0 0 0 0\nchunk 0 0 0 0 1 1 0 0 0 0 0\n", "twice"},
-		{"chunk waits too long", head + "chunk 0 0 0 0 1 1 0 0 0 0 64\n", "waited"},
+		{"chunk waits too long", head + "chunk 0 0 0 0 1 1 0 0 0 0 4294967296\n", "waited"},
 		{"version 0", "matter-wake-session 0\n", "format version 0"},
 		{"stream in version 1", "matter-wake-session 1\ncamera 1 2\nslot 1\nstream 0 0 10 10 0 60\n", "version 1"},
 		{"short stream line", head + "stream 0 0 10 10 0\n", "stream <x>"},
@@ -513,7 +513,7 @@ func TestSessionRefusesBadFiles(t *testing.T) {
 		{Slot: 1, Stream: &SessionStream{Area: [4]int{0, 0, -1, 0}, Interval: 1}},
 		{Slot: 1, Chunks: []SessionChunk{{CX: -1}}},
 		{Slot: 1, Chunks: []SessionChunk{{CX: 1}, {CX: 1}}},
-		{Slot: 1, Chunks: []SessionChunk{{Waited: 64}}},
+		{Slot: 1, Chunks: []SessionChunk{{Waited: 1 << 32}}},
 		{Slot: 1, Chunks: []SessionChunk{{Dirty: [4]int{-1, 0, 4, 4}}}},
 	}
 	for _, s := range bad {

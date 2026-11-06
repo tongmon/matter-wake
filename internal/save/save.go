@@ -591,7 +591,7 @@ type SessionChunk struct {
 }
 
 // maxWaited is the longest wait a chunk records (world.ChunkState).
-const maxWaited = 63
+const maxWaited = 1<<32 - 1
 
 // valid reports what is wrong with c, or nil.
 func (c *SessionChunk) valid() error {
@@ -756,7 +756,7 @@ func (l *lines) chunk(s *Session, f []string, seen map[[2]int]bool) {
 		c.Dirty[i] = int(l.uint("chunk corner", f[2+i], 31))
 		c.Keep[i] = int(l.uint("chunk corner", f[6+i], 31))
 	}
-	c.Waited = int(l.uint("chunk waited", f[10], 31))
+	c.Waited = int(l.uint("chunk waited", f[10], 32))
 	if l.err != nil {
 		return
 	}

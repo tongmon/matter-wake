@@ -187,10 +187,10 @@ type World struct {
 	// waited how many ticks in a row it has waited since it last ran.
 	// waiting is how many chunks waited in the last tick.
 	held    []uint32
-	waited  []uint8
+	waited  []uint32
 	waiting int
 	// order is hold's buffer: one entry a chunk that would run.
-	order []uint64
+	order []candidate
 	// scanAll makes every chunk scan all its cells every tick, for tests
 	// that check that sleeping changes nothing.
 	scanAll bool
@@ -208,9 +208,6 @@ func New(cfg Config) (*World, error) {
 	}
 	if cfg.Budget < 0 {
 		return nil, fmt.Errorf("world: budget %d is negative", cfg.Budget)
-	}
-	if n := ((cfg.Width + ChunkSize - 1) / ChunkSize) * ((cfg.Height + ChunkSize - 1) / ChunkSize); n > maxChunks {
-		return nil, fmt.Errorf("world: %dx%d cells make %d chunks, at most %d", cfg.Width, cfg.Height, n, maxChunks)
 	}
 	mats := new([material.MaxMaterials]matProps)
 	for i := range cfg.Materials.Len() {
@@ -259,8 +256,8 @@ func New(cfg Config) (*World, error) {
 	w.keep = make([]rect, len(w.chunks))
 	w.versions = make([]uint64, len(w.chunks))
 	w.held = make([]uint32, len(w.chunks))
-	w.waited = make([]uint8, len(w.chunks))
-	w.order = make([]uint64, 0, len(w.chunks))
+	w.waited = make([]uint32, len(w.chunks))
+	w.order = make([]candidate, 0, len(w.chunks))
 	// A phase runs at most every other chunk of a row.
 	w.jobs = make([]job, (w.cols+1)/2)
 	w.stepChunkFn = w.stepChunk
