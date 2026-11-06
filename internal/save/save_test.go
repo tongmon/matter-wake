@@ -372,13 +372,18 @@ func TestSessionRoundTrip(t *testing.T) {
 		Held:   map[string]int{"stone": 15, "water": 0, "sand": 120},
 		Blocks: [][2]int{{16, 2}, {15, 1}, {16, 1}},
 		Stream: &SessionStream{Area: [4]int{7872, -64, 608, 398}, LastCheck: 4200, Interval: 15},
+		Chunks: []SessionChunk{
+			{CX: 130, CY: 9, Dirty: [4]int{8320, 576, 8384, 600}, Waited: 3},
+			{CX: 129, CY: 9, Keep: [4]int{8256, 590, 8260, 600}},
+		},
 	}
 	var buf bytes.Buffer
 	if err := WriteSession(&buf, in); err != nil {
 		t.Fatal(err)
 	}
-	want := "matter-wake-session 2\ncamera 7952 -3\nslot 3\nstream 7872 -64 608 398 4200 15\n" +
-		"held \"sand\" 120\nheld \"stone\" 15\nblock 15 1\nblock 16 1\nblock 16 2\n"
+	want := "matter-wake-session 3\ncamera 7952 -3\nslot 3\nstream 7872 -64 608 398 4200 15\n" +
+		"held \"sand\" 120\nheld \"stone\" 15\nblock 15 1\nblock 16 1\nblock 16 2\n" +
+		"chunk 129 9 0 0 0 0 8256 590 8260 600 0\nchunk 130 9 8320 576 8384 600 0 0 0 0 3\n"
 	if got := buf.String(); got != want {
 		t.Fatalf("WriteSession wrote %q, want %q", got, want)
 	}
@@ -388,8 +393,32 @@ func TestSessionRoundTrip(t *testing.T) {
 	}
 	if got.CameraX != 7952 || got.CameraY != -3 || got.Slot != 3 || len(got.Held) != 2 ||
 		got.Held["sand"] != 120 || got.Held["stone"] != 15 || len(got.Blocks) != 3 || got.Blocks[2] != [2]int{16, 2} ||
-		got.Stream == nil || *got.Stream != *in.Stream {
+		got.Stream == nil || *got.Stream != *in.Stream || !got.Scheduled ||
+		len(got.Chunks) != 2 || got.Chunks[0] != in.Chunks[1] || got.Chunks[1] != in.Chunks[0] {
 		t.Fatalf("ReadSession = %+v", got)
+	}
+}
+
+// Version 3 records the chunks' states: a file of version 3 says which
+// chunks had something to scan, even when it lists none. Older files say
+// nothing about them.
+func TestSessionScheduled(t *testing.T) {
+	tests := []struct {
+		text string
+		want bool
+	}{
+		{"matter-wake-session 3\ncamera 1 2\nslot 1\nblock 0 0\n", true},
+		{"matter-wake-session 2\ncamera 1 2\nslot 1\nblock 0 0\n", false},
+		{"matter-wake-session 1\ncamera 1 2\nslot 1\n", false},
+	}
+	for _, tt := range tests {
+		got, err := ReadSession(strings.NewReader(tt.text))
+		if err != nil {
+			t.Fatalf("ReadSession(%q): %v", tt.text, err)
+		}
+		if got.Scheduled != tt.want || len(got.Chunks) != 0 {
+			t.Errorf("ReadSession(%q): scheduled %v with %d chunks, want %v with none", tt.text, got.Scheduled, len(got.Chunks), tt.want)
+		}
 	}
 }
 
@@ -439,12 +468,17 @@ func TestSessionTakesAnyName(t *testing.T) {
 }
 
 func TestSessionRefusesBadFiles(t *testing.T) {
-	const head = "matter-wake-session 2\ncamera 1 2\nslot 1\n"
+	const head = "matter-wake-session 3\ncamera 1 2\nslot 1\n"
 	tests := []struct {
 		name, text, wantErr string
 	}{
 		{"empty", "", "missing"},
-		{"newer version", "matter-wake-session 3\n", "format version 3"},
+		{"newer version", "matter-wake-session 4\n", "format version 4"},
+		{"chunk in version 2", "matter-wake-session 2\ncamera 1 2\nslot 1\nchunk 0 0 0 0 1 1 0 0 0 0 0\n", "version 2"},
+		{"short chunk line", head + "chunk 0 0 0 0 1 1 0 0 0 0\n", "chunk <x>"},
+		{"negative chunk", head + "chunk -1 0 0 0 1 1 0 0 0 0 0\n", "chunk x"},
+		{"chunk twice", head + "chunk 0 0 0 0 1 1 0 0 0 0 0\nchunk 0 0 0 0 1 1 0 0 0 0 0\n", "twice"},
+		{"chunk waits too long", head + "chunk 0 0 0 0 1 1 0 0 0 0 64\n", "waited"},
 		{"version 0", "matter-wake-session 0\n", "format version 0"},
 		{"stream in version 1", "matter-wake-session 1\ncamera 1 2\nslot 1\nstream 0 0 10 10 0 60\n", "version 1"},
 		{"short stream line", head + "stream 0 0 10 10 0\n", "stream <x>"},
@@ -477,6 +511,10 @@ func TestSessionRefusesBadFiles(t *testing.T) {
 		{Slot: 1, Blocks: [][2]int{{1, 0}, {1, 0}}},
 		{Slot: 1, Stream: &SessionStream{Interval: 0}},
 		{Slot: 1, Stream: &SessionStream{Area: [4]int{0, 0, -1, 0}, Interval: 1}},
+		{Slot: 1, Chunks: []SessionChunk{{CX: -1}}},
+		{Slot: 1, Chunks: []SessionChunk{{CX: 1}, {CX: 1}}},
+		{Slot: 1, Chunks: []SessionChunk{{Waited: 64}}},
+		{Slot: 1, Chunks: []SessionChunk{{Dirty: [4]int{-1, 0, 4, 4}}}},
 	}
 	for _, s := range bad {
 		if err := WriteSession(&bytes.Buffer{}, s); err == nil {

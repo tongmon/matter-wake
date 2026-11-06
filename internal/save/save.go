@@ -531,8 +531,9 @@ func (l *lines) end() {
 }
 
 // SessionVersion is the session file layout this build writes. It reads
-// version 1 too, which had no stream line.
-const SessionVersion = 2
+// version 1, which had no stream line, and version 2, which had no chunk
+// lines.
+const SessionVersion = 3
 
 const sessionMagic = "matter-wake-session"
 
@@ -543,7 +544,7 @@ const sessionMagic = "matter-wake-session"
 //
 // It is line-based text, like the world header:
 //
-//	matter-wake-session 2
+//	matter-wake-session 3
 //	camera 7952 955
 //	slot 3
 //	stream 7872 832 608 398 4200 60
@@ -551,12 +552,17 @@ const sessionMagic = "matter-wake-session"
 //	held "stone" 15
 //	block 15 1
 //	block 16 1
+//	chunk 130 9 8320 576 8384 600 0 0 0 0 3
 //
 // The stream line holds the camera's last area (x, y, width, height), the
 // tick of the last check and the ticks to the next; a session that had
 // none has no stream line. Only materials the inventory holds get a held
 // line, in name order, the name quoted as in Go, since it may hold
-// spaces; the blocks follow in row order.
+// spaces; the blocks follow in row order. Last come the chunks of those
+// blocks that had something to scan or had waited for the budget
+// (world.ChunkState), in row order: the chunk's x and y, what it scans
+// next and what it scans again (x0 y0 x1 y1 each, all 0 when nothing),
+// and the ticks it has waited.
 type Session struct {
 	CameraX, CameraY int
 	// Slot is the selected slot, 1-based as the keys are.
@@ -567,6 +573,40 @@ type Session struct {
 	Held map[string]int
 	// Blocks lists the blocks that were in memory, as (bx, by).
 	Blocks [][2]int
+	// Chunks lists the chunks of those blocks that had something to scan
+	// or had waited, and Scheduled is set when the file records them
+	// (version 3 on): then the chunks not listed had nothing to scan. An
+	// older file says nothing about the chunks.
+	Chunks    []SessionChunk
+	Scheduled bool
+}
+
+// SessionChunk is where one chunk stood (world.ChunkState): what it had
+// left to scan and scan again, as x0, y0, x1, y1, and how many ticks it had
+// waited for the budget.
+type SessionChunk struct {
+	CX, CY      int
+	Dirty, Keep [4]int
+	Waited      int
+}
+
+// maxWaited is the longest wait a chunk records (world.ChunkState).
+const maxWaited = 63
+
+// valid reports what is wrong with c, or nil.
+func (c *SessionChunk) valid() error {
+	if c.CX < 0 || c.CY < 0 {
+		return fmt.Errorf("chunk (%d, %d) is negative", c.CX, c.CY)
+	}
+	for _, v := range append(c.Dirty[:], c.Keep[:]...) {
+		if v < 0 {
+			return fmt.Errorf("chunk (%d, %d) has a negative corner", c.CX, c.CY)
+		}
+	}
+	if c.Waited < 0 || c.Waited > maxWaited {
+		return fmt.Errorf("chunk (%d, %d) waited %d ticks, want 0 to %d", c.CX, c.CY, c.Waited, maxWaited)
+	}
+	return nil
 }
 
 // SessionStream is where a session's stream stood: the camera's last area
@@ -630,8 +670,34 @@ func WriteSession(w io.Writer, s *Session) error {
 		}
 		_, _ = fmt.Fprintf(bw, "block %d %d\n", b[0], b[1])
 	}
+	if err := writeChunks(bw, s.Chunks); err != nil {
+		return err
+	}
 	if err := bw.Flush(); err != nil {
 		return fmt.Errorf("save: %w", err)
+	}
+	return nil
+}
+
+// writeChunks writes a chunk line for each of chunks, in row order.
+func writeChunks(w io.Writer, chunks []SessionChunk) error {
+	chunks = slices.Clone(chunks)
+	slices.SortFunc(chunks, func(a, b SessionChunk) int {
+		if a.CY != b.CY {
+			return a.CY - b.CY
+		}
+		return a.CX - b.CX
+	})
+	for i, c := range chunks {
+		if err := c.valid(); err != nil {
+			return fmt.Errorf("save: %w", err)
+		}
+		if i > 0 && c.CX == chunks[i-1].CX && c.CY == chunks[i-1].CY {
+			return fmt.Errorf("save: chunk (%d, %d) is listed twice", c.CX, c.CY)
+		}
+		d, k := c.Dirty, c.Keep
+		_, _ = fmt.Fprintf(w, "chunk %d %d %d %d %d %d %d %d %d %d %d\n",
+			c.CX, c.CY, d[0], d[1], d[2], d[3], k[0], k[1], k[2], k[3], c.Waited)
 	}
 	return nil
 }
@@ -678,8 +744,35 @@ func (l *lines) stream(s *Session, f []string) {
 	s.Stream = st
 }
 
-// ReadSession reads a session file that WriteSession wrote, or one of
-// version 1.
+// chunk reads the fields of a chunk line into s; seen holds the chunks
+// read so far.
+func (l *lines) chunk(s *Session, f []string, seen map[[2]int]bool) {
+	if len(f) != 11 {
+		l.err = fmt.Errorf("line %q, want %q", l.line, "chunk <x> <y> <x0> <y0> <x1> <y1> <keep x0> <keep y0> <keep x1> <keep y1> <waited>")
+		return
+	}
+	c := SessionChunk{CX: int(l.uint("chunk x", f[0], 31)), CY: int(l.uint("chunk y", f[1], 31))}
+	for i := range 4 {
+		c.Dirty[i] = int(l.uint("chunk corner", f[2+i], 31))
+		c.Keep[i] = int(l.uint("chunk corner", f[6+i], 31))
+	}
+	c.Waited = int(l.uint("chunk waited", f[10], 31))
+	if l.err != nil {
+		return
+	}
+	if l.err = c.valid(); l.err != nil {
+		return
+	}
+	if seen[[2]int{c.CX, c.CY}] {
+		l.err = fmt.Errorf("chunk (%d, %d) is listed twice", c.CX, c.CY)
+		return
+	}
+	seen[[2]int{c.CX, c.CY}] = true
+	s.Chunks = append(s.Chunks, c)
+}
+
+// ReadSession reads a session file that WriteSession wrote, or one of an
+// older version.
 func ReadSession(r io.Reader) (*Session, error) {
 	l := newLines(r)
 	v := l.uint("version", l.next(sessionMagic, 1)[0], 16)
@@ -687,12 +780,13 @@ func ReadSession(r io.Reader) (*Session, error) {
 		l.err = fmt.Errorf("format version %d; this build reads versions 1 to %d", v, SessionVersion)
 	}
 	camera := l.next("camera", 2)
-	s := &Session{Held: map[string]int{}}
+	s := &Session{Held: map[string]int{}, Scheduled: v >= 3}
 	s.CameraX, s.CameraY = l.int("camera x", camera[0]), l.int("camera y", camera[1])
 	if s.Slot = l.int("slot", l.next("slot", 1)[0]); l.err == nil && s.Slot < 1 {
 		l.err = fmt.Errorf("slot %d is not 1 or more", s.Slot)
 	}
 	seen := map[[2]int]bool{}
+	chunks := map[[2]int]bool{}
 	for l.err == nil && l.scan() {
 		f := strings.Fields(l.line)
 		switch {
@@ -704,6 +798,12 @@ func ReadSession(r io.Reader) (*Session, error) {
 				break
 			}
 			l.stream(s, f[1:])
+		case len(f) > 0 && f[0] == "chunk":
+			if v < 3 {
+				l.err = fmt.Errorf("line %q: a version %d session has no chunk lines", l.line, v)
+				break
+			}
+			l.chunk(s, f[1:], chunks)
 		case len(f) == 3 && f[0] == "block":
 			b := [2]int{int(l.uint("block x", f[1], 31)), int(l.uint("block y", f[2], 31))}
 			if seen[b] {

@@ -190,3 +190,100 @@ func TestNewRejectsANegativeBudget(t *testing.T) {
 		t.Fatal("New accepted a negative budget")
 	}
 }
+
+// The chunk under the focus has distance 0 however often it runs. A
+// chunk that waits still gets past it (Codex review).
+func TestBudgetLetsWaitingChunksPassTheFocusChunk(t *testing.T) {
+	w, ids := newBudgetWorld(t, 4*ChunkSize, ChunkSize, 1, 1)
+	w.SetFocus(ChunkSize/2, ChunkSize/2)
+	w.Fill(3*ChunkSize, 0, 4*ChunkSize, 8, ids.sand)
+	far := chunkSum(w, 3)
+	for range 200 {
+		// The focus chunk stays busy every tick.
+		w.Fill(0, 0, ChunkSize, 8, ids.sand)
+		w.Fill(0, ChunkSize-8, ChunkSize, ChunkSize, material.Air)
+		w.Step()
+		if chunkSum(w, 3) != far {
+			return
+		}
+	}
+	t.Fatal("chunk 3 never ran in 200 ticks while the chunk under the focus stayed busy")
+}
+
+// copyWorld returns a new world of w's size, seed, tick and budget with
+// copies of w's blocks in memory.
+func copyWorld(t *testing.T, w *World, workers int) *World {
+	t.Helper()
+	c, err := New(Config{
+		Width: w.Width(), Height: w.Height(), Seed: w.Seed(), Workers: workers, Materials: testTable(t, nil),
+		Streamed: true, Tick: w.Tick(), Budget: w.budget,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(c.Close)
+	for _, i := range w.resident {
+		b := new(Block)
+		*b = *w.blocks[i]
+		if err := c.LoadBlock(i%w.bcols, i/w.bcols, b); err != nil {
+			t.Fatal(err)
+		}
+	}
+	c.SetFocus(w.focusX, w.focusY)
+	return c
+}
+
+// A world loaded from a save goes on exactly as the saved one when it gets
+// the saved chunks' states back, budget and all (Codex review): which
+// chunks wait depends on what each has left to scan and how long it has
+// waited.
+func TestChunkStatesCarryTheSchedule(t *testing.T) {
+	saved, ids := newBudgetWorld(t, 2*BlockSize, BlockSize, 2, 4*ChunkSize*ChunkSize)
+	saved.SetFocus(100, 100)
+	scatter(saved, ids, 7)
+	for range 40 {
+		saved.Step()
+	}
+	if saved.Waiting() == 0 {
+		t.Fatal("no chunk waits at the save: the test needs a world over its budget")
+	}
+	restored := copyWorld(t, saved, 4)
+	if err := restored.SetChunkStates(saved.ChunkStates()); err != nil {
+		t.Fatal(err)
+	}
+	// Without the states, loading wakes every chunk whole.
+	unrestored := copyWorld(t, saved, 4)
+	diverged := false
+	for range 100 {
+		for _, w := range []*World{saved, restored, unrestored} {
+			w.Step()
+		}
+		if a, b := saved.Checksum(), restored.Checksum(); a != b {
+			t.Fatalf("tick %d: the restored world's checksum %#x, the saved one's %#x", saved.Tick(), b, a)
+		}
+		diverged = diverged || unrestored.Checksum() != saved.Checksum()
+	}
+	if !diverged {
+		t.Fatal("the world loaded without the states never diverged: the test does not need them")
+	}
+}
+
+func TestSetChunkStatesRejectsBadStates(t *testing.T) {
+	w, _ := newBudgetWorld(t, BlockSize, BlockSize, 1, 0)
+	tests := []struct {
+		name string
+		s    ChunkState
+	}{
+		{"outside the grid", ChunkState{CX: 8, CY: 0}},
+		{"negative chunk", ChunkState{CX: -1, CY: 0}},
+		{"rectangle outside the chunk", ChunkState{CX: 1, CY: 0, Dirty: [4]int{0, 0, 10, 10}}},
+		{"keep outside the chunk", ChunkState{CX: 0, CY: 1, Keep: [4]int{0, 0, 10, 10}}},
+		{"negative wait", ChunkState{CX: 0, CY: 0, Waited: -1}},
+		{"wait past the cap", ChunkState{CX: 0, CY: 0, Waited: 64}},
+	}
+	for _, tt := range tests {
+		if err := w.SetChunkStates([]ChunkState{tt.s}); err == nil {
+			t.Errorf("%s: SetChunkStates accepted %+v", tt.name, tt.s)
+		}
+	}
+}

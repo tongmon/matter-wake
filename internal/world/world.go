@@ -209,6 +209,9 @@ func New(cfg Config) (*World, error) {
 	if cfg.Budget < 0 {
 		return nil, fmt.Errorf("world: budget %d is negative", cfg.Budget)
 	}
+	if n := ((cfg.Width + ChunkSize - 1) / ChunkSize) * ((cfg.Height + ChunkSize - 1) / ChunkSize); n > maxChunks {
+		return nil, fmt.Errorf("world: %dx%d cells make %d chunks, at most %d", cfg.Width, cfg.Height, n, maxChunks)
+	}
 	mats := new([material.MaxMaterials]matProps)
 	for i := range cfg.Materials.Len() {
 		d := cfg.Materials.Def(material.ID(i))

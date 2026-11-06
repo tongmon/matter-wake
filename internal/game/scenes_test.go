@@ -172,3 +172,31 @@ func (s readyStore) Load(bx, by int) (*world.Block, error) {
 }
 
 func (readyStore) Save(int, int, *world.Block) error { return nil }
+
+// Saving the blocks takes each out and puts it back, which wakes it
+// whole; the session must go on as if it had not been saved, also while
+// chunks wait for the budget (Codex review).
+func TestSavingBlocksChangesNothing(t *testing.T) {
+	ready := loadSceneBlocks(t)
+	saved, kept := newLoadScene(t, 2, ready), newLoadScene(t, 2, ready)
+	defer saved.Close()
+	defer kept.Close()
+	in := Input{CameraX: loadX, CameraY: loadY}
+	for range 10 {
+		step(t, saved, in)
+		step(t, kept, in)
+	}
+	if saved.World().Waiting() == 0 {
+		t.Fatal("no chunk waits at the save: the test needs a session over its budget")
+	}
+	if err := saved.SaveBlocks(); err != nil {
+		t.Fatal(err)
+	}
+	for range 60 {
+		step(t, saved, in)
+		step(t, kept, in)
+		if a, b := saved.World().Checksum(), kept.World().Checksum(); a != b {
+			t.Fatalf("tick %d: checksum %#x after saving the blocks, %#x without", saved.World().Tick(), a, b)
+		}
+	}
+}

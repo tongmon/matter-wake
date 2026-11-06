@@ -40,3 +40,21 @@ func (r rect) area() int {
 	}
 	return (r.x1 - r.x0) * (r.y1 - r.y0)
 }
+
+// corners returns r as x0, y0, x1, y1, all zero when r is empty.
+func (r rect) corners() [4]int {
+	if r.empty() {
+		return [4]int{}
+	}
+	return [4]int{r.x0, r.y0, r.x1, r.y1}
+}
+
+// rectOf returns the rectangle with corners a, the empty rectangle when a
+// covers no cell.
+func rectOf(a [4]int) rect {
+	r := rect{a[0], a[1], a[2], a[3]}
+	if r.empty() {
+		return rect{}
+	}
+	return r
+}
