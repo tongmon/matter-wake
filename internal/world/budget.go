@@ -35,10 +35,10 @@ const (
 )
 
 // hold picks the chunks that wait this tick. When the chunks that would
-// run hold more cells to scan than the budget, they run nearest the focus
-// first until the budget is spent, and the rest wait. A chunk that would
-// otherwise come past the budget still runs if it is the first, so the
-// world always moves on.
+// run hold more cells to scan than the budget, they are taken nearest the
+// focus first, each that fits what is left of the budget, and the rest
+// wait. The first chunk runs even if it alone is bigger than the budget,
+// so the world always moves on.
 //
 // The distance a chunk is ranked by halves for every tick in a row it has
 // waited, so a far chunk comes before the near ones within a few dozen
@@ -70,10 +70,10 @@ func (w *World) hold() {
 	// too and then comes first (TestBudgetLetsWaitingChunksPassTheFocusChunk).
 	slices.Sort(w.order)
 	used := 0
-	for _, o := range w.order {
+	for k, o := range w.order {
 		i := int(o & (maxChunks - 1))
-		if used < w.budget {
-			used += w.scanned(&w.chunks[i]).area()
+		if cost := w.scanned(&w.chunks[i]).area(); k == 0 || used+cost <= w.budget {
+			used += cost
 			continue
 		}
 		w.held[i] = w.tick

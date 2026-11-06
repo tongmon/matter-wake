@@ -287,3 +287,49 @@ func TestSetChunkStatesRejectsBadStates(t *testing.T) {
 		}
 	}
 }
+
+// The budget is a cap: a chunk that does not fit what is left waits, even
+// when less is left than one chunk scans. Only the first chunk may be
+// bigger than the budget (second Codex review).
+func TestBudgetIsNeverOvershot(t *testing.T) {
+	// Four chunks of topRows×ChunkSize cells each, and room for one and a
+	// cell.
+	w, ids := newBudgetWorld(t, 4*ChunkSize, ChunkSize, 1, topRows*ChunkSize+1)
+	fillTops(w, ids)
+	w.Step()
+	if w.Awake() != 1 || w.Waiting() != 3 {
+		t.Fatalf("%d chunks ran and %d waited, want 1 and 3", w.Awake(), w.Waiting())
+	}
+}
+
+// A block taken out of memory forgets how long its chunks waited, as it
+// forgets what they had to scan: a save does not record the chunks of
+// blocks out of memory, so a session opened again must find the same when
+// the block comes back (second Codex review).
+func TestUnloadingForgetsTheWaits(t *testing.T) {
+	w, ids := newBudgetWorld(t, 2*BlockSize, BlockSize, 1, ChunkSize*ChunkSize)
+	w.SetFocus(0, 0)
+	scatter(w, ids, 5)
+	w.Step()
+	waited := 0
+	for _, s := range w.ChunkStates() {
+		if s.CX >= blockChunks && s.Waited > 0 {
+			waited++
+		}
+	}
+	if waited == 0 {
+		t.Fatal("no chunk of block (1, 0) waited: the test does not reach the budget")
+	}
+	b, err := w.UnloadBlock(1, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := w.LoadBlock(1, 0, b); err != nil {
+		t.Fatal(err)
+	}
+	for _, s := range w.ChunkStates() {
+		if s.CX >= blockChunks && s.Waited != 0 {
+			t.Fatalf("chunk (%d, %d) still counts %d ticks of waiting after its block left memory", s.CX, s.CY, s.Waited)
+		}
+	}
+}
