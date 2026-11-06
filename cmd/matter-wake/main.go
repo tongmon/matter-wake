@@ -2,11 +2,15 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"runtime"
+	"runtime/pprof"
 	"strconv"
 	"strings"
 	"time"
@@ -37,6 +41,8 @@ func run() error {
 	flag.StringVar(&cfg.RecordPath, "record", "", "save this session's inputs to this replay file on exit")
 	flag.BoolVar(&cfg.Creative, "creative", false, "place without taking from the inventory, to try materials out")
 	flag.StringVar(&cfg.SavePath, "save", "", "save folder of the terrain (default: matter-wake/saves/world in the user's config folder)")
+	flag.BoolVar(&cfg.Timing, "timing", false, "log how long ticks, draws and frames took, on exit")
+	profile := flag.String("cpuprofile", "", "write a CPU profile of the session to this file, for go tool pprof")
 	flag.Parse()
 
 	if cfg.ReplayPath != "" {
@@ -59,7 +65,63 @@ func run() error {
 		return err
 	}
 	cfg.Shots = ticks
-	return app.Run(&cfg)
+	if *profile == "" {
+		return app.Run(&cfg)
+	}
+	f, err := createProfile(*profile)
+	if err != nil {
+		return err
+	}
+	if err := profileTo(f, func() error { return app.Run(&cfg) }); err != nil {
+		return err
+	}
+	slog.Info("profiled", "path", *profile)
+	return nil
+}
+
+// createProfile creates the file of a CPU profile, and its folder.
+func createProfile(path string) (*os.File, error) {
+	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+		return nil, fmt.Errorf("-cpuprofile: %w", err)
+	}
+	f, err := os.Create(path)
+	if err != nil {
+		return nil, fmt.Errorf("-cpuprofile: %w", err)
+	}
+	return f, nil
+}
+
+// profileTo runs fn while a CPU profile is written to w, and closes w. A
+// profile that cannot be finished fails the run even when fn did not.
+func profileTo(w io.WriteCloser, fn func() error) (err error) {
+	// pprof drops the writer's errors, so keep the first one here.
+	kept := &keepError{w: w}
+	if err := pprof.StartCPUProfile(kept); err != nil {
+		return errors.Join(fmt.Errorf("-cpuprofile: %w", err), w.Close())
+	}
+	defer func() {
+		pprof.StopCPUProfile()
+		for _, perr := range []error{kept.err, w.Close()} {
+			if perr != nil {
+				err = errors.Join(err, fmt.Errorf("-cpuprofile: %w", perr))
+			}
+		}
+	}()
+	return fn()
+}
+
+// keepError writes to w and keeps the first error it gave.
+type keepError struct {
+	w   io.Writer
+	err error
+}
+
+func (k *keepError) Write(p []byte) (int, error) {
+	n, err := k.w.Write(p)
+	if err != nil && k.err == nil {
+		k.err = err
+	}
+	return n, err
 }
 
 // setScene sets the scene and fills in the world size the flags left out:

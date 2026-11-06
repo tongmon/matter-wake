@@ -16,6 +16,8 @@
 - **Windows에서는 다른 핸들이 열어 둔 파일을 이름 바꾸기로 덮어쓸 수 없습니다.** Go의 `os.Open`은 삭제 공유 없이 열기 때문에, 읽는 중인 파일 위로 `os.Rename`하면 "Access is denied"가 납니다. Linux와 macOS에서는 성공하므로 Windows에서만 드러납니다. 같은 파일을 읽고 쓰는 고루틴은 서로 기다리게 합니다(`internal/app` prefetch.go, 2026-11-06 Codex 리뷰).
 - **백그라운드에서 미리 읽어 둔 블록은 그 뒤에 저장된 블록보다 오래될 수 있습니다.** 읽기 시작 전에 블록의 저장 횟수를 기억해 두었다가, 읽는 동안 다시 저장됐으면 버립니다. 쓰기를 기다리는 사본이 있는 블록은 미리 읽지 않습니다(`internal/app` prefetch.go, 2026-11-06).
 - **셀을 바꾸는 새 경로는 표시해야 합니다.** 청크는 변경 사각형 안만 훑으므로, 표시하지 않고 셀을 바꾸면 그 주변이 잠든 채로 남아 셀이 공중에 멈춥니다. 틱 안에서는 `World.mark`, 틱 밖에서는 `World.touch`를 거칩니다. 테스트에서 `w.cells`를 직접 고칠 때는 `Set`이나 `Fill`로 먼저 표시된 칸만 고칩니다.
+- **블록 안의 `x, err :=`는 이름 붙은 반환값 `err`를 가립니다.** 그 블록에서 `defer`가 `err`를 고쳐도 함수가 돌려주는 값은 그대로라, 마무리 에러가 사라집니다. 반환값을 고치는 `defer`는 함수 맨 바깥 블록에서 걸고, 안쪽 에러는 다른 이름으로 받습니다(`cmd/matter-wake` profileTo, 2026-11-07 Codex 리뷰).
+- **`pprof.StartCPUProfile`은 받은 writer의 에러를 버립니다.** 디스크가 차서 쓰기가 실패해도 `StopCPUProfile`은 아무 말이 없고, 깨진 프로파일이 남습니다. writer를 감싸 첫 에러를 기억해 두고 멈춘 뒤 확인합니다(`cmd/matter-wake` profileTo, 2026-11-07 두 번째 Codex 리뷰).
 - **종료할 때 저장하는 파일은 시작할 때 저장할 수 있는지 확인합니다.** `-record`처럼 세션 내내 모은 것을 끝에 한 번 쓰면, 경로가 폴더이거나 쓸 수 없을 때 세션 전체를 잃습니다. 모으는 양에 상한이 있으면 상한에서 모으기를 멈춰, 끝의 저장이 통째로 거부되지 않게 합니다(`internal/app`, 2026-11-06 Codex 리뷰).
 
 ## Ebitengine
@@ -26,6 +28,7 @@
 - **`vector` 패키지는 한 경로가 같은 픽셀을 덮은 횟수를 4비트로 셉니다.** 수십 번 겹치는 경로는 사라집니다(uplunge에서 발견).
 - **`ebiten.SetWindowSize`는 0 이하 크기에 panic합니다.** 명령줄 값은 Ebitengine에 넘기기 전에 검사해 에러로 돌려줍니다(`app.Run`, 2026-11-06 Codex 리뷰).
 - **`ebiten.CursorPosition()`은 논리 화면 좌표를 돌려줍니다.** 창 배율을 직접 나눌 필요가 없습니다.
+- **Windows에서 게임의 CPU 프로파일은 대부분 `IDXGISwapChain.Present`입니다.** 렌더 스레드가 화면 표시를 기다리는 시간이고, `runtime.cgocall`로 보입니다. 샌드박스 600틱에서 89%였습니다(2026-11-07). 게임 코드는 `go tool pprof -focus matter-wake/internal`로 봅니다.
 
 ## 도구
 

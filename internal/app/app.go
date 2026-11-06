@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"slices"
+	"time"
 
 	"github.com/hajimehoshi/ebiten/v2"
 
@@ -53,6 +54,9 @@ type Config struct {
 	// FixedWorld is set when the command line chose the seed or the
 	// world size, which a saved world refuses to change.
 	FixedWorld bool
+	// Timing measures how long ticks, draws and frames take and logs it
+	// on exit.
+	Timing bool
 }
 
 // Slots are the materials keys 1, 2, 3… select. 🧪 sandbox controls.
@@ -115,22 +119,9 @@ func Run(cfg *Config) error {
 	}
 	defer g.Close()
 
-	a := &app{game: g, rend: render.New(mats), width: sess.ViewWidth, height: sess.ViewHeight}
+	a := newApp(cfg, g, sess, mats, playback)
 	if sv != nil {
 		a.prefetch = sv.store
-	}
-	camX, camY := g.Spawn()
-	// Until the first tick, draw what the session starts with.
-	a.in = game.Input{CameraX: camX, CameraY: camY}
-	a.camera = input.Camera{X: camX, Y: camY, MaxX: sess.Width - sess.ViewWidth, MaxY: sess.Height - sess.ViewHeight}
-	if playback != nil {
-		a.playback, a.replaying = playback.Inputs, true
-	}
-	if cfg.RecordPath != "" {
-		a.record, a.recordLimit = replay.New(sess), replay.MaxTicks
-	}
-	if len(cfg.Shots) > 0 {
-		a.shots = newShooter(cfg.Shots, cfg.ShotsDir, sess.ViewWidth, sess.ViewHeight)
 	}
 	ebiten.SetTPS(game.Hz)
 	ebiten.SetWindowTitle("matter-wake")
@@ -138,6 +129,9 @@ func Run(cfg *Config) error {
 	ebiten.SetWindowResizingMode(ebiten.WindowResizingModeEnabled)
 	// RunGame returns nil when Update returns ebiten.Termination.
 	runErr := ebiten.RunGame(a)
+	if a.timing != nil {
+		a.timing.report()
+	}
 	if sv != nil {
 		err := writeSave(sv.dir, g, a.in.CameraX, a.in.CameraY, sv.store.Flush)
 		if err == nil {
@@ -152,6 +146,30 @@ func Run(cfg *Config) error {
 		slog.Info("recorded", "path", cfg.RecordPath, "ticks", len(a.record.Inputs))
 	}
 	return runErr
+}
+
+// newApp returns the app that runs session g, started from sess, as cfg
+// asks: playing the replay if there is one, recording, taking shots and
+// timing.
+func newApp(cfg *Config, g *game.Game, sess *game.Config, mats *material.Table, playback *replay.Replay) *app {
+	a := &app{game: g, rend: render.New(mats), width: sess.ViewWidth, height: sess.ViewHeight}
+	camX, camY := g.Spawn()
+	// Until the first tick, draw what the session starts with.
+	a.in = game.Input{CameraX: camX, CameraY: camY}
+	a.camera = input.Camera{X: camX, Y: camY, MaxX: sess.Width - sess.ViewWidth, MaxY: sess.Height - sess.ViewHeight}
+	if playback != nil {
+		a.playback, a.replaying = playback.Inputs, true
+	}
+	if cfg.RecordPath != "" {
+		a.record, a.recordLimit = replay.New(sess), replay.MaxTicks
+	}
+	if len(cfg.Shots) > 0 {
+		a.shots = newShooter(cfg.Shots, cfg.ShotsDir, sess.ViewWidth, sess.ViewHeight)
+	}
+	if cfg.Timing {
+		a.timing = new(timing)
+	}
+	return a
 }
 
 // sessionConfig is the session to start: the replay's when there is one,
@@ -281,6 +299,8 @@ type app struct {
 	// prefetch gets ready the blocks the camera will need next, in a
 	// session that saves on disk.
 	prefetch *prefetchStore
+	// timing, if set, measures the ticks and draws.
+	timing *timing
 }
 
 func (a *app) Update() error {
@@ -301,6 +321,10 @@ func (a *app) Update() error {
 		a.recordInput(in)
 	}
 	a.in = in
+	var start time.Time
+	if a.timing != nil {
+		start = time.Now()
+	}
 	if err := a.game.Step(in); err != nil {
 		return err
 	}
@@ -308,6 +332,9 @@ func (a *app) Update() error {
 	// tick: the camera crosses the extra block in no fewer than 32 ticks.
 	if a.prefetch != nil && a.game.World().Tick()%4 == 0 {
 		a.prefetch.Prefetch(a.game.Upcoming(in.CameraX, in.CameraY, prefetchMargin))
+	}
+	if a.timing != nil {
+		a.timing.addTick(time.Since(start))
 	}
 	return nil
 }
@@ -346,9 +373,16 @@ func (a *app) nextInput() (game.Input, bool) {
 }
 
 func (a *app) Draw(screen *ebiten.Image) {
+	var start time.Time
+	if a.timing != nil {
+		start = time.Now()
+	}
 	a.rend.DrawWorld(screen, a.game.World(), a.in.CameraX, a.in.CameraY)
 	if a.shots == nil {
 		a.rend.DrawOverlay(screen, a.game, a.in)
+	}
+	if a.timing != nil {
+		a.timing.addDraw(time.Since(start))
 	}
 }
 
