@@ -32,7 +32,7 @@ go run ./cmd/matter-wake
 go run ./tools/check
 ```
 
-포맷, `go mod tidy`, 린트, 테스트, (cgo가 있으면) 경합 검사를 한 번에 돌립니다. `-fix`는 포맷을 먼저 고치고, `-vuln`은 의존성 취약점 검사를 더합니다.
+포맷, `go mod tidy`, cgo 확인, 린트, 테스트, Box2D 스칼라 경로 결정성, 경합 검사를 한 번에 돌립니다. 강체 물리(Box2D, `third_party/box2d`)를 cgo로 컴파일하므로 C 컴파일러가 필요합니다. Linux는 gcc, macOS는 Xcode의 clang, Windows는 MinGW 계열 gcc나 clang(예: llvm-mingw)을 PATH에 둡니다. `-fix`는 포맷을 먼저 고치고, `-vuln`은 의존성 취약점 검사를 더합니다.
 
 ```
 go run ./tools/review

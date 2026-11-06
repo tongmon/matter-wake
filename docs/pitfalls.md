@@ -45,6 +45,15 @@
 
 ## cgo (4단계부터)
 
-- **설치된 clang은 MSVC 대상이라 cgo에 쓸 수 없습니다.** Windows의 cgo와 `-race`에는 llvm-mingw나 MSYS2 같은 MinGW 계열 컴파일러가 필요합니다.
-- **C 구조체에 Go 포인터를 넣지 않습니다.** Box2D의 `userData` 등에는 정수 핸들을 넣습니다. cgo 포인터 규칙 위반은 런타임 검사가 잡습니다.
-- **Box2D는 `-ffp-contract=off`로 컴파일해야 플랫폼 간 결정성이 유지됩니다.** Box2D의 CMake 설정이 그렇게 합니다.
+- **`C:\Program Files\LLVM\bin`의 clang은 MSVC 대상이라 cgo에 쓸 수 없습니다.** Windows의 cgo와 `-race`에는 MinGW 계열 컴파일러가 필요합니다. 개발 PC에는 llvm-mingw(clang 23.1.5, UCRT)가 `%LOCALAPPDATA%\llvm-mingw\bin`에 있고 사용자 PATH에 들어 있습니다(2026-11-07). Go는 기본으로 `gcc`를 부르는데, llvm-mingw의 `gcc.exe`가 그 clang입니다. `CC=clang`으로 두면 PATH에서 먼저 나오는 MSVC 쪽 clang이 잡힙니다. PATH를 바꾸기 전에 띄운 터미널과 에이전트 세션은 새 PATH를 모르므로, 다시 열거나 명령 앞에 경로를 붙입니다.
+- **Windows CI 러너는 이미지에 든 MinGW gcc(2026-11 기준 15.2.0)가 PATH에 있어 cgo와 `-race`가 됩니다.** MSYS2도 `C:\msys64`에 있지만 PATH에는 없습니다. `go run ./tools/check`의 cgo 단계가 쓰인 컴파일러를 출력합니다.
+- **C 구조체에 Go 포인터를 넣지 않습니다.** Box2D의 `userData` 등에는 정수 핸들을 넣습니다. cgo 포인터 규칙 위반은 런타임 검사가 잡습니다. `physics.Body`는 Box2D 몸체 id를 묶은 `uint64`입니다.
+- **Go는 `#cgo CFLAGS`에 `-ffp-contract=off`를 허용하지 않습니다.** 보안 허용 목록(`cmd/go/internal/work/security.go`)에 없어 "invalid flag"로 빌드가 멈추고, 풀려면 빌드마다 `CGO_CFLAGS_ALLOW`를 넣어야 합니다. Box2D는 이 플래그로 FMA 합치기를 막아 플랫폼 간 결정성을 지킵니다. 그래서 C 파일마다 맨 처음 `internal/physics/box2d_fp.h`를 포함해 pragma로 같은 규칙을 겁니다. clang은 `#pragma STDC FP_CONTRACT OFF`, gcc는 `#pragma GCC optimize("fp-contract=off")`입니다(gcc는 STDC pragma를 무시합니다). clang은 기본(`on`)에서 한 식 안의 `a*b + c`를 합칩니다. `TestCompiledWithoutContraction`이 컴파일러마다 확인합니다(2026-11-07).
+- **cgo는 패키지 폴더의 C 파일만 컴파일합니다.** 그래서 `third_party/box2d/src`의 원본을 고치지 않고, `internal/physics/box2d_<이름>.c`가 원본을 `#include`합니다. 원본 안의 `#include "core.h"`는 원본 파일의 폴더에서 먼저 찾으므로 그대로 됩니다. 여러 원본을 한 파일로 묶으면 안 됩니다. `contact_solver_w8.c`는 `B2_SIMD_WIDTH`를 8로 정한 뒤 `core.h`를 포함해 AVX2 경로를 켜는데, `core.h`는 `#pragma once`라 한 파일 안에서는 처음 한 번만 SIMD를 고릅니다. 묶으면 AVX2 경로가 조용히 빠집니다.
+- **cgo는 `_test.go`에서 쓸 수 없습니다.** 테스트가 C를 불러야 하면 테스트 전용 함수를 일반 파일에 둡니다(`internal/physics` probe.go, `useSSE2` 등 비공개 메서드).
+- **Go에서 static C 함수의 주소를 가져올 수 없습니다.** `C.f`를 값으로 쓰면 링크 때 "undefined symbol"이 납니다. 콜백 등록은 C 쪽 static 함수가 하게 합니다(`physicsSilenceBox2D`).
+- **C 호출 인자에 `&x`를 바로 쓰면 gocritic이 cgo가 만든 코드를 잡습니다.** cgo가 `_cgoCheckPointer(..., 0 == 0)`을 만들어 `dupSubExpr`가 납니다. 포인터를 변수에 담아 넘깁니다. 같은 cgo 파일에서 `if err := f(); err != nil`도 `uncheckedInlineErr`로 잘못 잡혀, 두 문장으로 씁니다(2026-11-07).
+- **cgo 호출 하나는 개발 PC에서 약 34 ns입니다.** 몸체 300개의 위치와 회전을 하나씩 읽으면 20 µs로, 같은 몸체의 Step(약 55 µs)의 3분의 1이 넘습니다. 몸체가 많아지면 한 번의 호출로 여러 몸체를 읽습니다(references.md 3절).
+- **Box2D는 월드를 잠금 없는 전역 표(최대 128개)에 둡니다.** `b2CreateWorld`와 `b2DestroyWorld`를 여러 goroutine에서 동시에 부르면 C 안에서 경쟁이 납니다. race 검출기는 C 메모리를 보지 못합니다. 월드는 한 goroutine에서 차례로 만들고 닫습니다. 그래서 `internal/physics`의 테스트는 `t.Parallel`을 쓰지 않습니다.
+- **Box2D는 잘못된 입력을 거부하면 stdout에 출력합니다.** 로직은 출력하지 않으므로 `internal/physics`가 로그 콜백을 아무것도 안 하는 함수로 바꾸고, 같은 실수를 Go 쪽에서 먼저 에러로 돌려줍니다.
+- **cgo 없이(`CGO_ENABLED=0`) 빌드하면 `internal/physics`는 `needsCgoAndACCompilerSeeThirdPartyREADME`가 없다는 에러로 멈춥니다.** 원인을 알리려고 일부러 둔 이름입니다(nocgo.go). `go run ./tools/check`도 cgo 단계에서 실패합니다.

@@ -41,6 +41,15 @@
 - ✅ 2026-11-06: 강체 물리는 공식 Box2D v3.2를 저장소에 포함해 cgo로 컴파일합니다(로드맵 4단계에서 도입).
   - shim 없이 C API를 직접 부를 수 있고, 실행 파일 하나로 배포됩니다.
   - 대안이었던 box2d-go(순수 Go 번역)는 같은 장면에서 C보다 1.5~2.8배 느렸습니다(근거: references.md 3절).
+  - ✅ 2026-11-07: 포함 방식(개발자 결정): v3.2.0 태그(커밋 `178495b`)의 소스에서 `LICENSE`(MIT), `include/box2d`, `src`만 고치지 않고 `third_party/box2d`에 둡니다. 출처, 해시, 갱신 방법은 `third_party/README.md`에 있습니다. submodule은 `go build` 하나로 빌드되지 않아 쓰지 않습니다.
+  - CMake는 쓰지 않습니다. `internal/physics`의 `box2d_<이름>.c`가 원본을 하나씩 포함하고, cgo가 `go build` 안에서 컴파일합니다. 테스트가 원본과 짝이 맞는지 확인합니다(`TestEveryBox2DSourceIsCompiled`).
+  - ✅ 2026-11-07: 빌드 플래그(개발자 결정): `-std=gnu17 -O2 -DNDEBUG`, Linux는 `-lm`. FMA 합치기는 pragma로 끕니다(아래 결정성). SIMD는 Box2D 기본입니다(x86은 SSE2와 실행 때 고르는 AVX2, arm64는 NEON). 단정밀도이고 assert는 끕니다. v3.2는 릴리스 빌드에서도 잘못된 입력을 거부합니다. `-O3`는 재 보니 빠르지 않았습니다(references.md 3절).
+  - ✅ 2026-11-07: 어댑터 패키지는 `internal/physics`입니다(개발자 결정). cgo는 이 패키지만 씁니다(`tools/archtest`). 강체↔격자 연동처럼 순수 Go인 부분은 다른 패키지에 두고 이 패키지를 부릅니다.
+  - 🔶 처음 API는 최소입니다. 월드(중력), 정적 상자, 동적 상자, `Step(dt, subSteps)`, 위치·회전·각도 읽기만 있습니다. 단위는 Box2D 그대로 미터·킬로그램·초·라디안입니다. 셀과 미터의 배율과 좌표 방향은 연동 작업에서 정합니다(8절). 몸체는 정수 핸들(`physics.Body`)이고, C 구조체에 Go 포인터를 두지 않습니다.
+  - 🔶 Box2D 안의 병렬은 쓰지 않습니다. 월드를 worker 1개로 만들어 Box2D가 스레드를 띄우지 않습니다. 상자 300개의 한 틱이 기준 CPU 추정 약 0.2 ms라 병렬이 필요하지 않습니다(references.md 3절). 필요해지면 측정과 함께 다시 묻습니다. 동시성은 `internal/sched`에만 둔다는 규칙과 맞추는 방법도 그때 정합니다.
+  - 🔶 결정성: 같은 호출을 같은 순서로 하면 CPU, OS, SIMD 경로(AVX2, SSE2, NEON, 스칼라)와 상관없이 몸체가 비트까지 같습니다. 조건은 Box2D가 밝힌 대로 FMA 합치기를 끄는 것입니다. Go가 `#cgo CFLAGS`에 `-ffp-contract=off`를 허용하지 않아 `box2d_fp.h`의 pragma로 겁니다(pitfalls.md cgo 절). 상자 300개 600스텝의 해시가 골든입니다(`internal/physics/testdata/determinism.golden`, references.md 3절). Box2D에 넘길 값을 Go에서 계산할 때도 곱을 명시적으로 변환해 합치기를 막습니다(pitfalls.md Go 절).
+  - 🔶 Noita의 강체는 double입니다(C05:69). 우리는 단정밀도입니다. Box2D 문서는 단정밀도로 원점에서 약 20 km까지 다룬다고 하고, 우리 월드(16384셀)는 셀 하나가 1.2 m보다 작으면 그 안에 듭니다([강체 기반 참고 요약](briefs/rigid-body-base.md)).
+  - 프레임 예산의 강체 몫(위의 "강체를 넣을 때 다시 나눕니다")은 아직 나누지 않았습니다. 연동까지 넣은 한 틱을 잰 뒤 정합니다.
 - ✅ 2026-11-06: 품질 도구는 golangci-lint v2(gofumpt, goimports 포함)와 govulncheck를 `tools.mod`에 고정해 씁니다. 편집 즉시 포맷하는 Claude Code 훅과 3개 OS CI를 둡니다.
 
 ## 3. 시뮬레이션 구조
@@ -342,3 +351,4 @@
 - 유체/압력 모델의 수준 (비교 대상: The Powder Toy의 4×4 픽셀 압력·공기 속도 격자, references.md 4절)
 - 지지·붕괴 규칙
 - 파괴 조각을 강체로 만들지, 셀로 흩을지의 기준
+- 셀 하나가 몇 미터인지(강체 배율)와 강체 좌표의 방향(셀은 y가 아래로 커짐). Noita에는 전역 원점과 축별 배율이 있지만 값은 자료에 없습니다(DESTRUCTION_BRIDGE:30, C42:932). 강체↔격자 연동 때 정합니다(2절)

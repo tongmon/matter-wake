@@ -68,7 +68,7 @@ The source of **The Powder Toy** (release v100.1.400) lives outside the repo at 
   - No wall-clock time, map-iteration-order dependence, or scheduling dependence inside the simulation.
   - The result of a tick must not depend on the worker count (`TestStepIsIndependentOfWorkers`).
 - **Concurrency lives in one place.** Only `internal/sched` may import `sync` or start goroutines. Other logic hands it independent jobs.
-- **cgo lives in one place.** When Box2D lands, only its adapter package may use cgo; add it to `cgoPackages` in `tools/archtest`. Never store a Go pointer in a C struct: use integer handles.
+- **cgo lives in one place.** Only `internal/physics`, the Box2D adapter, may use cgo (`cgoPackages` in `tools/archtest`). Never store a Go pointer in a C struct: use integer handles. Box2D's source in `third_party/box2d` stays unchanged; how it is built and updated is in `third_party/README.md`.
 - `tools/archtest` checks these rules in every `go test ./...`: imports, the `go` statement, and that every package a rule names exists. A new Ebitengine layer, concurrent package or cgo package goes in the lists at the top of `tools/archtest/arch_test.go`.
 - **No mutable global state in logic packages.** Wire dependencies at the app boundary.
 - **Keep data separate from code.** Materials live in `data/materials.json`. Code never branches on a material's name: behavior comes from its kind and numeric properties.
@@ -92,9 +92,11 @@ Module path: `github.com/tongmon/matter-wake`.
 | `internal/save/` | Encodes a world for saving: each block of cells, field by field, and the world header. | **no** |
 | `internal/replay/` | Encodes and decodes replays: how a session started and its input for every tick. Holds the replay goldens. | **no** |
 | `internal/sched/` | The fixed goroutine pool. The only logic package with `sync`. | **no** |
+| `internal/physics/` | Rigid bodies: Box2D v3.2 compiled through cgo, the only cgo package. Worlds, boxes, Step, transforms. Holds the determinism golden. | **no** |
 | `internal/fixed/` | Fixed-point numbers (Q8) for simulation values with fractions. | **no** |
 | `internal/rng/` | Seeded random numbers (SplitMix64), stable across Go versions. | **no** |
 | `data/` | Materials and other tunables (JSON). | |
+| `third_party/box2d/` | Box2D v3.2.0's license, headers and sources, unchanged (`third_party/README.md`). | |
 | `tools/archtest/` | Tests of the architecture rules. | no |
 | `tools/check/` | Runs every check (see Verification). | no |
 | `tools/fmthook/` | Claude Code hook that formats an edited Go file. | no |
@@ -123,13 +125,14 @@ Module path: `github.com/tongmon/matter-wake`.
 Choose checks in proportion to the change:
 
 - **Logic changes:** unit tests. For a bug fix, write a failing test first.
+- **Rigid bodies:** `internal/physics/testdata/determinism.golden` pins 300 falling boxes bit for bit on every OS and SIMD path. It moves only when Box2D, its compiler rules or the scene change: `go test ./internal/physics/ -run Determinism -update`. `go test -tags box2dscalar ./internal/physics/` checks the scalar path.
 - **Simulation rule changes:** two golden tests pin how the sandbox evolves. After an intended change, rerun both with `-update` and review the golden diffs in the PR. Each uses its own copy of the materials in `testdata/`, so editing `data/` does not move them.
   - `internal/scene/testdata/sandbox.golden`, the sandbox left alone, and `terrain.golden`, blocks of the big world's terrain: `go test ./internal/scene/ -update`.
   - `internal/replay/testdata/*.golden`, the sandbox played by each `*.rpl` replay, which also checks after every tick that only the brush changed the cell counts: `go test ./internal/replay/ -update`.
 - **Replays:** to reproduce or show a session, write or record a replay and play it back. A replay sets the world size and seed, ignores the devices, and exits at its end; give it more `ticks` to watch the end state longer. Format: the `internal/replay` package comment.
   - `go run ./cmd/matter-wake -record out/replays/a.rpl` saves the session's inputs on exit.
   - `go run ./cmd/matter-wake -replay out/replays/a.rpl -shots 0,120,600 -shots-dir out/shots` captures it.
-- **Performance:** `go test -run '^$' -bench . -count 5 ./internal/world/` before and after the change.
+- **Performance:** `go test -run '^$' -bench . -count 5 ./internal/world/` before and after the change; `./internal/physics/` for rigid bodies.
   - In the game, `-timing` logs on exit how much CPU time the ticks, the draws and the frames took (median, p99, max, and frames over the 16.7 ms budget). It reads the performance counter on Windows, where `time.Now` moves only in steps of about 0.5 ms (pitfalls.md), so single ticks are measured to well under 1 µs on every OS. With `-shots` or `-replay` the run is repeatable: `go run ./cmd/matter-wake -seed 1 -shots 600 -timing`. `-workers 2` stands in for the reference CPU's two cores (design.md 2절).
   - The two heaviest scenes (design.md 2절): `go test -run '^$' -bench Scene -count 5 ./internal/game/`, and in the game `go run ./cmd/matter-wake -scene collapse -seed 1 -shots 300 -timing -workers 2` and `go run ./cmd/matter-wake -replay internal/replay/testdata/terrain_load.rpl -timing -workers 2`.
   - `-cpuprofile out/prof/cpu.pprof` writes a CPU profile of the run. Read it with `go tool pprof -top -focus matter-wake/internal out/prof/cpu.pprof`; without the focus, waiting for the screen fills it (pitfalls.md).
@@ -145,7 +148,7 @@ Before opening a PR, run:
 go run ./tools/check
 ```
 
-It runs, and fails if any fails: formatting (`golangci-lint fmt --diff`), `go mod tidy -diff`, `golangci-lint run`, `go test -shuffle=on ./...`, and `go test -race ./...` where cgo is available (it says SKIP otherwise). `-vuln` adds govulncheck; `-fix` formats first. CI (`.github/workflows/check.yml`) runs `go run ./tools/check -vuln` on Windows, macOS and Linux for every PR and push to `main`.
+It runs, and fails if any fails: formatting (`golangci-lint fmt --diff`), `go mod tidy -diff`, a check that cgo and its C compiler work (it prints the compiler), `golangci-lint run`, `go test -shuffle=on ./...`, the determinism golden with `-tags box2dscalar`, and `go test -race ./...`. Box2D needs cgo, so without a C compiler the check fails. `-vuln` adds govulncheck; `-fix` formats first. CI (`.github/workflows/check.yml`) runs `go run ./tools/check -vuln` on Windows, macOS and Linux for every PR and push to `main`.
 
 **Second-model review.** For code changes, also get a Codex review, as uplunge does. Commit first, then:
 
@@ -171,6 +174,7 @@ The PR description lists:
 ## Tools on the developer's machine
 
 - Go 1.27 (`C:\Program Files\Go\bin`)
-- clang 20 (`C:\Program Files\LLVM\bin`), targets MSVC: it can build C libraries and DLLs, but **not** cgo. cgo and `-race` need a MinGW-family compiler (llvm-mingw or MSYS2), which is not installed yet.
+- llvm-mingw (clang 23.1.5, UCRT) in `%LOCALAPPDATA%\llvm-mingw\bin`, on the user PATH. Go's default `gcc` is its clang; it builds cgo and `-race`.
+- clang 20 (`C:\Program Files\LLVM\bin`), targets MSVC: it can build C libraries and DLLs, but **not** cgo. Do not set `CC=clang`: PATH finds this one first.
 - CMake and Ninja.
 - GitHub CLI `gh`. The repo is `tongmon/matter-wake`.
