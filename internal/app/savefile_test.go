@@ -56,11 +56,12 @@ func TestDiskStoreRoundTrip(t *testing.T) {
 	}
 }
 
-// terrainConfig is a terrain session with the stream the game uses.
+// terrainConfig is a terrain session with the stream and the budget the
+// game uses.
 func terrainConfig(mats *material.Table) *game.Config {
 	return &game.Config{
 		Width: 4096, Height: 4096, Seed: 4, Workers: 2, Materials: mats,
-		Scene: game.SceneTerrain, ViewWidth: 480, ViewHeight: 270, Stream: stream,
+		Scene: game.SceneTerrain, ViewWidth: 480, ViewHeight: 270, Stream: stream, Budget: budget,
 		Slots: []string{"sand", "water", "stone"}, Tool: game.Tool{Power: 10, Rate: 2000, Radius: 4},
 	}
 }
@@ -343,5 +344,64 @@ func TestSaveFolderLockIsExclusive(t *testing.T) {
 			t.Fatalf("round %d: %d of %d games that started together got the lock, want 1", round, n, tries)
 		}
 		(<-got)()
+	}
+}
+
+// A session saved while chunks wait for the budget goes on the same when
+// opened again: which chunks run depends on what each has left to scan
+// and how long it has waited, so the save keeps both (Codex review).
+func TestSavedSessionGoesOnOverTheBudget(t *testing.T) {
+	mats := testMaterials(t)
+	dir := t.TempDir()
+	cfg := terrainConfig(mats)
+	cfg.Seed = 1
+	sess, err := openSave(dir, cfg, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	played, err := game.New(sess)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer played.Close()
+	x, y := played.Spawn()
+	step := func(g *game.Game, in game.Input) {
+		t.Helper()
+		if err := g.Step(in); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for range 60 {
+		step(played, game.Input{CameraX: x, CameraY: y})
+	}
+	// Into the caves: the blocks there come in at once, over the budget.
+	caves := game.Input{CameraX: 1808, CameraY: 2600}
+	for range 10 {
+		step(played, caves)
+	}
+	if played.World().Waiting() == 0 {
+		t.Fatal("no chunk waits at the save: the test needs a session over its budget")
+	}
+	if err := writeSave(dir, played, caves.CameraX, caves.CameraY, nil); err != nil {
+		t.Fatal(err)
+	}
+	copied := t.TempDir()
+	copyDir(t, dir, copied)
+	again, err := openSave(copied, cfg, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resumed, err := game.New(again)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resumed.Close()
+	for range 120 {
+		for _, g := range []*game.Game{played, resumed} {
+			step(g, caves)
+		}
+		if a, b := played.World().Checksum(), resumed.World().Checksum(); a != b {
+			t.Fatalf("tick %d: the resumed session's checksum %#x, the saved one's %#x", played.World().Tick(), b, a)
+		}
 	}
 }

@@ -86,6 +86,10 @@ type Config struct {
 	// the stream they set which blocks of the terrain stay in memory.
 	ViewWidth, ViewHeight int
 	Stream                Stream
+	// Budget is how many cells a tick may scan, 0 for no limit. Over it,
+	// the chunks farthest from the middle of the view wait for a later
+	// tick (world.Config.Budget).
+	Budget int
 	// Store keeps the blocks the terrain unloads. Nil keeps them in memory
 	// for the session only, which replays and shots rely on.
 	Store Store
@@ -122,6 +126,12 @@ type Resume struct {
 	// them anew: the camera requests its area with nothing ahead, and the
 	// first check comes Check ticks after Tick.
 	Stream *StreamState
+	// Chunks lists where the chunks of those blocks stood, and Scheduled
+	// is set when the save recorded it; then the chunks not listed had
+	// nothing to scan. Which chunks wait for the budget depends on it.
+	// Without it, the blocks come back awake whole.
+	Chunks    []world.ChunkState
+	Scheduled bool
 }
 
 // Game is a play session. It is not safe for concurrent use.
@@ -183,7 +193,7 @@ func New(cfg *Config) (*Game, error) {
 	}
 	w, err := world.New(world.Config{
 		Width: cfg.Width, Height: cfg.Height, Seed: cfg.Seed, Workers: cfg.Workers, Materials: cfg.Materials,
-		Streamed: cfg.Scene == SceneTerrain, Tick: tick,
+		Streamed: cfg.Scene == SceneTerrain, Tick: tick, Budget: cfg.Budget,
 	})
 	if err != nil {
 		return nil, err
@@ -273,7 +283,17 @@ func (g *Game) setUp(cfg *Config) error {
 	g.spawnY = min(max(camY, 0), max(g.world.Height()-g.viewH, 0))
 	// Only the request: the first check belongs to the first tick, which
 	// sees that tick's camera, as the saved session's next tick would.
-	return g.request(g.spawnX, g.spawnY)
+	if err := g.request(g.spawnX, g.spawnY); err != nil {
+		return err
+	}
+	if r := cfg.Resume; r != nil && r.Scheduled {
+		// Loading the blocks woke them whole; put back what the saved
+		// session had left to scan.
+		if err := g.world.SetChunkStates(r.Chunks); err != nil {
+			return fmt.Errorf("game: %w", err)
+		}
+	}
+	return nil
 }
 
 // Blocks returns how many blocks of the world are in memory.
@@ -305,9 +325,13 @@ func (g *Game) Slot() int {
 
 // SaveBlocks puts every block of the terrain in memory into the store, so
 // the store holds the whole world as it is, and keeps them in memory: the
-// session goes on as if nothing happened (taking a block out and putting
-// it back between ticks changes nothing). The sandbox has nothing to save.
+// session goes on as if nothing happened (TestSavingBlocksChangesNothing).
+// The sandbox has nothing to save.
 func (g *Game) SaveBlocks() error {
+	// Taking a block out and back wakes it whole. Which chunks wait for
+	// the budget depends on what each has left to scan, so the chunks get
+	// back where they stood and the session goes on as if unsaved.
+	states := g.world.ChunkStates()
 	for _, b := range g.resident {
 		blk, err := g.world.UnloadBlock(b[0], b[1])
 		if err != nil {
@@ -320,6 +344,9 @@ func (g *Game) SaveBlocks() error {
 		if saveErr != nil {
 			return fmt.Errorf("game: block (%d, %d): %w", b[0], b[1], saveErr)
 		}
+	}
+	if err := g.world.SetChunkStates(states); err != nil {
+		return fmt.Errorf("game: %w", err)
 	}
 	return nil
 }
@@ -381,6 +408,9 @@ func (g *Game) Step(in Input) error {
 		if err := g.stream(in.CameraX, in.CameraY); err != nil {
 			return err
 		}
+		// The rooms show all of the world, whose middle is the focus
+		// already.
+		g.world.SetFocus(in.CameraX+g.viewW/2, in.CameraY+g.viewH/2)
 	}
 	if in.Select >= 1 && in.Select <= len(g.slots) {
 		g.selected = in.Select - 1

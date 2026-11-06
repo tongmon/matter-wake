@@ -81,13 +81,16 @@ func (w *World) blockCells(bx, by int) rect {
 }
 
 // forgetChunks empties the change rectangles of the chunks of block
-// (bx, by). Loading the block marks all of it anyway.
+// (bx, by) and forgets how long they waited for the budget. Loading the
+// block marks all of it anyway, and a save records the chunks of the
+// blocks in memory only, so a block that comes back starts the same in a
+// session opened again (TestUnloadingForgetsTheWaits).
 func (w *World) forgetChunks(bx, by int) {
 	r := w.blockCells(bx, by)
 	for cy := r.y0 / ChunkSize; cy <= (r.y1-1)/ChunkSize; cy++ {
 		for cx := r.x0 / ChunkSize; cx <= (r.x1-1)/ChunkSize; cx++ {
 			i := cy*w.cols + cx
-			w.dirty[i], w.keep[i] = rect{}, rect{}
+			w.dirty[i], w.keep[i], w.waited[i] = rect{}, rect{}, 0
 		}
 	}
 }

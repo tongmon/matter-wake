@@ -20,6 +20,12 @@
 // cell that did nothing last time does nothing again until one of those
 // changes, and then it is marked (TestSleepMatchesScanningEverything).
 //
+// A tick may scan at most a budget of cells (Config.Budget). When the
+// change rectangles of the chunks that would run hold more, the chunks
+// nearest the focus run (SetFocus), and the others wait for a later tick
+// with their rectangles as they are. A chunk that waits comes closer each
+// tick it waits, so far chunks still get their turn.
+//
 // The cells are kept in blocks of 8×8 chunks (Block). A big world keeps
 // only some blocks in memory, and its owner loads and unloads them
 // (LoadBlock, UnloadBlock). A chunk runs only when every cell its updates
@@ -132,6 +138,10 @@ type Config struct {
 	// Tick is how many ticks the world has run, for a world loaded from a
 	// save: the next Step runs tick Tick+1, with that tick's random numbers.
 	Tick uint32
+	// Budget is how many cells a tick may scan, 0 for no limit. Over it,
+	// the chunks farthest from the focus wait (SetFocus). It changes the
+	// result, so a replay records it.
+	Budget int
 }
 
 // World is a grid of cells. It is not safe for concurrent use.
@@ -170,6 +180,17 @@ type World struct {
 	jobs []job
 	// awake is how many chunks the last tick ran.
 	awake int
+	// budget is Config.Budget; focusX and focusY are the focus (SetFocus).
+	budget         int
+	focusX, focusY int
+	// held holds, for each chunk, the last tick it was made to wait, and
+	// waited how many ticks in a row it has waited since it last ran.
+	// waiting is how many chunks waited in the last tick.
+	held    []uint32
+	waited  []uint32
+	waiting int
+	// order is hold's buffer: one entry a chunk that would run.
+	order []candidate
 	// scanAll makes every chunk scan all its cells every tick, for tests
 	// that check that sleeping changes nothing.
 	scanAll bool
@@ -184,6 +205,9 @@ func New(cfg Config) (*World, error) {
 	}
 	if cfg.Materials == nil {
 		return nil, errors.New("world: no material table")
+	}
+	if cfg.Budget < 0 {
+		return nil, fmt.Errorf("world: budget %d is negative", cfg.Budget)
 	}
 	mats := new([material.MaxMaterials]matProps)
 	for i := range cfg.Materials.Len() {
@@ -206,6 +230,9 @@ func New(cfg Config) (*World, error) {
 		brows:  (cfg.Height + BlockSize - 1) / BlockSize,
 		cols:   (cfg.Width + ChunkSize - 1) / ChunkSize,
 		rows:   (cfg.Height + ChunkSize - 1) / ChunkSize,
+		budget: cfg.Budget,
+		focusX: cfg.Width / 2,
+		focusY: cfg.Height / 2,
 	}
 	w.blocks = make([]*Block, w.bcols*w.brows)
 	if !cfg.Streamed {
@@ -228,6 +255,9 @@ func New(cfg Config) (*World, error) {
 	w.dirty = make([]rect, len(w.chunks))
 	w.keep = make([]rect, len(w.chunks))
 	w.versions = make([]uint64, len(w.chunks))
+	w.held = make([]uint32, len(w.chunks))
+	w.waited = make([]uint32, len(w.chunks))
+	w.order = make([]candidate, 0, len(w.chunks))
 	// A phase runs at most every other chunk of a row.
 	w.jobs = make([]job, (w.cols+1)/2)
 	w.stepChunkFn = w.stepChunk
@@ -414,6 +444,10 @@ func (w *World) Step() {
 	w.tick++
 	w.version++
 	w.awake = 0
+	w.waiting = 0
+	if w.budget > 0 {
+		w.hold()
+	}
 	// Only the rows of blocks in memory have chunks to run, so a big world
 	// costs what its loaded blocks do.
 	for end := len(w.resident); end > 0; {
@@ -432,21 +466,20 @@ func (w *World) Step() {
 }
 
 // runPhase runs the chunks of row cy and the given parity in the blocks
-// listed, those whose change rectangle is not empty and whose reach is in
-// memory, and then merges what they marked around them.
+// listed, those whose change rectangle is not empty, that do not wait this
+// tick and whose reach is in memory, and then merges what they marked
+// around them.
 func (w *World) runPhase(blocks []int, cy, parity int) {
 	n := 0
 	for _, b := range blocks {
 		bx := b % w.bcols
 		for cx := bx*blockChunks + parity; cx < min((bx+1)*blockChunks, w.cols); cx += 2 {
 			c := &w.chunks[cy*w.cols+cx]
-			live := w.dirty[c.i]
-			if w.scanAll {
-				live = c.cells
-			}
-			if live.empty() || !w.reachable(c) {
+			live := w.scanned(c)
+			if live.empty() || w.held[c.i] == w.tick || !w.reachable(c) {
 				continue
 			}
+			w.waited[c.i] = 0
 			w.dirty[c.i], w.keep[c.i] = w.keep[c.i], rect{}
 			w.jobs[n] = job{c: *c, live: live}
 			n++

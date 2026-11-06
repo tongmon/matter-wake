@@ -233,6 +233,10 @@ func readSession(dir string, tick uint32, mats *material.Table) (*game.Resume, e
 	if s := p.Stream; s != nil {
 		r.Stream = &game.StreamState{Area: s.Area, Requested: true, LastCheck: s.LastCheck, Interval: s.Interval}
 	}
+	r.Scheduled = p.Scheduled
+	for _, c := range p.Chunks {
+		r.Chunks = append(r.Chunks, world.ChunkState{CX: c.CX, CY: c.CY, Dirty: c.Dirty, Keep: c.Keep, Waited: c.Waited})
+	}
 	for name, n := range p.Held {
 		id, ok := mats.Lookup(name)
 		if !ok {
@@ -259,6 +263,9 @@ func writeSave(dir string, g *game.Game, camX, camY int, flush func() error) err
 	p := &save.Session{CameraX: camX, CameraY: camY, Slot: g.Slot(), Held: map[string]int{}, Blocks: g.ResidentBlocks()}
 	if s := g.StreamState(); s.Requested {
 		p.Stream = &save.SessionStream{Area: s.Area, LastCheck: s.LastCheck, Interval: s.Interval}
+	}
+	for _, c := range w.ChunkStates() {
+		p.Chunks = append(p.Chunks, save.SessionChunk{CX: c.CX, CY: c.CY, Dirty: c.Dirty, Keep: c.Keep, Waited: c.Waited})
 	}
 	for id := range g.Materials().Len() {
 		if n := g.Inventory(material.ID(id)); n > 0 {
