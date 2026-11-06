@@ -143,6 +143,11 @@ type World struct {
 	// keep holds what was marked in a chunk earlier in the tick than it
 	// runs. The run scans it, and so does the run after.
 	keep []rect
+	// version grows with every tick and every change between ticks.
+	// versions holds, for each chunk, the version of the last change marked
+	// in it.
+	version  uint64
+	versions []uint64
 	// phases run in order: for each row of chunks from the bottom, its even
 	// columns, then its odd columns.
 	phases [][]chunk
@@ -196,6 +201,7 @@ func New(cfg Config) (*World, error) {
 	}
 	w.dirty = make([]rect, len(w.chunks))
 	w.keep = make([]rect, len(w.chunks))
+	w.versions = make([]uint64, len(w.chunks))
 	for cy := rows - 1; cy >= 0; cy-- {
 		for parity := range 2 {
 			var phase []chunk
@@ -233,6 +239,22 @@ func (w *World) Chunks() int { return len(w.chunks) }
 // Awake returns how many chunks the last tick ran. The others slept:
 // nothing in them could move.
 func (w *World) Awake() int { return w.awake }
+
+// Version returns a number that grows with every tick and every Set, Fill,
+// Paint and Wear.
+func (w *World) Version() uint64 { return w.version }
+
+// ChunkVersion returns the Version of the last change in or next to chunk
+// (cx, cy). A cell of the chunk that changes after Version returned v
+// makes ChunkVersion return more than v, so a renderer redraws only the
+// chunks whose version passed the one it last drew. It panics for a chunk
+// outside the grid.
+func (w *World) ChunkVersion(cx, cy int) uint64 {
+	if cx < 0 || cx >= w.cols || cy < 0 || cy*ChunkSize >= w.height {
+		panic(fmt.Sprintf("world: chunk (%d, %d) is outside the grid", cx, cy))
+	}
+	return w.versions[cy*w.cols+cx]
+}
 
 // Cells returns the grid in row-major order. Callers must not modify it.
 func (w *World) Cells() []Cell { return w.cells }
@@ -337,6 +359,7 @@ func (w *World) tone(x, y int) uint8 {
 // the tick already sees it.
 func (w *World) Step() {
 	w.tick++
+	w.version++
 	w.awake = 0
 	for p, phase := range w.phases {
 		n := 0
@@ -383,7 +406,10 @@ func (w *World) stepChunk(i int) {
 			}
 		}
 	}
-	w.dirty[c.i].add(j.next)
+	if !j.next.empty() {
+		w.dirty[c.i].add(j.next)
+		w.versions[c.i] = w.version
+	}
 }
 
 // mark records that the cells in r changed during the job's run, so that
@@ -404,14 +430,16 @@ func (w *World) mark(j *job, r rect) {
 // touch records that the cells in r changed between ticks, so that every
 // cell whose update reads them is updated in the next tick.
 func (w *World) touch(r rect) {
+	w.version++
 	w.wake(r.readers(), len(w.phases))
 }
 
 // wake adds the cells of r, marked in phase p of a tick, to the change
-// rectangles of the chunks they lie in. A chunk that runs later in the
-// tick scans them in this tick and the next, as a run does with what it
-// marks in its own chunk: a cell that is done for the tick when the scan
-// reaches it gets its update in the next one.
+// rectangles of the chunks they lie in, and moves those chunks to the
+// current version. A chunk that runs later in the tick scans them in this
+// tick and the next, as a run does with what it marks in its own chunk: a
+// cell that is done for the tick when the scan reaches it gets its update
+// in the next one.
 func (w *World) wake(r rect, p int) {
 	r = r.clip(w.bounds)
 	if r.empty() {
@@ -422,6 +450,7 @@ func (w *World) wake(r rect, p int) {
 			c := &w.chunks[cy*w.cols+cx]
 			part := r.clip(c.cells)
 			w.dirty[c.i].add(part)
+			w.versions[c.i] = w.version
 			if c.phase > p {
 				w.keep[c.i].add(part)
 			}

@@ -29,7 +29,7 @@
 | 다음 갱신 사각형 안만 훑기 | `internal/world/world.go:371` `stepChunk` | 같음 | |
 | 뒤집힌 빈 사각형에서 점을 넣어 넓히기 | `internal/world/rect.go:12` `rect.add` | 다름 | 반열림 사각형으로 둠. 표현만 다르고 의미는 같음. 적음 |
 | 교환이 영역 갱신을 요청 | `internal/world/motion.go:196` `swap`, `:56` `update` | 다름 | 교환은 지나간 칸을 모으고, 셀 갱신이 끝난 뒤 한 번 표시함(`world.go:393` `mark`). 표시 범위는 우리 설계(아래 빈칸). 적음 |
-| 출력(렌더) 사각형이 따로 있음 | 없음 | 없음 | 다음 PR(바뀐 청크만 업로드)에서 같은 표시로 청크 버전을 올림 |
+| 출력(렌더) 사각형이 따로 있음 | `internal/world/world.go` `ChunkVersion`, `internal/render/render.go` `upload` | 다름 | 따로 두지 않고 같은 표시로 청크 버전을 올림(`feat/chunk-upload`). 적음 |
 | 작업 뒤 병합 | `internal/world/world.go:338` `Step`, `:415` `wake` | 같음 | 우리 병합은 감싸는 사각형의 합집합이라 순서와 무관 |
 | 잠든 작업 영역은 선택 목록에서 빠짐 | `internal/world/world.go:338` `Step` | 같음 | |
 | 셀 단위 휴면(state 3 + 50) | 없음 | 없음 | 측정한 뒤 필요할 때만(design.md 7절, 개발자 결정) |
@@ -51,7 +51,7 @@
 | 셀 단위 휴면(C09, C25) | 나중에 | 청크 사각형을 측정한 뒤 필요할 때만(개발자 결정) |
 | 요청 큐(MATERIAL_TICK 6절) | 아니오 | 아직 생성·변환 요청이 없음 |
 | 상주와 작업 제외(C43, C122) | 나중에 | 큰 월드 PR |
-| 렌더 출력 사각형 | 다음 PR | 같은 표시로 바뀐 청크만 업로드 |
+| 렌더 출력 사각형 | 예(`feat/chunk-upload`) | 같은 표시로 바뀐 청크만 업로드 |
 
 ## 채택 / 변경 / 제외
 
