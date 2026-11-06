@@ -29,3 +29,21 @@ func TestProfileKeepsTheRunsError(t *testing.T) {
 		t.Fatalf("profileTo = %v, want both the session's and the close error", err)
 	}
 }
+
+// failingWrite is a profile file that takes no data, as a full disk, but
+// closes.
+type failingWrite struct{}
+
+var errWrite = errors.New("no space left")
+
+func (failingWrite) Write([]byte) (int, error) { return 0, errWrite }
+func (failingWrite) Close() error              { return nil }
+
+// pprof drops the errors of the writer it is given, so profileTo keeps
+// them itself (second Codex review).
+func TestProfileReportsAFailedWrite(t *testing.T) {
+	err := profileTo(failingWrite{}, func() error { return nil })
+	if !errors.Is(err, errWrite) {
+		t.Fatalf("profileTo = %v, want the write error", err)
+	}
+}

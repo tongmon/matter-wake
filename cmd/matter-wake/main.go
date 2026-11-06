@@ -94,16 +94,34 @@ func createProfile(path string) (*os.File, error) {
 // profileTo runs fn while a CPU profile is written to w, and closes w. A
 // profile that cannot be finished fails the run even when fn did not.
 func profileTo(w io.WriteCloser, fn func() error) (err error) {
-	if err := pprof.StartCPUProfile(w); err != nil {
+	// pprof drops the writer's errors, so keep the first one here.
+	kept := &keepError{w: w}
+	if err := pprof.StartCPUProfile(kept); err != nil {
 		return errors.Join(fmt.Errorf("-cpuprofile: %w", err), w.Close())
 	}
 	defer func() {
 		pprof.StopCPUProfile()
-		if cerr := w.Close(); cerr != nil {
-			err = errors.Join(err, fmt.Errorf("-cpuprofile: %w", cerr))
+		for _, perr := range []error{kept.err, w.Close()} {
+			if perr != nil {
+				err = errors.Join(err, fmt.Errorf("-cpuprofile: %w", perr))
+			}
 		}
 	}()
 	return fn()
+}
+
+// keepError writes to w and keeps the first error it gave.
+type keepError struct {
+	w   io.Writer
+	err error
+}
+
+func (k *keepError) Write(p []byte) (int, error) {
+	n, err := k.w.Write(p)
+	if err != nil && k.err == nil {
+		k.err = err
+	}
+	return n, err
 }
 
 // setScene sets the scene and fills in the world size the flags left out:

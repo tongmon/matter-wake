@@ -12,8 +12,10 @@ import (
 const frameBudget = time.Second / game.Hz
 
 // timing measures the CPU time of every tick and every draw of a session,
-// and of every frame: the ticks since the last draw and that draw. GPU time
-// is not in it, since Ebitengine sends the draw commands later.
+// and of every frame: the ticks since the last draw and that draw. After a
+// stall, as while the window opens, Ebitengine runs several ticks to catch
+// up and one frame holds them all. GPU time is not in it, since Ebitengine
+// sends the draw commands later.
 type timing struct {
 	tick, draw, frame spread
 	// pending is the time of the ticks since the last draw.
