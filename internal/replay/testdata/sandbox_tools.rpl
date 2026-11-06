@@ -1,53 +1,58 @@
-matter-wake-replay 1
+matter-wake-replay 2
 # The sandbox at its default size. It uses every tool: it selects each
-# slot, places every material, digs through a ledge and the floor, digs
-# away what it placed, presses both buttons at once, selects a slot that
-# does not exist and brushes outside the world. Then everything settles.
+# slot, tries to place from the empty inventory, digs sand out of the heap
+# and stone out of the floor, places both back, tries to dig water and to
+# place water it does not have, presses both buttons at once, selects a
+# slot that does not exist and brushes outside the world. Then everything
+# settles.
 seed 1
 size 480 270
-brush 4
+tool 10 2000 4
 slots sand water stone
-materials 6e7eb28e6efa51f0
+materials ee74dacd409567c3
 ticks 600
 
 # Wait while the sand and the water fall.
 0 240 20 - 0
-# Select stone and place two disks of it in the air, 49 cells each.
+# The inventory starts empty: placing stone adds nothing.
 20 240 40 - 3
 21 240 40 P 0
-22 260 40 - 0
-23 260 40 P 0
-24 260 40 - 0
-# Select water and pour it for ten ticks; it falls to the floor.
-40 200 120 - 2
-41 200 120 P 0
-51 200 120 - 0
-# Select sand and pour it onto the water on the right ledge.
-60 360 150 - 1
-61 360 150 P 0
-71 360 150 - 0
-# Dig a hole through the left ledge under the heap of sand.
-90 120 150 D 0
-96 128 150 D 0
-102 136 150 D 0
-108 136 150 - 0
-# Dig into the floor.
-150 240 268 D 0
-151 240 268 - 0
-# Dig away the two stone disks, 49 cells each.
-180 240 40 D 0
-181 240 40 - 0
-182 260 40 D 0
-183 260 40 - 0
-# Both buttons at once: digging wins.
-200 300 255 PD 0
-201 300 255 - 0
-# Slot 9 does not exist, so sand stays selected.
-210 40 120 - 9
-211 40 120 P 0
-212 40 120 - 0
+24 240 40 - 0
+# Dig a tunnel down into the heap of sand on the left ledge. Sand takes a
+# tick a cell.
+90 120 110 D 0
+92 120 114 D 0
+94 120 118 D 0
+96 120 122 D 0
+98 120 126 D 0
+100 120 130 D 0
+102 120 130 - 0
+# Select sand and pour it back above the heap.
+110 100 60 - 1
+111 100 60 P 0
+121 100 60 - 0
+# Dig into the floor on the left. Stone takes 50 ticks a cell.
+130 30 266 D 0
+190 30 266 - 0
+# Digging the water on the right ledge does nothing, and there is no water
+# to place.
+200 360 180 D 2
+205 360 180 P 0
+210 360 180 - 0
+# Select stone and build a block in the air from what the floor gave.
+220 240 60 - 3
+221 240 60 P 0
+222 240 60 - 0
+# Both buttons at once: digging wins. Dig the block away again.
+230 240 60 PD 0
+290 240 60 - 0
+# Slot 9 does not exist, so stone stays selected. Put the stone back in
+# the hole in the floor; it fills from the bottom.
+300 30 266 - 9
+301 30 266 P 0
+302 30 266 - 0
 # The brush outside the world changes nothing.
-230 -20 -20 D 0
-231 500 100 P 0
-232 500 100 - 0
+310 -20 -20 D 0
+311 500 100 P 0
+312 500 100 - 0
 # Then everything settles until tick 600.

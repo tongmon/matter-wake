@@ -50,6 +50,13 @@ var kindNames = [...]string{
 	Liquid: "liquid",
 }
 
+// Diggable reports whether a tool may dig materials of the kind: powders
+// and statics. Liquids are gathered by another tool, and empty space holds
+// nothing to dig.
+func (k Kind) Diggable() bool {
+	return k == Static || k == Powder
+}
+
 // String returns the name used for the kind in data files.
 func (k Kind) String() string {
 	if int(k) < len(kindNames) {
@@ -122,6 +129,14 @@ type Def struct {
 	// Dispersion is the most cells a liquid flows sideways in one tick.
 	// Liquids only.
 	Dispersion uint8 `json:"dispersion"`
+
+	// Hardness is the grade of tool it takes to dig the material: a tool
+	// digs it only if the tool's power is at least this. Diggable kinds only.
+	Hardness uint8 `json:"hardness"`
+	// HP is how much digging one cell takes: the cell is dug out once the
+	// damage dealt to it reaches HP, so 0 digs it at the first touch.
+	// Diggable kinds only.
+	HP uint32 `json:"hp"`
 
 	// Color is the base color; each cell varies it by its tone.
 	Color Color `json:"color"`
@@ -196,6 +211,9 @@ func validate(d Def) error {
 	}
 	if err := validateMotion(d); err != nil {
 		return fmt.Errorf("%q: %w", d.Name, err)
+	}
+	if !d.Kind.Diggable() && (d.Hardness != 0 || d.HP != 0) {
+		return fmt.Errorf("%q: only powders and statics may have hardness or hp", d.Name)
 	}
 	return nil
 }

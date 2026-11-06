@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/tongmon/matter-wake/internal/game"
+	"github.com/tongmon/matter-wake/internal/material"
 	"github.com/tongmon/matter-wake/internal/rng"
 )
 
@@ -17,7 +18,7 @@ var (
 
 func sample() *Replay {
 	return &Replay{
-		Seed: 7, Width: 64, Height: 32, BrushRadius: 2,
+		Seed: 7, Width: 64, Height: 32, Tool: game.Tool{Power: 10, Rate: 2000, Radius: 2},
 		Slots: []string{"sand", "water"}, Materials: "0123456789abcdef",
 	}
 }
@@ -35,10 +36,10 @@ func TestWrite(t *testing.T) {
 	if err := Write(&buf, r); err != nil {
 		t.Fatal(err)
 	}
-	want := `matter-wake-replay 1
+	want := `matter-wake-replay 2
 seed 7
 size 64 32
-brush 2
+tool 10 2000 2
 slots sand water
 materials 0123456789abcdef
 ticks 8
@@ -101,7 +102,7 @@ func TestRoundTrip(t *testing.T) {
 func checkHeader(t *testing.T, got, want *Replay) {
 	t.Helper()
 	if got.Seed != want.Seed || got.Width != want.Width || got.Height != want.Height ||
-		got.BrushRadius != want.BrushRadius || got.Materials != want.Materials ||
+		got.Tool != want.Tool || got.Materials != want.Materials ||
 		strings.Join(got.Slots, ",") != strings.Join(want.Slots, ",") {
 		t.Fatalf("header = %+v, want %+v", got, want)
 	}
@@ -110,12 +111,12 @@ func checkHeader(t *testing.T, got, want *Replay) {
 // Replays are text so they can be written by hand: blank lines, comments,
 // extra spaces and Windows line ends are all accepted.
 func TestReadHandWritten(t *testing.T) {
-	src := "matter-wake-replay 1\r\n" +
+	src := "matter-wake-replay 2\r\n" +
 		"# A hand-written replay.\r\n" +
 		"\r\n" +
 		"seed 18446744073709551615\r\n" +
 		"size  64   32 \r\n" +
-		"brush 0\r\n" +
+		"tool  0 1  0\r\n" +
 		"slots stone\r\n" +
 		"materials unknown\r\n" +
 		"ticks 6\r\n" +
@@ -128,7 +129,7 @@ func TestReadHandWritten(t *testing.T) {
 		t.Fatal(err)
 	}
 	checkHeader(t, r, &Replay{
-		Seed: 1<<64 - 1, Width: 64, Height: 32, BrushRadius: 0, Slots: []string{"stone"}, Materials: "unknown",
+		Seed: 1<<64 - 1, Width: 64, Height: 32, Tool: game.Tool{Rate: 1}, Slots: []string{"stone"}, Materials: "unknown",
 	})
 	want := []game.Input{none, put, put, put, {Select: 1}, none}
 	if len(r.Inputs) != len(want) {
@@ -142,22 +143,27 @@ func TestReadHandWritten(t *testing.T) {
 }
 
 func TestReadErrors(t *testing.T) {
-	const header = "matter-wake-replay 1\nseed 1\nsize 64 32\nbrush 4\nslots sand\nmaterials 00\n"
+	const header = "matter-wake-replay 2\nseed 1\nsize 64 32\ntool 10 2000 4\nslots sand\nmaterials 00\n"
 	tests := []struct {
 		name, src, wantErr string
 	}{
 		{"empty", "", "not a matter-wake replay"},
 		{"other file", "uplunge-replay 1\n", "not a matter-wake replay"},
-		{"newer version", "matter-wake-replay 2\n", "version 2"},
+		{"newer version", "matter-wake-replay 3\n", "version 3"},
+		{"older version", "matter-wake-replay 1\nseed 1\n", "version 1"},
 		{"bad version", "matter-wake-replay one\n", "version"},
-		{"missing seed", "matter-wake-replay 1\nsize 64 32\n", `"seed`},
-		{"negative seed", "matter-wake-replay 1\nseed -1\n", "seed"},
-		{"one size", "matter-wake-replay 1\nseed 1\nsize 64\n", "size"},
-		{"zero width", "matter-wake-replay 1\nseed 1\nsize 0 32\n", "size"},
-		{"negative brush", "matter-wake-replay 1\nseed 1\nsize 64 32\nbrush -1\n", "brush"},
-		{"no slots", "matter-wake-replay 1\nseed 1\nsize 64 32\nbrush 4\nslots\n", "slots"},
-		{"no materials", "matter-wake-replay 1\nseed 1\nsize 64 32\nbrush 4\nslots sand\nmaterials\n", "materials"},
-		{"two fingerprints", "matter-wake-replay 1\nseed 1\nsize 64 32\nbrush 4\nslots sand\nmaterials a b\n", "materials"},
+		{"missing seed", "matter-wake-replay 2\nsize 64 32\n", `"seed`},
+		{"negative seed", "matter-wake-replay 2\nseed -1\n", "seed"},
+		{"one size", "matter-wake-replay 2\nseed 1\nsize 64\n", "size"},
+		{"zero width", "matter-wake-replay 2\nseed 1\nsize 0 32\n", "size"},
+		{"old brush line", "matter-wake-replay 2\nseed 1\nsize 64 32\nbrush 4\n", `"tool`},
+		{"short tool", "matter-wake-replay 2\nseed 1\nsize 64 32\ntool 10 2000\n", `"tool`},
+		{"negative radius", "matter-wake-replay 2\nseed 1\nsize 64 32\ntool 10 2000 -1\n", "tool"},
+		{"power over 255", "matter-wake-replay 2\nseed 1\nsize 64 32\ntool 256 2000 4\n", "tool"},
+		{"zero rate", "matter-wake-replay 2\nseed 1\nsize 64 32\ntool 10 0 4\n", "tool"},
+		{"no slots", "matter-wake-replay 2\nseed 1\nsize 64 32\ntool 10 2000 4\nslots\n", "slots"},
+		{"no materials", "matter-wake-replay 2\nseed 1\nsize 64 32\ntool 10 2000 4\nslots sand\nmaterials\n", "materials"},
+		{"two fingerprints", "matter-wake-replay 2\nseed 1\nsize 64 32\ntool 10 2000 4\nslots sand\nmaterials a b\n", "materials"},
 		{"no ticks", header, `"ticks`},
 		{"negative ticks", header + "ticks -1\n", "ticks"},
 		{"too many ticks", header + fmt.Sprintf("ticks %d\n", MaxTicks+1), "at most"},
@@ -196,7 +202,8 @@ func TestWriteRejectsBadReplays(t *testing.T) {
 		{"slot with a space", func(r *Replay) { r.Slots = []string{"wet sand"} }},
 		{"slot with a newline", func(r *Replay) { r.Slots = []string{"sand\nticks"} }},
 		{"zero height", func(r *Replay) { r.Height = 0 }},
-		{"negative brush", func(r *Replay) { r.BrushRadius = -1 }},
+		{"negative radius", func(r *Replay) { r.Tool.Radius = -1 }},
+		{"tool deals no damage", func(r *Replay) { r.Tool.Rate = 0 }},
 		{"no fingerprint", func(r *Replay) { r.Materials = "" }},
 		{"fingerprint with a space", func(r *Replay) { r.Materials = "a b" }},
 		{"negative slot", func(r *Replay) { r.Inputs = []game.Input{{Select: -1}} }},
@@ -215,13 +222,13 @@ func TestWriteRejectsBadReplays(t *testing.T) {
 // New records how a session starts, and Config starts the same session.
 func TestNewAndConfig(t *testing.T) {
 	tab := loadTable(t)
-	cfg := game.Config{
+	cfg := &game.Config{
 		Width: 96, Height: 64, Seed: 42, Workers: 3, Materials: tab,
-		Slots: []string{"water", "stone"}, BrushRadius: 5,
+		Slots: []string{"water", "stone"}, Tool: game.Tool{Power: 3, Rate: 77, Radius: 5},
 	}
 	r := New(cfg)
 	want := &Replay{
-		Seed: 42, Width: 96, Height: 64, BrushRadius: 5,
+		Seed: 42, Width: 96, Height: 64, Tool: game.Tool{Power: 3, Rate: 77, Radius: 5},
 		Slots: []string{"water", "stone"}, Materials: tab.Fingerprint(),
 	}
 	checkHeader(t, r, want)
@@ -234,7 +241,7 @@ func TestNewAndConfig(t *testing.T) {
 	}
 	got := r.Config(tab, 2)
 	if got.Width != 96 || got.Height != 64 || got.Seed != 42 || got.Workers != 2 || got.Materials != tab ||
-		strings.Join(got.Slots, ",") != "water,stone" || got.BrushRadius != 5 {
+		strings.Join(got.Slots, ",") != "water,stone" || got.Tool != cfg.Tool {
 		t.Fatalf("Config = %+v", got)
 	}
 }
@@ -243,9 +250,9 @@ func TestNewAndConfig(t *testing.T) {
 // playing them back gives the same world, on any number of workers.
 func TestReplayReproducesASession(t *testing.T) {
 	tab := loadTable(t)
-	cfg := game.Config{
+	cfg := &game.Config{
 		Width: 160, Height: 96, Seed: 9, Workers: 1, Materials: tab,
-		Slots: []string{"sand", "water", "stone"}, BrushRadius: 3,
+		Slots: []string{"sand", "water", "stone"}, Tool: game.Tool{Power: 10, Rate: 400, Radius: 3},
 	}
 	rec := New(cfg)
 	g := newGame(t, cfg)
@@ -276,6 +283,11 @@ func TestReplayReproducesASession(t *testing.T) {
 		}
 		if got, want := p.World().Checksum(), g.World().Checksum(); got != want {
 			t.Fatalf("%d workers: playback checksum %016x, recording %016x", workers, got, want)
+		}
+		for id := range tab.Len() {
+			if got, want := p.Inventory(material.ID(id)), g.Inventory(material.ID(id)); got != want {
+				t.Fatalf("%d workers: playback holds %d %s, recording %d", workers, got, tab.Def(material.ID(id)).Name, want)
+			}
 		}
 	}
 }

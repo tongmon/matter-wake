@@ -1,0 +1,66 @@
+matter-wake-replay 2
+# Digs and places the same material again and again: sand out of the heap
+# and back on top of it, stone out of the left ledge and into a block in
+# the air and back, and sand with the two buttons in quick turns. The test
+# checks after every tick that each material's cells plus its inventory
+# stay what they were at the start.
+seed 2
+size 480 270
+tool 10 2000 4
+slots sand water stone
+materials ee74dacd409567c3
+ticks 900
+
+# Let the sand and the water fall.
+0 100 60 - 1
+# Round 1 with sand: sweep the brush through the heap, then pour the sand
+# back on top.
+90 80 120 D 0
+95 90 120 D 0
+100 100 120 D 0
+105 110 120 D 0
+110 120 120 D 0
+115 120 120 - 0
+120 100 70 P 0
+140 100 70 - 0
+# Round 2: the same, deeper.
+150 80 135 D 0
+155 90 135 D 0
+160 100 135 D 0
+165 110 135 D 0
+170 120 135 D 0
+175 120 135 - 0
+180 100 70 P 0
+200 100 70 - 0
+# Stone: cut a gap through the left ledge. The sand falling into the brush
+# is dug as it comes.
+220 160 150 D 3
+280 160 150 - 0
+# Put the stone back where the gap is.
+281 160 150 P 0
+282 160 150 - 0
+# Cut it again and build a block in the air instead.
+300 160 150 D 0
+360 160 150 - 0
+361 240 80 P 0
+362 240 80 - 0
+# Dig the block away and build it again, twice.
+380 240 80 D 0
+440 240 80 - 0
+441 240 80 P 0
+442 240 80 - 0
+460 240 80 D 0
+520 240 80 - 0
+521 240 80 P 0
+522 240 80 - 0
+# Sand in quick turns: dig and place every other tick.
+540 120 130 D 1
+542 120 100 P 0
+544 120 130 D 0
+546 120 100 P 0
+548 120 130 D 0
+550 120 100 P 0
+552 120 130 D 0
+554 120 100 P 0
+556 120 100 - 0
+# Then everything settles until tick 900.

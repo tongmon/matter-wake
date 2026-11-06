@@ -7,10 +7,10 @@
 // The format is line-based text, so replays diff well and can be written
 // by hand:
 //
-//	matter-wake-replay 1
+//	matter-wake-replay 2
 //	seed 1
 //	size 480 270
-//	brush 4
+//	tool 10 2000 4
 //	slots sand water stone
 //	materials 3f2a9c0d1e4b5a67
 //	ticks 600
@@ -19,9 +19,10 @@
 //	50 240 60 - 0
 //
 // The first line names the format and its version. The header follows in
-// this order: the world seed, the world size in cells, the brush radius,
-// the materials the slots hold in key order, the fingerprint of the
-// material table (material.Table.Fingerprint) and the number of ticks.
+// this order: the world seed, the world size in cells, the tool (its power,
+// its damage per tick and its brush radius, as in game.Tool), the materials
+// the slots hold in key order, the fingerprint of the material table
+// (material.Table.Fingerprint) and the number of ticks.
 //
 // Each later line is a tick and the input from that tick on, written only
 // where the input changes: the cursor's x and y in cells, the buttons (P
@@ -48,7 +49,7 @@ import (
 
 // Version is the format version this build reads and writes. A change to
 // the format raises it, and older files are refused rather than misread.
-const Version = 1
+const Version = 2
 
 // magic is the first word of every replay.
 const magic = "matter-wake-replay"
@@ -63,7 +64,7 @@ const MaxTicks = 24 * 60 * 60 * game.Hz
 type Replay struct {
 	Seed          uint64
 	Width, Height int
-	BrushRadius   int
+	Tool          game.Tool
 	// Slots name the materials the player can place, in key order.
 	Slots []string
 	// Materials is the fingerprint of the material table the session was
@@ -75,19 +76,19 @@ type Replay struct {
 }
 
 // New returns an empty recording of a session started with cfg.
-func New(cfg game.Config) *Replay {
+func New(cfg *game.Config) *Replay {
 	return &Replay{
-		Seed: cfg.Seed, Width: cfg.Width, Height: cfg.Height, BrushRadius: cfg.BrushRadius,
+		Seed: cfg.Seed, Width: cfg.Width, Height: cfg.Height, Tool: cfg.Tool,
 		Slots: slices.Clone(cfg.Slots), Materials: cfg.Materials.Fingerprint(),
 	}
 }
 
 // Config returns the config that starts the recorded session again, with
 // mats and on the given number of workers.
-func (r *Replay) Config(mats *material.Table, workers int) game.Config {
-	return game.Config{
+func (r *Replay) Config(mats *material.Table, workers int) *game.Config {
+	return &game.Config{
 		Width: r.Width, Height: r.Height, Seed: r.Seed, Workers: workers, Materials: mats,
-		Slots: slices.Clone(r.Slots), BrushRadius: r.BrushRadius,
+		Slots: slices.Clone(r.Slots), Tool: r.Tool,
 	}
 }
 
@@ -98,8 +99,9 @@ func Write(w io.Writer, r *Replay) error {
 	}
 	bw := bufio.NewWriter(w)
 	// A bufio.Writer keeps its first error and Flush returns it.
-	_, _ = fmt.Fprintf(bw, "%s %d\nseed %d\nsize %d %d\nbrush %d\nslots %s\nmaterials %s\nticks %d\n",
-		magic, Version, r.Seed, r.Width, r.Height, r.BrushRadius, strings.Join(r.Slots, " "), r.Materials, len(r.Inputs))
+	_, _ = fmt.Fprintf(bw, "%s %d\nseed %d\nsize %d %d\ntool %d %d %d\nslots %s\nmaterials %s\nticks %d\n",
+		magic, Version, r.Seed, r.Width, r.Height, r.Tool.Power, r.Tool.Rate, r.Tool.Radius,
+		strings.Join(r.Slots, " "), r.Materials, len(r.Inputs))
 	var prev game.Input
 	for i, in := range r.Inputs {
 		if in != prev {
@@ -117,8 +119,8 @@ func (r *Replay) validate() error {
 	switch {
 	case r.Width < 1 || r.Height < 1:
 		return fmt.Errorf("replay: world size %dx%d is not positive", r.Width, r.Height)
-	case r.BrushRadius < 0:
-		return fmt.Errorf("replay: brush radius %d is negative", r.BrushRadius)
+	case r.Tool.Rate == 0 || r.Tool.Radius < 0:
+		return fmt.Errorf("replay: tool %+v needs a rate of 1 or more and a radius of 0 or more", r.Tool)
 	case len(r.Slots) == 0:
 		return errors.New("replay: no material slots")
 	case !isWord(r.Materials):
@@ -248,11 +250,11 @@ func (p *parser) header(r *Replay) (int, error) {
 		return 0, p.errorf("size %s %s is not two positive numbers", f[0], f[1])
 	}
 	r.Width, r.Height = w, h
-	if f, err = p.field("brush", "brush <radius>", 1); err != nil {
+	if f, err = p.field("tool", "tool <power> <rate> <radius>", 3); err != nil {
 		return 0, err
 	}
-	if r.BrushRadius, err = strconv.Atoi(f[0]); err != nil || r.BrushRadius < 0 {
-		return 0, p.errorf("brush radius %q is not a number of 0 or more", f[0])
+	if r.Tool, err = parseTool(f); err != nil {
+		return 0, p.errorf("%v", err)
 	}
 	if r.Slots, err = p.field("slots", "slots <material>...", 0); err != nil {
 		return 0, err
@@ -272,6 +274,18 @@ func (p *parser) header(r *Replay) (int, error) {
 		return 0, p.errorf("ticks %d: at most %d (24 hours)", ticks, MaxTicks)
 	}
 	return ticks, nil
+}
+
+// parseTool parses the power, rate and radius fields of the tool line.
+func parseTool(f []string) (game.Tool, error) {
+	power, perr := strconv.ParseUint(f[0], 10, 8)
+	rate, rerr := strconv.ParseUint(f[1], 10, 32)
+	radius, aerr := strconv.Atoi(f[2])
+	if perr != nil || rerr != nil || aerr != nil || rate == 0 || radius < 0 {
+		return game.Tool{}, fmt.Errorf("tool %s: want a power of 0 to 255, a rate of 1 or more and a radius of 0 or more",
+			strings.Join(f, " "))
+	}
+	return game.Tool{Power: uint8(power), Rate: uint32(rate), Radius: radius}, nil
 }
 
 // inputs reads the input lines into dst, which holds one input per tick.
