@@ -6,8 +6,8 @@ import (
 )
 
 // wearTable keeps the damage dealt to cells that are being dug. It is the
-// one place that knows where that damage is stored and how long it lasts,
-// so changing either changes only this file. 🔶 The developer has not yet
+// one place that knows where that damage is stored and how long it lasts;
+// the digging rules in game.go only ask it. 🔶 The developer has not yet
 // chosen where damage should live (design.md 5절).
 //
 // Now it holds the damage of the cells under the brush in the last tick
