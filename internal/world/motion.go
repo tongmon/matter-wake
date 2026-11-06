@@ -45,7 +45,8 @@ func propsOf(d *material.Def) matProps {
 	}
 }
 
-// spot is where a moving cell is: its index and coordinates.
+// spot is where a moving cell is: where it is kept (World.pos) and its
+// coordinates.
 type spot struct{ i, x, y int }
 
 // update moves one cell by updatePowder or updateLiquid. A cell that cannot
@@ -54,8 +55,8 @@ type spot struct{ i, x, y int }
 // or drew a random number marks where it has been, so it and the cells
 // around it are updated again.
 func (w *World) update(x, y int, j *job) {
-	i := y*w.width + x
-	c := &w.cells[i]
+	i := w.pos(x, y)
+	c := w.cell(i)
 	if c.Mat == material.Air {
 		return // most cells; skip the material lookup
 	}
@@ -88,14 +89,15 @@ func (w *World) update(x, y int, j *job) {
 // speed and may slide down diagonally. It comes to rest, no longer falling,
 // once both sides are blocked as well.
 func (w *World) updatePowder(at spot, p *matProps, j *job) {
-	c := &w.cells[at.i]
+	c := w.cell(at.i)
 	if c.Falling && w.mayMove(at, p) && pauses(p, &j.s) {
 		return
 	}
 	if !c.Falling {
 		if w.enterable(at.x, at.y+1, p, &j.s) {
 			k := w.swap(at.i, at.x, at.y+1, j)
-			w.cells[k].Vy, w.cells[k].Falling = 0, true
+			moved := w.cell(k)
+			moved.Vy, moved.Falling = 0, true
 			return
 		}
 	} else if _, fell := w.fall(at, p, j); fell {
@@ -132,11 +134,11 @@ func pauses(p *matProps, s *rng.Stream) bool {
 func (w *World) updateLiquid(at spot, p *matProps, j *job) {
 	at, fell := w.fall(at, p, j)
 	if !fell {
-		w.cells[at.i].Vy = 0
+		w.cell(at.i).Vy = 0
 	}
 	blocked := !fell || !w.enterable(at.x, at.y+1, p, &j.s)
 	at, flowed := w.flow(at, p, blocked, j)
-	if fell || flowed || w.cells[at.i].Ax.Abs() >= fixed.One {
+	if fell || flowed || w.cell(at.i).Ax.Abs() >= fixed.One {
 		return
 	}
 	w.slide(at, p, j)
@@ -157,7 +159,7 @@ func (w *World) entryTo(x, y int, p *matProps) entry {
 	if !w.InBounds(x, y) {
 		return blocked
 	}
-	t := &w.mats[w.cells[y*w.width+x].Mat]
+	t := &w.mats[w.cell(w.pos(x, y)).Mat]
 	switch t.kind {
 	case material.Empty:
 		return free
@@ -185,7 +187,7 @@ func (w *World) enterable(x, y int, p *matProps, s *rng.Stream) bool {
 }
 
 func (w *World) isEmpty(x, y int) bool {
-	return w.InBounds(x, y) && w.mats[w.cells[y*w.width+x].Mat].kind == material.Empty
+	return w.InBounds(x, y) && w.mats[w.cell(w.pos(x, y)).Mat].kind == material.Empty
 }
 
 // swap moves the cell at index i to (x, y), the cell there to i, and
@@ -194,11 +196,12 @@ func (w *World) isEmpty(x, y int) bool {
 // has passed where that cell was: it had its update there, moving or not
 // (TestDisplacedCellIsNotUpdatedTwice).
 func (w *World) swap(i, x, y int, j *job) int {
-	k := y*w.width + x
-	w.cells[i], w.cells[k] = w.cells[k], w.cells[i]
-	w.cells[k].Last = w.tick
-	if w.cells[i].Mat != material.Air && j.passed(x, y) {
-		w.cells[i].Last = w.tick
+	k := w.pos(x, y)
+	from, to := w.cell(i), w.cell(k)
+	*from, *to = *to, *from
+	to.Last = w.tick
+	if from.Mat != material.Air && j.passed(x, y) {
+		from.Last = w.tick
 	}
 	j.path.add(rect{x, y, x + 1, y + 1})
 	return k
@@ -228,8 +231,8 @@ func (w *World) fall(at spot, p *matProps, j *job) (spot, bool) {
 	if !w.enterable(at.x, at.y+1, p, &j.s) {
 		return at, false
 	}
-	v := w.cells[at.i].Vy.Add(p.fallAccel).Clamp(0, maxFall)
-	push := w.cells[at.i].Ax
+	v := w.cell(at.i).Vy.Add(p.fallAccel).Clamp(0, maxFall)
+	push := w.cell(at.i).Ax
 	at.i = w.swap(at.i, at.x, at.y+1, j)
 	at.y++
 	drift := 0
@@ -245,7 +248,7 @@ func (w *World) fall(at spot, p *matProps, j *job) (spot, bool) {
 		at.i = w.swap(at.i, nx, at.y+1, j)
 		at.x, at.y = nx, at.y+1
 	}
-	w.cells[at.i].Vy = v
+	w.cell(at.i).Vy = v
 	return at, true
 }
 
@@ -273,7 +276,7 @@ func pickDrift(push fixed.Q8, s *rng.Stream) int {
 // stops the liquid but keeps the push. It returns where the liquid ended
 // and whether it moved.
 func (w *World) flow(at spot, p *matProps, blocked bool, j *job) (spot, bool) {
-	push := w.cells[at.i].Ax
+	push := w.cell(at.i).Ax
 	if blocked {
 		push = w.growPush(push, at.x, at.y, p)
 	}
@@ -291,7 +294,7 @@ func (w *World) flow(at spot, p *matProps, blocked bool, j *job) (spot, bool) {
 		moved = true
 		push = push.Mul(p.flowDamping)
 	}
-	w.cells[at.i].Ax = push
+	w.cell(at.i).Ax = push
 	return at, moved
 }
 
@@ -329,9 +332,9 @@ func (w *World) slide(at spot, p *matProps, j *job) bool {
 		if w.enterable(at.x+d, at.y+1, p, &j.s) {
 			k := w.swap(at.i, at.x+d, at.y+1, j)
 			if p.kind == material.Liquid {
-				w.cells[k].Ax = fixed.FromInt(d)
+				w.cell(k).Ax = fixed.FromInt(d)
 			} else {
-				w.cells[k].Falling = true
+				w.cell(k).Falling = true
 			}
 			return true
 		}

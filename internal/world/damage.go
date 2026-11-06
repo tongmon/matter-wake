@@ -16,10 +16,10 @@ const DamageScale = 1 << 16
 // up by any damage. The rounding can save the last wear when hp / amount
 // is just above a whole number (TestWearTakesHPOverAmount).
 func (w *World) Wear(x, y int, amount uint32) bool {
-	if amount == 0 || !w.InBounds(x, y) {
+	if amount == 0 || !w.has(x, y) {
 		return false
 	}
-	c := &w.cells[y*w.width+x]
+	c := w.cell(w.pos(x, y))
 	hp := uint64(w.mats[c.Mat].hp)
 	if hp == 0 {
 		return true

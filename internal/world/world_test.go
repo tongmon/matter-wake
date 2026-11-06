@@ -2,7 +2,6 @@ package world
 
 import (
 	"fmt"
-	"slices"
 	"strings"
 	"testing"
 
@@ -256,11 +255,11 @@ func TestChangesRaiseChunkVersions(t *testing.T) {
 	w, ids := newTestWorld(t, 200, 150, 4)
 	scatter(w, ids, 21)
 	for tick := range 450 {
-		before := slices.Clone(w.cells)
+		before := snapshot(w)
 		seen := w.Version()
 		edit(w, ids, tick)
 		w.Step()
-		for i, c := range w.cells {
+		for i, c := range snapshot(w) {
 			if c == before[i] {
 				continue
 			}
