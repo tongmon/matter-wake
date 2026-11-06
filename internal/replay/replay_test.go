@@ -37,12 +37,13 @@ func TestWrite(t *testing.T) {
 	if err := Write(&buf, r); err != nil {
 		t.Fatal(err)
 	}
-	want := `matter-wake-replay 4
+	want := `matter-wake-replay 5
 seed 7
 size 64 32
 scene sandbox
 view 64 32
 stream 64 4 512 12 60
+budget 0
 tool 10 2000 2
 mode play
 slots sand water
@@ -87,6 +88,7 @@ func TestRoundTrip(t *testing.T) {
 			r.Inputs = inputs
 			r.Creative = i%2 == 1
 			r.Scene = []game.Scene{game.SceneTerrain, game.SceneSandbox, game.SceneCollapse}[i%3]
+			r.Budget = i * 100_000
 			var buf bytes.Buffer
 			if err := Write(&buf, r); err != nil {
 				t.Fatal(err)
@@ -112,7 +114,7 @@ func checkHeader(t *testing.T, got, want *Replay) {
 	t.Helper()
 	if got.Seed != want.Seed || got.Width != want.Width || got.Height != want.Height ||
 		got.Scene != want.Scene || got.ViewWidth != want.ViewWidth || got.ViewHeight != want.ViewHeight ||
-		got.Stream != want.Stream || got.Tool != want.Tool || got.Creative != want.Creative ||
+		got.Stream != want.Stream || got.Budget != want.Budget || got.Tool != want.Tool || got.Creative != want.Creative ||
 		got.Materials != want.Materials || strings.Join(got.Slots, ",") != strings.Join(want.Slots, ",") {
 		t.Fatalf("header = %+v, want %+v", got, want)
 	}
@@ -121,7 +123,7 @@ func checkHeader(t *testing.T, got, want *Replay) {
 // Replays are text so they can be written by hand: blank lines, comments,
 // extra spaces and Windows line ends are all accepted.
 func TestReadHandWritten(t *testing.T) {
-	src := "matter-wake-replay 4\r\n" +
+	src := "matter-wake-replay 5\r\n" +
 		"# A hand-written replay.\r\n" +
 		"\r\n" +
 		"seed 18446744073709551615\r\n" +
@@ -129,6 +131,7 @@ func TestReadHandWritten(t *testing.T) {
 		"scene terrain\r\n" +
 		"view 64  32\r\n" +
 		"stream 0 0  0 1 1\r\n" +
+		"budget  70000\r\n" +
 		"tool  0 1  0\r\n" +
 		"mode creative \r\n" +
 		"slots stone\r\n" +
@@ -144,7 +147,7 @@ func TestReadHandWritten(t *testing.T) {
 	}
 	checkHeader(t, r, &Replay{
 		Seed: 1<<64 - 1, Width: 64, Height: 32, Scene: game.SceneTerrain, ViewWidth: 64, ViewHeight: 32,
-		Stream: game.Stream{Target: 1, Check: 1}, Tool: game.Tool{Rate: 1}, Creative: true,
+		Stream: game.Stream{Target: 1, Check: 1}, Budget: 70000, Tool: game.Tool{Rate: 1}, Creative: true,
 		Slots: []string{"stone"}, Materials: "unknown",
 	})
 	want := []game.Input{none, put, put, put, {Select: 1}, none}
@@ -160,17 +163,18 @@ func TestReadHandWritten(t *testing.T) {
 
 func TestReadErrors(t *testing.T) {
 	const (
-		v      = "matter-wake-replay 4\n"
-		sized  = v + "seed 1\nsize 64 32\n"
-		viewed = sized + "scene sandbox\nview 64 32\nstream 64 4 512 12 60\n"
-		header = viewed + "tool 10 2000 4\nmode play\nslots sand\nmaterials 00\n"
+		v        = "matter-wake-replay 5\n"
+		sized    = v + "seed 1\nsize 64 32\n"
+		streamed = sized + "scene sandbox\nview 64 32\nstream 64 4 512 12 60\n"
+		viewed   = streamed + "budget 250000\n"
+		header   = viewed + "tool 10 2000 4\nmode play\nslots sand\nmaterials 00\n"
 	)
 	tests := []struct {
 		name, src, wantErr string
 	}{
 		{"empty", "", "not a matter-wake replay"},
-		{"newer version", "matter-wake-replay 5\n", "version 5"},
-		{"older version", "matter-wake-replay 3\nseed 1\n", "version 3"},
+		{"newer version", "matter-wake-replay 6\n", "version 6"},
+		{"older version", "matter-wake-replay 4\nseed 1\n", "version 4"},
 		{"bad version", "matter-wake-replay one\n", "version"},
 		{"missing seed", v + "size 64 32\n", `"seed`},
 		{"negative seed", v + "seed -1\n", "seed"},
@@ -185,6 +189,9 @@ func TestReadErrors(t *testing.T) {
 		{"negative lead cap", sized + "scene sandbox\nview 64 32\nstream 64 4 -512 12 60\n", "stream"},
 		{"no target", sized + "scene terrain\nview 64 32\nstream 64 4 512 0 60\n", "stream"},
 		{"no checks", sized + "scene terrain\nview 64 32\nstream 64 4 512 12 0\n", "stream"},
+		{"no budget", streamed + "tool 10 2000 4\n", `"budget`},
+		{"negative budget", streamed + "budget -1\n", "budget"},
+		{"bad budget", streamed + "budget lots\n", "budget"},
 		{"old brush line", viewed + "brush 4\n", `"tool`},
 		{"short tool", viewed + "tool 10 2000\n", `"tool`},
 		{"negative radius", viewed + "tool 10 2000 -1\n", "tool"},
@@ -239,6 +246,7 @@ func TestWriteRejectsBadReplays(t *testing.T) {
 		{"zero view", func(r *Replay) { r.ViewWidth = 0 }},
 		{"no target", func(r *Replay) { r.Stream.Target = 0 }},
 		{"no checks", func(r *Replay) { r.Stream.Check = 0 }},
+		{"negative budget", func(r *Replay) { r.Budget = -1 }},
 		{"negative grid", func(r *Replay) { r.Stream.Grid = -1 }},
 		{"negative radius", func(r *Replay) { r.Tool.Radius = -1 }},
 		{"tool deals no damage", func(r *Replay) { r.Tool.Rate = 0 }},
@@ -263,13 +271,13 @@ func TestNewAndConfig(t *testing.T) {
 	cfg := &game.Config{
 		Width: 96, Height: 64, Seed: 42, Workers: 3, Materials: tab,
 		Scene: game.SceneTerrain, ViewWidth: 40, ViewHeight: 30, Stream: game.Stream{Grid: 9, Lead: 2, LeadMax: 100, Target: 3, Check: 5},
-		Slots: []string{"water", "stone"}, Tool: game.Tool{Power: 3, Rate: 77, Radius: 5}, Creative: true,
+		Budget: 12345, Slots: []string{"water", "stone"}, Tool: game.Tool{Power: 3, Rate: 77, Radius: 5}, Creative: true,
 	}
 	r := New(cfg)
 	want := &Replay{
 		Seed: 42, Width: 96, Height: 64, Scene: game.SceneTerrain, ViewWidth: 40, ViewHeight: 30,
-		Stream: game.Stream{Grid: 9, Lead: 2, LeadMax: 100, Target: 3, Check: 5}, Tool: game.Tool{Power: 3, Rate: 77, Radius: 5}, Creative: true,
-		Slots: []string{"water", "stone"}, Materials: tab.Fingerprint(),
+		Stream: game.Stream{Grid: 9, Lead: 2, LeadMax: 100, Target: 3, Check: 5}, Budget: 12345,
+		Tool: game.Tool{Power: 3, Rate: 77, Radius: 5}, Creative: true, Slots: []string{"water", "stone"}, Materials: tab.Fingerprint(),
 	}
 	checkHeader(t, r, want)
 	if len(r.Inputs) != 0 {
@@ -282,7 +290,7 @@ func TestNewAndConfig(t *testing.T) {
 	got := r.Config(tab, 2)
 	if got.Width != 96 || got.Height != 64 || got.Seed != 42 || got.Workers != 2 || got.Materials != tab ||
 		got.Scene != cfg.Scene || got.ViewWidth != 40 || got.ViewHeight != 30 || got.Stream != cfg.Stream ||
-		got.Store != nil || strings.Join(got.Slots, ",") != "water,stone" || got.Tool != cfg.Tool || !got.Creative {
+		got.Budget != 12345 || got.Store != nil || strings.Join(got.Slots, ",") != "water,stone" || got.Tool != cfg.Tool || !got.Creative {
 		t.Fatalf("Config = %+v", got)
 	}
 }

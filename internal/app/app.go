@@ -73,6 +73,11 @@ var tool = game.Tool{Power: 10, Rate: 2000, Radius: 4}
 // ticks a second (🧪, design.md 7절).
 var stream = game.Stream{Grid: 64, Lead: 4, LeadMax: 512, Target: 12, Check: 60}
 
+// budget is how many cells a tick may scan before the chunks farthest from
+// the middle of the view wait (🧪, design.md 3절). It keeps the load scene
+// within the cell budget on the reference CPU (design.md 2절).
+const budget = 250_000
+
 // The terrain's view in cells, the logical screen size (🧪).
 const (
 	viewWidth  = 480
@@ -180,7 +185,7 @@ func sessionConfig(cfg *Config, mats *material.Table, playback *replay.Replay) *
 			"seed", cfg.Seed, "workers", cfg.Workers, "creative", cfg.Creative)
 		sess := &game.Config{
 			Width: cfg.Width, Height: cfg.Height, Seed: cfg.Seed, Workers: cfg.Workers,
-			Scene: cfg.Scene, ViewWidth: cfg.Width, ViewHeight: cfg.Height, Stream: stream,
+			Scene: cfg.Scene, ViewWidth: cfg.Width, ViewHeight: cfg.Height, Stream: stream, Budget: budget,
 			Materials: mats, Slots: slots, Tool: tool, Creative: cfg.Creative,
 		}
 		if cfg.Scene == game.SceneTerrain {

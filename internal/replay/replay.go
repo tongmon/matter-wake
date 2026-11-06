@@ -7,12 +7,13 @@
 // The format is line-based text, so replays diff well and can be written
 // by hand:
 //
-//	matter-wake-replay 4
+//	matter-wake-replay 5
 //	seed 1
 //	size 480 270
 //	scene sandbox
 //	view 480 270
 //	stream 64 4 512 12 60
+//	budget 300000
 //	tool 10 2000 4
 //	mode play
 //	slots sand water stone
@@ -23,10 +24,11 @@
 //	50 240 60 - 0 0 0
 //
 // The first line names the format and its version. The header follows in
-// this order: the world seed, the world size in cells, the scene (sandbox
+// this order: the world seed, the world size in cells, the scene (sandbox,
 // collapse or terrain, game.Scene), the size of the camera's view in cells, the
 // stream (the grid, the lead and its cap, the target and the ticks between
-// checks, as in game.Stream), the tool (its power, its damage per tick and its brush
+// checks, as in game.Stream), the budget (how many cells a tick may scan, 0
+// for no limit, as in game.Config.Budget), the tool (its power, its damage per tick and its brush
 // radius, as in game.Tool), the mode (play, or creative for
 // game.Config.Creative), the materials the slots hold in key order, the
 // fingerprint of the material table (material.Table.Fingerprint) and the
@@ -58,7 +60,7 @@ import (
 
 // Version is the format version this build reads and writes. A change to
 // the format raises it, and older files are refused rather than misread.
-const Version = 4
+const Version = 5
 
 // magic is the first word of every replay.
 const magic = "matter-wake-replay"
@@ -78,7 +80,10 @@ type Replay struct {
 	Scene                 game.Scene
 	ViewWidth, ViewHeight int
 	Stream                game.Stream
-	Tool                  game.Tool
+	// Budget is how many cells a tick may scan; it decides which chunks
+	// wait, and so what the world does.
+	Budget int
+	Tool   game.Tool
 	// Creative is game.Config.Creative: placing takes nothing from the
 	// inventory.
 	Creative bool
@@ -97,7 +102,7 @@ func New(cfg *game.Config) *Replay {
 	return &Replay{
 		Seed: cfg.Seed, Width: cfg.Width, Height: cfg.Height, Tool: cfg.Tool, Creative: cfg.Creative,
 		Scene: cfg.Scene, ViewWidth: cfg.ViewWidth, ViewHeight: cfg.ViewHeight, Stream: cfg.Stream,
-		Slots: slices.Clone(cfg.Slots), Materials: cfg.Materials.Fingerprint(),
+		Budget: cfg.Budget, Slots: slices.Clone(cfg.Slots), Materials: cfg.Materials.Fingerprint(),
 	}
 }
 
@@ -108,7 +113,7 @@ func (r *Replay) Config(mats *material.Table, workers int) *game.Config {
 	return &game.Config{
 		Width: r.Width, Height: r.Height, Seed: r.Seed, Workers: workers, Materials: mats,
 		Scene: r.Scene, ViewWidth: r.ViewWidth, ViewHeight: r.ViewHeight, Stream: r.Stream,
-		Slots: slices.Clone(r.Slots), Tool: r.Tool, Creative: r.Creative,
+		Budget: r.Budget, Slots: slices.Clone(r.Slots), Tool: r.Tool, Creative: r.Creative,
 	}
 }
 
@@ -120,9 +125,9 @@ func Write(w io.Writer, r *Replay) error {
 	bw := bufio.NewWriter(w)
 	// A bufio.Writer keeps its first error and Flush returns it.
 	s := r.Stream
-	_, _ = fmt.Fprintf(bw, "%s %d\nseed %d\nsize %d %d\nscene %s\nview %d %d\nstream %d %d %d %d %d\n",
+	_, _ = fmt.Fprintf(bw, "%s %d\nseed %d\nsize %d %d\nscene %s\nview %d %d\nstream %d %d %d %d %d\nbudget %d\n",
 		magic, Version, r.Seed, r.Width, r.Height, sceneWord(r.Scene), r.ViewWidth, r.ViewHeight,
-		s.Grid, s.Lead, s.LeadMax, s.Target, s.Check)
+		s.Grid, s.Lead, s.LeadMax, s.Target, s.Check, r.Budget)
 	_, _ = fmt.Fprintf(bw, "tool %d %d %d\nmode %s\nslots %s\nmaterials %s\nticks %d\n",
 		r.Tool.Power, r.Tool.Rate, r.Tool.Radius, mode(r.Creative), strings.Join(r.Slots, " "), r.Materials, len(r.Inputs))
 	var prev game.Input
@@ -149,6 +154,8 @@ func (r *Replay) validate() error {
 		return fmt.Errorf("replay: view %dx%d is not positive", r.ViewWidth, r.ViewHeight)
 	case !streamValid(r.Stream):
 		return fmt.Errorf("replay: stream %+v needs a grid and leads of 0 or more, a target of 1 or more and checks 1 tick or more apart", r.Stream)
+	case r.Budget < 0:
+		return fmt.Errorf("replay: budget %d is negative", r.Budget)
 	case r.Tool.Rate == 0 || r.Tool.Radius < 0:
 		return fmt.Errorf("replay: tool %+v needs a rate of 1 or more and a radius of 0 or more", r.Tool)
 	case len(r.Slots) == 0:
@@ -350,7 +357,7 @@ func (p *parser) header(r *Replay) (int, error) {
 	return ticks, nil
 }
 
-// view reads the scene, view and stream lines into r.
+// view reads the scene, view, stream and budget lines into r.
 func (p *parser) view(r *Replay) error {
 	f, err := p.field("scene", "scene sandbox|collapse|terrain", 1)
 	if err != nil {
@@ -387,6 +394,12 @@ func (p *parser) view(r *Replay) error {
 	r.Stream = game.Stream{Grid: v[0], Lead: v[1], LeadMax: v[2], Target: v[3], Check: v[4]}
 	if !streamValid(r.Stream) {
 		return p.errorf("stream %s: want a grid and leads of 0 or more, a target of 1 or more and checks 1 tick or more apart", strings.Join(f, " "))
+	}
+	if f, err = p.field("budget", "budget <cells>", 1); err != nil {
+		return err
+	}
+	if r.Budget, err = strconv.Atoi(f[0]); err != nil || r.Budget < 0 {
+		return p.errorf("budget %q is not a number of 0 or more", f[0])
 	}
 	return nil
 }

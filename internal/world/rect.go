@@ -32,3 +32,11 @@ func (r rect) clip(o rect) rect {
 func (r rect) readers() rect {
 	return rect{r.x0 - 1, r.y0 - 1, r.x1 + 1, r.y1}
 }
+
+// area returns how many cells r covers, 0 for an empty one.
+func (r rect) area() int {
+	if r.empty() {
+		return 0
+	}
+	return (r.x1 - r.x0) * (r.y1 - r.y0)
+}

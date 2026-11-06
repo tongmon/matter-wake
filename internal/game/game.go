@@ -86,6 +86,10 @@ type Config struct {
 	// the stream they set which blocks of the terrain stay in memory.
 	ViewWidth, ViewHeight int
 	Stream                Stream
+	// Budget is how many cells a tick may scan, 0 for no limit. Over it,
+	// the chunks farthest from the middle of the view wait for a later
+	// tick (world.Config.Budget).
+	Budget int
 	// Store keeps the blocks the terrain unloads. Nil keeps them in memory
 	// for the session only, which replays and shots rely on.
 	Store Store
@@ -183,7 +187,7 @@ func New(cfg *Config) (*Game, error) {
 	}
 	w, err := world.New(world.Config{
 		Width: cfg.Width, Height: cfg.Height, Seed: cfg.Seed, Workers: cfg.Workers, Materials: cfg.Materials,
-		Streamed: cfg.Scene == SceneTerrain, Tick: tick,
+		Streamed: cfg.Scene == SceneTerrain, Tick: tick, Budget: cfg.Budget,
 	})
 	if err != nil {
 		return nil, err
@@ -381,6 +385,9 @@ func (g *Game) Step(in Input) error {
 		if err := g.stream(in.CameraX, in.CameraY); err != nil {
 			return err
 		}
+		// The rooms show all of the world, whose middle is the focus
+		// already.
+		g.world.SetFocus(in.CameraX+g.viewW/2, in.CameraY+g.viewH/2)
 	}
 	if in.Select >= 1 && in.Select <= len(g.slots) {
 		g.selected = in.Select - 1

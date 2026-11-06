@@ -56,11 +56,12 @@ func TestDiskStoreRoundTrip(t *testing.T) {
 	}
 }
 
-// terrainConfig is a terrain session with the stream the game uses.
+// terrainConfig is a terrain session with the stream and the budget the
+// game uses.
 func terrainConfig(mats *material.Table) *game.Config {
 	return &game.Config{
 		Width: 4096, Height: 4096, Seed: 4, Workers: 2, Materials: mats,
-		Scene: game.SceneTerrain, ViewWidth: 480, ViewHeight: 270, Stream: stream,
+		Scene: game.SceneTerrain, ViewWidth: 480, ViewHeight: 270, Stream: stream, Budget: budget,
 		Slots: []string{"sand", "water", "stone"}, Tool: game.Tool{Power: 10, Rate: 2000, Radius: 4},
 	}
 }
