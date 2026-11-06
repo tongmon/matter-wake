@@ -2,6 +2,7 @@ package world
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 
@@ -245,6 +246,68 @@ func TestChunksWakeAndSleepAgain(t *testing.T) {
 			t.Fatalf("%s woke no chunk", e.name)
 		}
 		settle(t, w)
+	}
+}
+
+// The renderer uploads only the chunks whose version grew, so every cell
+// that changes, in a tick or between ticks and in damage too, must raise
+// its chunk's version.
+func TestChangesRaiseChunkVersions(t *testing.T) {
+	w, ids := newTestWorld(t, 200, 150, 4)
+	scatter(w, ids, 21)
+	for tick := range 450 {
+		before := slices.Clone(w.cells)
+		seen := w.Version()
+		edit(w, ids, tick)
+		w.Step()
+		for i, c := range w.cells {
+			if c == before[i] {
+				continue
+			}
+			x, y := i%w.width, i/w.width
+			if v := w.ChunkVersion(x/ChunkSize, y/ChunkSize); v <= seen {
+				t.Fatalf("tick %d: cell (%d, %d) changed from %+v to %+v, but its chunk's version %d is not above %d",
+					w.Tick(), x, y, before[i], c, v, seen)
+			}
+		}
+	}
+}
+
+// Damage changes only how a cell is drawn, but it must still raise the
+// chunk's version, or the renderer would not show digging progress.
+func TestWearRaisesChunkVersion(t *testing.T) {
+	w, ids := newTestWorldWith(t, 128, 64, 1, withHP(10000, 0))
+	w.Fill(0, 32, 128, 64, ids.stone)
+	settle(t, w)
+	seen := w.Version()
+	if w.Wear(100, 40, 10) {
+		t.Fatal("one small wear used the stone up")
+	}
+	if v := w.ChunkVersion(1, 0); v <= seen {
+		t.Fatalf("wearing a cell left its chunk at version %d, not above %d", v, seen)
+	}
+	if v := w.ChunkVersion(0, 0); v > seen {
+		t.Fatalf("wearing a cell in chunk (1, 0) raised chunk (0, 0) to version %d", v)
+	}
+}
+
+// A world in which nothing can move keeps its chunk versions, so the
+// renderer uploads nothing.
+func TestSleepingChunksKeepTheirVersions(t *testing.T) {
+	w, ids := newTestWorld(t, 256, 128, 1)
+	w.Fill(0, 64, 256, 96, ids.water)
+	w.Fill(0, 96, 256, 128, ids.sand)
+	settle(t, w)
+	seen := w.Version()
+	for range 10 {
+		w.Step()
+	}
+	for cy := range 2 {
+		for cx := range 4 {
+			if v := w.ChunkVersion(cx, cy); v > seen {
+				t.Errorf("chunk (%d, %d) is at version %d after sleeping ticks, above %d", cx, cy, v, seen)
+			}
+		}
 	}
 }
 

@@ -30,5 +30,8 @@ func (w *World) Wear(x, y int, amount uint32) bool {
 		return true
 	}
 	c.Damage += uint16(steps)
+	// Damage changes only how the cell is drawn, but marking it is what
+	// tells the renderer to draw it again.
+	w.touch(rect{x, y, x + 1, y + 1})
 	return false
 }
