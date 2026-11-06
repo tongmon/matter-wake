@@ -340,13 +340,15 @@ func BenchmarkDecodeBlock(b *testing.B) {
 }
 
 // Any table material.NewTable accepts must round-trip: the most materials
-// a table may hold, and names of any length. Found by the Codex review of
-// the block format (2026-11-06).
+// a table may hold, and names of any length, even when the names alone
+// take more than the cells. Found by two Codex reviews of the block format
+// (2026-11-06).
 func TestBlockTakesAnyMaterialTable(t *testing.T) {
 	long := strings.Repeat("n", 300)
 	defs := []material.Def{{Name: "air", Kind: material.Empty}, {Name: long, Kind: material.Static}}
+	pad := strings.Repeat("m", 128)
 	for i := len(defs); i < material.MaxMaterials; i++ {
-		defs = append(defs, material.Def{Name: "m" + strconv.Itoa(i), Kind: material.Static})
+		defs = append(defs, material.Def{Name: pad + strconv.Itoa(i), Kind: material.Static})
 	}
 	mats, err := material.NewTable(defs)
 	if err != nil {

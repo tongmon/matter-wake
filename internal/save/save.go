@@ -10,6 +10,7 @@
 //
 //	"mw-block"            8 bytes
 //	version               uint16
+//	materials size        uint64, the bytes of the material list below
 //	materials             uint32 count, then each name: uint32 length, bytes
 //	fields                uint8 count, then each field:
 //	                        name: uint8 length, bytes
@@ -42,6 +43,7 @@ import (
 	"fmt"
 	"hash/crc32"
 	"io"
+	"math"
 	"strconv"
 	"strings"
 
@@ -134,13 +136,19 @@ func EncodeBlock(w io.Writer, b *world.Block, mats *material.Table) error {
 	_, _ = bw.WriteString(blockMagic)
 	writeUint(bw, BlockVersion, 2)
 	// A table holds up to material.MaxMaterials materials, with names of
-	// any length, so both take 32 bits.
-	writeUint(bw, uint64(mats.Len()), 4)
+	// any length, so both take 32 bits. The list's size comes first, so a
+	// reader knows how much to expect besides the cells.
+	var list bytes.Buffer
+	lw := bufio.NewWriter(&list)
+	writeUint(lw, uint64(mats.Len()), 4)
 	for i := range mats.Len() {
 		name := mats.Def(material.ID(i)).Name
-		writeUint(bw, uint64(len(name)), 4)
-		_, _ = bw.WriteString(name)
+		writeUint(lw, uint64(len(name)), 4)
+		_, _ = lw.WriteString(name)
 	}
+	_ = lw.Flush() // a bytes.Buffer does not fail
+	writeUint(bw, uint64(list.Len()), 8)
+	_, _ = bw.Write(list.Bytes())
 	writeUint(bw, uint64(len(fields)), 1)
 	raw := make([]byte, 4*cells)
 	var packed bytes.Buffer
@@ -187,22 +195,21 @@ func writeName(w *bufio.Writer, name string) {
 	_, _ = w.WriteString(name)
 }
 
-// maxBlockBytes caps how much DecodeBlock reads: well above the most a
-// block takes, every field of every cell uncompressed.
-const maxBlockBytes = 8 << 20
+// headBytes is how long a block's head is: its magic, version and the
+// size of its material list.
+const headBytes = len(blockMagic) + 2 + 8
+
+// maxCellBytes caps how much DecodeBlock reads besides the head and the
+// material list: well above the most the cells take, every field of every
+// cell uncompressed.
+const maxCellBytes = 8 << 20
 
 // DecodeBlock reads a block that EncodeBlock wrote, and maps its materials
 // by name onto mats. It fails on another format or version, on damaged
 // data, and when a cell holds a material mats does not have.
 func DecodeBlock(r io.Reader, mats *material.Table) (*world.Block, error) {
-	data, err := io.ReadAll(io.LimitReader(r, maxBlockBytes+1))
+	data, err := readBlock(r)
 	if err != nil {
-		return nil, fmt.Errorf("save: block: %w", err)
-	}
-	if len(data) > maxBlockBytes {
-		return nil, fmt.Errorf("save: block: more than %d bytes", maxBlockBytes)
-	}
-	if err := checkHead(data); err != nil {
 		return nil, fmt.Errorf("save: block: %w", err)
 	}
 	body := data[:len(data)-4]
@@ -211,8 +218,8 @@ func DecodeBlock(r io.Reader, mats *material.Table) (*world.Block, error) {
 	}
 	// A bytes.Reader reads byte by byte, so DEFLATE never reads past its
 	// field.
-	d := &decoder{r: bytes.NewReader(body[len(blockMagic)+2:])}
-	b, err := d.block(mats)
+	d := &decoder{r: bytes.NewReader(body[headBytes:])}
+	b, err := d.block(mats, binary.LittleEndian.Uint64(data[headBytes-8:]))
 	if err != nil {
 		return nil, fmt.Errorf("save: block: %w", err)
 	}
@@ -222,19 +229,33 @@ func DecodeBlock(r io.Reader, mats *material.Table) (*world.Block, error) {
 	return b, nil
 }
 
-// checkHead checks that data starts as a block of BlockVersion and is long
-// enough to end in a checksum.
-func checkHead(data []byte) error {
-	if !bytes.HasPrefix(data, []byte(blockMagic)) {
-		return errors.New("not a matter-wake block")
+// readBlock reads a whole block: its head, then as much as the head's
+// material list size and maxCellBytes allow, which must end in a checksum.
+func readBlock(r io.Reader) ([]byte, error) {
+	head := make([]byte, headBytes)
+	n, err := io.ReadFull(r, head)
+	if !bytes.HasPrefix(head[:n], []byte(blockMagic)) || n < len(blockMagic) {
+		return nil, errors.New("not a matter-wake block")
 	}
-	if len(data) < len(blockMagic)+2+4 {
-		return io.ErrUnexpectedEOF
+	if n >= len(blockMagic)+2 {
+		if v := binary.LittleEndian.Uint16(head[len(blockMagic):]); v != BlockVersion {
+			return nil, fmt.Errorf("format version %d; this build reads version %d", v, BlockVersion)
+		}
 	}
-	if v := binary.LittleEndian.Uint16(data[len(blockMagic):]); v != BlockVersion {
-		return fmt.Errorf("format version %d; this build reads version %d", v, BlockVersion)
+	if err != nil {
+		return nil, noEOF(err)
 	}
-	return nil
+	limit := binary.LittleEndian.Uint64(head[headBytes-8:]) + maxCellBytes + 4
+	rest, err := io.ReadAll(io.LimitReader(r, int64(min(limit, math.MaxInt64-1))+1))
+	switch {
+	case err != nil:
+		return nil, err
+	case uint64(len(rest)) > limit:
+		return nil, fmt.Errorf("more than %d bytes after the head", limit)
+	case len(rest) < 4:
+		return nil, io.ErrUnexpectedEOF
+	}
+	return append(head, rest...), nil
 }
 
 // decoder reads the parts of a block after its version.
@@ -242,10 +263,14 @@ type decoder struct {
 	r *bytes.Reader
 }
 
-func (d *decoder) block(mats *material.Table) (*world.Block, error) {
+func (d *decoder) block(mats *material.Table, listBytes uint64) (*world.Block, error) {
+	before := d.r.Len()
 	ids, names, err := d.materials(mats)
 	if err != nil {
 		return nil, err
+	}
+	if read := uint64(before - d.r.Len()); read != listBytes {
+		return nil, fmt.Errorf("the material list takes %d bytes, the head says %d", read, listBytes)
 	}
 	n, err := d.uint(1)
 	if err != nil {
