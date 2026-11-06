@@ -427,6 +427,32 @@ func TestOnlyMovingCellsAreStamped(t *testing.T) {
 	}
 }
 
+// A cell knocked out of a place the scan has passed is done for the tick,
+// like one that moved: here sand falling from the even chunk pushes water
+// up into the odd chunk, which runs later, and the water must stay where
+// it was pushed. Found by the Codex review of the stamping change
+// (2026-11-06).
+func TestDisplacedCellIsNotUpdatedTwice(t *testing.T) {
+	tab := testTable(t, nil)
+	w, err := New(Config{Width: 128, Height: 8, Seed: 1113, Workers: 1, Materials: tab})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer w.Close()
+	sand, water, stone := tab.MustLookup("sand"), tab.MustLookup("water"), tab.MustLookup("stone")
+	w.Fill(0, 4, 128, 5, stone)
+	w.Set(63, 3, water)
+	w.Set(63, 0, sand)
+	w.cells[63].Vy, w.cells[63].Falling = maxFall, true
+	w.Step()
+	if c, _ := w.At(63, 3); c.Mat != sand {
+		t.Fatalf("the sand did not sink into the water at (63, 3); the setup no longer pushes the water out:%s", render(w, testIDs{stone, sand, water}))
+	}
+	if c, _ := w.At(64, 2); c.Mat != water {
+		t.Fatalf("the water pushed to (64, 2) moved again in the same tick:%s", render(w, testIDs{stone, sand, water}))
+	}
+}
+
 // Water poured into a basin settles to a nearly flat surface.
 func TestWaterLevelsInABasin(t *testing.T) {
 	w, ids := newTestWorld(t, 40, 20, 1)

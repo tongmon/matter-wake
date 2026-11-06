@@ -43,10 +43,11 @@ type Cell struct {
 	// Falling is set while a powder is in motion: from its first fall until
 	// it lies blocked below with both sides blocked.
 	Falling bool
-	// Last is the tick in which the cell last moved, so a cell that moved
-	// ahead of the scan is not updated twice in one tick. A cell that stays
-	// put keeps it, so a tick leaves a resting cell exactly as it was
-	// whether it visits the cell or not.
+	// Last marks the cell done for a tick: the cell moved in it, or a
+	// moving cell pushed it out of a place the scan had already passed. A
+	// done cell is not updated again in that tick. A cell that stays put
+	// is not marked, so a tick leaves a resting cell as it was whether it
+	// visits the cell or not.
 	Last uint32
 	// Vy is the speed of a falling cell, in cells per tick.
 	Vy fixed.Q8
@@ -61,6 +62,24 @@ type Cell struct {
 type chunk struct {
 	cx, cy         int
 	x0, y0, x1, y1 int
+	// first is set for the chunks of the first phase of their row, which
+	// run before the chunks beside them.
+	first bool
+}
+
+// job is one chunk's run in a tick.
+type job struct {
+	c chunk
+	// s is the chunk's random stream for the tick.
+	s rng.Stream
+}
+
+// passed reports whether the tick's scan has already been over (x, y), a
+// place the cells of the job's chunk can reach below their own row: every
+// row of chunks below has run, and so has the job's own row except, while
+// the first phase runs, the chunks beside it.
+func (j *job) passed(x, y int) bool {
+	return !j.c.first || y >= j.c.y1 || x >= j.c.x0 && x < j.c.x1
 }
 
 // Config describes a new world.
@@ -87,8 +106,8 @@ type World struct {
 	// phases run in order: for each row of chunks from the bottom, its even
 	// columns, then its odd columns.
 	phases [][]chunk
-	// current is the phase being run; stepChunk reads it.
-	current []chunk
+	// jobs are the runs of the phase being run; stepChunk reads them.
+	jobs []job
 	// stepChunkFn is stepChunk bound once, so Step does not allocate.
 	stepChunkFn func(int)
 }
@@ -123,13 +142,14 @@ func New(cfg Config) (*World, error) {
 		for parity := range 2 {
 			var phase []chunk
 			for cx := parity; cx*ChunkSize < cfg.Width; cx += 2 {
-				c := chunk{cx: cx, cy: cy, x0: cx * ChunkSize, y0: cy * ChunkSize}
+				c := chunk{cx: cx, cy: cy, x0: cx * ChunkSize, y0: cy * ChunkSize, first: parity == 0}
 				c.x1 = min(c.x0+ChunkSize, cfg.Width)
 				c.y1 = min(c.y0+ChunkSize, cfg.Height)
 				phase = append(phase, c)
 			}
 			if len(phase) > 0 {
 				w.phases = append(w.phases, phase)
+				w.jobs = make([]job, max(len(w.jobs), len(phase)))
 			}
 		}
 	}
@@ -246,25 +266,27 @@ func (w *World) tone(x, y int) uint8 {
 func (w *World) Step() {
 	w.tick++
 	for _, phase := range w.phases {
-		w.current = phase
+		for k, c := range phase {
+			w.jobs[k] = job{c: c}
+		}
 		w.pool.Run(len(phase), w.stepChunkFn)
 	}
-	w.current = nil
 }
 
 // stepChunk updates the cells of one chunk of the current phase, from the
 // bottom row up, each row in a random direction.
 func (w *World) stepChunk(i int) {
-	c := w.current[i]
-	s := rng.New(rng.Hash3(w.seed, uint64(w.tick), uint64(c.cx), uint64(c.cy)))
+	j := &w.jobs[i]
+	c := j.c
+	j.s = rng.New(rng.Hash3(w.seed, uint64(w.tick), uint64(c.cx), uint64(c.cy)))
 	for y := c.y1 - 1; y >= c.y0; y-- {
 		if w.scansRight(c.cx, y) {
 			for x := c.x0; x < c.x1; x++ {
-				w.update(x, y, &s)
+				w.update(x, y, j)
 			}
 		} else {
 			for x := c.x1 - 1; x >= c.x0; x-- {
-				w.update(x, y, &s)
+				w.update(x, y, j)
 			}
 		}
 	}
