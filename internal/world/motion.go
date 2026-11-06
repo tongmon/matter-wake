@@ -27,10 +27,13 @@ type matProps struct {
 	fallAccel   fixed.Q8
 	flowSpeed   fixed.Q8
 	flowDamping fixed.Q8
+	// hp is how much damage uses a cell up (Wear).
+	hp uint32
 }
 
 func propsOf(d *material.Def) matProps {
 	return matProps{
+		hp:          d.HP,
 		kind:        d.Kind,
 		density:     d.Density,
 		sinkChance:  d.SinkChance,

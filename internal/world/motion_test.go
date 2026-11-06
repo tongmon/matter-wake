@@ -11,8 +11,8 @@ import (
 // The tick is bound by memory bandwidth, so a larger cell is a slower
 // world. Grow it only on purpose, with before/after benchmarks.
 func TestCellSize(t *testing.T) {
-	if size := unsafe.Sizeof(Cell{}); size != 12 {
-		t.Fatalf("Cell is %d bytes, want 12", size)
+	if size := unsafe.Sizeof(Cell{}); size != 16 {
+		t.Fatalf("Cell is %d bytes, want 16", size)
 	}
 }
 

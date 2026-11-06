@@ -30,14 +30,16 @@ const ChunkSize = 64
 const MaxReach = ChunkSize/2 - 1
 
 // Cell is one grid position. The zero value is air.
+//
+// A cell is 16 bytes: 14 of fields and 2 of padding, left free on purpose
+// until a field needs them (TestCellSize).
 type Cell struct {
 	// Mat is what the cell holds.
 	Mat material.ID
 	// Tone varies the cell's color; it is set when the cell is created.
 	Tone uint8
 	// Falling is set while a powder is in motion: from its first fall until
-	// it lies blocked below with both sides blocked. It fills what would
-	// otherwise be padding, so the cell stays 12 bytes.
+	// it lies blocked below with both sides blocked.
 	Falling bool
 	// Last is the tick in which the cell was last updated, so a cell that
 	// moved ahead of the scan is not updated twice in one tick.
@@ -46,6 +48,10 @@ type Cell struct {
 	Vy fixed.Q8
 	// Ax is a liquid's sideways push; its sign is the direction it flows.
 	Ax fixed.Q8
+	// Damage is the share of its material's hp the cell has lost, in steps
+	// of 1/DamageScale. It moves with the cell and never heals; a new cell
+	// starts at 0. Only Wear changes it.
+	Damage uint16
 }
 
 type chunk struct {
@@ -211,7 +217,7 @@ func (w *World) Count(id material.ID) int {
 // tests use it to compare runs.
 func (w *World) Checksum() uint64 {
 	h := fnv.New64a()
-	var b [12]byte
+	var b [14]byte
 	for _, c := range w.cells {
 		b[0], b[1] = byte(c.Mat), byte(c.Mat>>8)
 		b[2] = c.Tone
@@ -222,6 +228,7 @@ func (w *World) Checksum() uint64 {
 		if c.Falling {
 			b[11] = 1
 		}
+		b[12], b[13] = byte(c.Damage), byte(c.Damage>>8)
 		_, _ = h.Write(b[:])
 	}
 	return h.Sum64()

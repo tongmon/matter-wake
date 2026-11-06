@@ -266,27 +266,23 @@ func TestPlaceFillsFromTheBottom(t *testing.T) {
 	}
 }
 
-// Damage builds up while a cell stays under the held brush. Releasing the
-// button or moving the brush away loses it.
-func TestDigDamageResetsWhenTheBrushLeaves(t *testing.T) {
+// Damage stays in the cell: digging that stops, moves away or places
+// in between carries on where it left off.
+func TestDigDamageLastsWhenDiggingStops(t *testing.T) {
 	g := newTestGame(t, testTool) // stone takes 4 ticks
 	stone := g.mats.MustLookup("stone")
 	x, y := floor(g)
-	breaks := []Input{{CursorX: x, CursorY: y}, dig(x-20, y), {CursorX: x, CursorY: y, Place: true}}
-	for _, pause := range breaks {
-		for range 3 {
-			g.Step(dig(x, y))
+	pauses := []Input{{CursorX: x, CursorY: y}, dig(x-20, y), {CursorX: x, CursorY: y, Place: true}}
+	for _, pause := range pauses {
+		g.Step(dig(x, y))
+		if got := matAt(t, g, x, y); got != stone {
+			t.Fatalf("the stone is gone before 4 ticks of digging: the cell holds %d", got)
 		}
 		g.Step(pause)
 	}
-	if got := matAt(t, g, x, y); got != stone {
-		t.Fatalf("interrupted digging removed the stone: the cell holds %d", got)
-	}
-	for range 4 {
-		g.Step(dig(x, y))
-	}
+	g.Step(dig(x, y))
 	if got := matAt(t, g, x, y); got != material.Air {
-		t.Fatalf("4 ticks of digging left %d, want air", got)
+		t.Fatalf("4 interrupted ticks of digging left %d, want air", got)
 	}
 }
 
@@ -314,12 +310,7 @@ func TestDigDamageDoesNotPassToAnotherCell(t *testing.T) {
 	for range 6 {
 		g.Step(dig(x, y))
 	}
-	old, _ := g.world.At(x, y)
-	// A new cell gets its tone from the tick it is made in.
 	g.world.Set(x, y, stone)
-	if c, _ := g.world.At(x, y); c.Tone == old.Tone {
-		t.Fatal("the new stone cell has the old one's tone; make it in another tick")
-	}
 	// With the old cell's 600 damage, 5 more ticks would dig it out.
 	for range 5 {
 		g.Step(dig(x, y))
