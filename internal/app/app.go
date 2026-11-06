@@ -71,6 +71,11 @@ func Run(cfg *Config) error {
 		if playback, err = loadReplay(cfg.ReplayPath); err != nil {
 			return err
 		}
+		// The renderer draws the whole world, and the terrain keeps only
+		// the blocks around the camera in memory.
+		if playback.Scene != game.SceneSandbox {
+			return fmt.Errorf("app: %s plays the terrain, which this build cannot draw yet", cfg.ReplayPath)
+		}
 		if err := checkShots(cfg.Shots, len(playback.Inputs)); err != nil {
 			return err
 		}
