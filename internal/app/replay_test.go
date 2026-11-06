@@ -116,7 +116,6 @@ func TestRunRejectsBadReplays(t *testing.T) {
 	}{
 		{"missing file", Config{Scale: 2, ReplayPath: filepath.Join(t.TempDir(), "none.rpl")}, "none.rpl"},
 		{"shot past the end", Config{Scale: 2, ReplayPath: short, Shots: []uint32{1, 4}}, "past"},
-		{"terrain", Config{Scale: 2, ReplayPath: filepath.Join("..", "replay", "testdata", "terrain_walk.rpl")}, "cannot draw"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/tongmon/matter-wake/internal/app"
+	"github.com/tongmon/matter-wake/internal/game"
 )
 
 func main() {
@@ -23,8 +24,9 @@ func main() {
 
 func run() error {
 	var cfg app.Config
-	flag.IntVar(&cfg.Width, "width", 480, "world width in cells")
-	flag.IntVar(&cfg.Height, "height", 270, "world height in cells")
+	scene := flag.String("scene", "sandbox", "world to play in: sandbox, a small room, or terrain, the big world")
+	flag.IntVar(&cfg.Width, "width", 0, "world width in cells (default: 480 in the sandbox, 16384 in the terrain)")
+	flag.IntVar(&cfg.Height, "height", 0, "world height in cells (default: 270 in the sandbox, 16384 in the terrain)")
 	flag.IntVar(&cfg.Scale, "scale", 2, "window scale")
 	seed := flag.Uint64("seed", 0, "world seed (default: a new seed, logged at start)")
 	flag.IntVar(&cfg.Workers, "workers", runtime.GOMAXPROCS(0), "goroutines a tick may use")
@@ -37,11 +39,14 @@ func run() error {
 	flag.Parse()
 
 	if cfg.ReplayPath != "" {
-		for _, name := range []string{"seed", "width", "height", "creative"} {
+		for _, name := range []string{"scene", "seed", "width", "height", "creative"} {
 			if flagSet(name) {
 				return fmt.Errorf("-%s cannot be combined with -replay: the replay sets it", name)
 			}
 		}
+	}
+	if err := setScene(&cfg, *scene); err != nil {
+		return err
 	}
 	cfg.Seed = *seed
 	if !flagSet("seed") {
@@ -53,6 +58,29 @@ func run() error {
 	}
 	cfg.Shots = ticks
 	return app.Run(&cfg)
+}
+
+// setScene sets the scene and fills in the world size the flags left out:
+// the sandbox fills the screen, and the terrain is the big world of
+// design.md 7절 (🧪).
+func setScene(cfg *app.Config, scene string) error {
+	width, height := 480, 270
+	switch scene {
+	case "sandbox":
+		cfg.Scene = game.SceneSandbox
+	case "terrain":
+		cfg.Scene = game.SceneTerrain
+		width, height = 16384, 16384
+	default:
+		return fmt.Errorf("-scene %q: want sandbox or terrain", scene)
+	}
+	if !flagSet("width") {
+		cfg.Width = width
+	}
+	if !flagSet("height") {
+		cfg.Height = height
+	}
+	return nil
 }
 
 func flagSet(name string) bool {

@@ -20,8 +20,10 @@ import (
 
 // Config describes how to run a session.
 type Config struct {
-	// Width and Height are the world size in cells, which is also the
-	// logical screen size.
+	// Scene is the world to play in. A replay sets it instead.
+	Scene game.Scene
+	// Width and Height are the world size in cells. The sandbox shows all
+	// of it; the terrain shows a view of viewWidth × viewHeight.
 	Width, Height int
 	// Scale multiplies the window size.
 	Scale   int
@@ -57,6 +59,12 @@ var tool = game.Tool{Power: 10, Rate: 2000, Radius: 4}
 // memory, as Noita does (🧪, design.md 7절).
 var stream = game.Stream{Margin: 256, MaxBlocks: 12}
 
+// The terrain's view in cells, the logical screen size (🧪).
+const (
+	viewWidth  = 480
+	viewHeight = 270
+)
+
 // Run opens the window and plays until it closes, the replay ends or the
 // last shot is taken.
 func Run(cfg *Config) error {
@@ -70,11 +78,6 @@ func Run(cfg *Config) error {
 		var err error
 		if playback, err = loadReplay(cfg.ReplayPath); err != nil {
 			return err
-		}
-		// The renderer draws the whole world, and the terrain keeps only
-		// the blocks around the camera in memory.
-		if playback.Scene != game.SceneSandbox {
-			return fmt.Errorf("app: %s plays the terrain, which this build cannot draw yet", cfg.ReplayPath)
 		}
 		if err := checkShots(cfg.Shots, len(playback.Inputs)); err != nil {
 			return err
@@ -99,7 +102,11 @@ func Run(cfg *Config) error {
 	}
 	defer g.Close()
 
-	a := &app{game: g, rend: render.New(mats, sess.Width, sess.Height), width: sess.Width, height: sess.Height}
+	a := &app{game: g, rend: render.New(mats), width: sess.ViewWidth, height: sess.ViewHeight}
+	camX, camY := g.Spawn()
+	// Until the first tick, draw what the session starts with.
+	a.in = game.Input{CameraX: camX, CameraY: camY}
+	a.camera = input.Camera{X: camX, Y: camY, MaxX: sess.Width - sess.ViewWidth, MaxY: sess.Height - sess.ViewHeight}
 	if playback != nil {
 		a.playback, a.replaying = playback.Inputs, true
 	}
@@ -107,11 +114,11 @@ func Run(cfg *Config) error {
 		a.record, a.recordLimit = replay.New(sess), replay.MaxTicks
 	}
 	if len(cfg.Shots) > 0 {
-		a.shots = newShooter(cfg.Shots, cfg.ShotsDir, sess.Width, sess.Height)
+		a.shots = newShooter(cfg.Shots, cfg.ShotsDir, sess.ViewWidth, sess.ViewHeight)
 	}
 	ebiten.SetTPS(game.Hz)
 	ebiten.SetWindowTitle("matter-wake")
-	ebiten.SetWindowSize(sess.Width*cfg.Scale, sess.Height*cfg.Scale)
+	ebiten.SetWindowSize(sess.ViewWidth*cfg.Scale, sess.ViewHeight*cfg.Scale)
 	ebiten.SetWindowResizingMode(ebiten.WindowResizingModeEnabled)
 	// RunGame returns nil when Update returns ebiten.Termination.
 	runErr := ebiten.RunGame(a)
@@ -128,12 +135,17 @@ func Run(cfg *Config) error {
 // else the one the command line asks for.
 func sessionConfig(cfg *Config, mats *material.Table, playback *replay.Replay) *game.Config {
 	if playback == nil {
-		slog.Info("starting", "seed", cfg.Seed, "workers", cfg.Workers, "creative", cfg.Creative)
-		return &game.Config{
+		slog.Info("starting", "scene", cfg.Scene, "size", fmt.Sprintf("%dx%d", cfg.Width, cfg.Height),
+			"seed", cfg.Seed, "workers", cfg.Workers, "creative", cfg.Creative)
+		sess := &game.Config{
 			Width: cfg.Width, Height: cfg.Height, Seed: cfg.Seed, Workers: cfg.Workers,
-			ViewWidth: cfg.Width, ViewHeight: cfg.Height, Stream: stream,
+			Scene: cfg.Scene, ViewWidth: cfg.Width, ViewHeight: cfg.Height, Stream: stream,
 			Materials: mats, Slots: slots, Tool: tool, Creative: cfg.Creative,
 		}
+		if cfg.Scene == game.SceneTerrain {
+			sess.ViewWidth, sess.ViewHeight = min(viewWidth, cfg.Width), min(viewHeight, cfg.Height)
+		}
+		return sess
 	}
 	slog.Info("replaying", "path", cfg.ReplayPath, "seed", playback.Seed,
 		"ticks", len(playback.Inputs), "workers", cfg.Workers)
@@ -165,16 +177,20 @@ type app struct {
 	replaying bool
 	// record collects the inputs to save, if recording, up to recordLimit
 	// of them, the most a replay may hold.
-	record        *replay.Replay
-	recordLimit   int
-	recordFull    bool
-	in            game.Input
+	record      *replay.Replay
+	recordLimit int
+	recordFull  bool
+	// in is the last tick's input; its camera is where the view is drawn.
+	in game.Input
+	// camera is where the devices move the view from.
+	camera input.Camera
+	// width and height are the view's size, the logical screen.
 	width, height int
 }
 
 func (a *app) Update() error {
 	if a.shots != nil {
-		done, err := a.shots.capture(a.game, a.rend)
+		done, err := a.shots.capture(a.game, a.rend, a.in.CameraX, a.in.CameraY)
 		if err != nil {
 			return err
 		}
@@ -217,16 +233,19 @@ func (a *app) nextInput() (game.Input, bool) {
 		}
 		return a.playback[tick], true
 	case a.shots != nil:
-		// Shots must be reproducible, so the devices are ignored.
-		return game.Input{}, true
+		// Shots must be reproducible, so the devices are ignored and the
+		// camera stays where the session started.
+		return game.Input{CameraX: a.camera.X, CameraY: a.camera.Y}, true
 	}
-	return input.Read(), true
+	in := input.Read(a.camera)
+	a.camera.X, a.camera.Y = in.CameraX, in.CameraY
+	return in, true
 }
 
 func (a *app) Draw(screen *ebiten.Image) {
-	a.rend.DrawWorld(screen, a.game.World())
+	a.rend.DrawWorld(screen, a.game.World(), a.in.CameraX, a.in.CameraY)
 	if a.shots == nil {
-		a.rend.DrawOverlay(screen, a.game, a.in.CursorX, a.in.CursorY)
+		a.rend.DrawOverlay(screen, a.game, a.in)
 	}
 }
 
