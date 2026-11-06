@@ -1,0 +1,4 @@
+schema_version: "1.1"
+name: cell-sleep-brief
+expected_outcome: |
+  A Korean reference brief on cell sleep that states the observed sleep gate and wake rule, the periodic special pass, the difference between region dormancy and unloading, a non-empty gap section, and no pseudocode or code addresses.

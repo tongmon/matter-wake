@@ -1,0 +1,4 @@
+schema_version: "1.1"
+name: water-piling-brief
+expected_outcome: |
+  A Korean reference brief on liquid flow that cites the engine's real water values, converts them to matter-wake units, covers liquid collisions and liquid particles, names the unverified impact statistics as a gap, and copies no pseudocode or code addresses.

@@ -1,0 +1,4 @@
+schema_version: "1.1"
+name: water-fix-plan
+expected_outcome: |
+  A fix plan for water piling that, although the user never asked for a brief, rests on the Noita analysis: real water values, a comparison of the liquid code with the observed C49 rule naming the rule differences, related mechanisms, and a reproduction of the symptom.
