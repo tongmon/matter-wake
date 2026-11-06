@@ -273,9 +273,10 @@ func TestOpenSaveRefusesReadOnlyFiles(t *testing.T) {
 }
 
 // Only one session at a time may have a save folder open, or the one that
-// closes last would undo what the other saved. A lock left by a process
-// that is gone, after a crash, is taken over. Found by the Codex review of
-// the save folder (2026-11-06).
+// closes last would undo what the other saved. The operating system holds
+// the lock and drops it when the process ends, crash or not, so a lock
+// file left behind does not lock. Found by two Codex reviews of the save
+// folder (2026-11-06).
 func TestSaveFolderIsLocked(t *testing.T) {
 	dir := t.TempDir()
 	unlock, err := lockSave(dir)
@@ -291,13 +292,41 @@ func TestSaveFolderIsLocked(t *testing.T) {
 		t.Fatalf("locking again after unlocking: %v", err)
 	}
 	again()
-	// A lock whose process is gone.
-	if err := os.WriteFile(filepath.Join(dir, lockFile), []byte("2147483646\n"), 0o644); err != nil {
+	// A lock file left by a game that crashed holds nothing.
+	if err := os.WriteFile(filepath.Join(dir, lockFile), []byte("left behind"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	stale, err := lockSave(dir)
+	left, err := lockSave(dir)
 	if err != nil {
-		t.Fatalf("taking over a lock left by a process that is gone: %v", err)
+		t.Fatalf("locking a folder with a lock file left behind: %v", err)
 	}
-	stale()
+	left()
+}
+
+// Of games that start at the same moment, exactly one gets the save.
+func TestSaveFolderLockIsExclusive(t *testing.T) {
+	dir := t.TempDir()
+	const tries = 16
+	for round := range 200 {
+		got := make(chan func(), tries)
+		start := make(chan struct{})
+		done := make(chan struct{}, tries)
+		for range tries {
+			go func() {
+				<-start
+				if unlock, err := lockSave(dir); err == nil {
+					got <- unlock
+				}
+				done <- struct{}{}
+			}()
+		}
+		close(start)
+		for range tries {
+			<-done
+		}
+		if n := len(got); n != 1 {
+			t.Fatalf("round %d: %d of %d games that started together got the lock, want 1", round, n, tries)
+		}
+		(<-got)()
+	}
 }
