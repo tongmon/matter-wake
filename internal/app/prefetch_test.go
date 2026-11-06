@@ -175,3 +175,61 @@ func TestPrefetchingChangesNothing(t *testing.T) {
 		}
 	}
 }
+
+// The writer waits while a worker still reads the block it writes: on
+// Windows an open file cannot be replaced, and the failed save would end
+// the session. Found by the Codex review of prefetching (2026-11-06).
+func TestPrefetchStoreWritesAfterReads(t *testing.T) {
+	mats := testMaterials(t)
+	dir := t.TempDir()
+	s, _ := newTestPrefetch(t, dir, mats)
+	key := [2]int{3, 1}
+	v1 := new(world.Block)
+	v1[0].Tone = 1
+	if err := s.Save(key[0], key[1], v1); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	// A worker reads the file: it holds it open and the block is busy.
+	f, err := os.Open(s.disk.path(key[0], key[1]))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.mu.Lock()
+	s.busy[key] = true
+	s.mu.Unlock()
+	v2 := new(world.Block)
+	v2[0].Tone = 2
+	if err := s.Save(key[0], key[1], v2); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(50 * time.Millisecond)
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+	s.done(key, nil, 0)
+	if err := s.Flush(); err != nil {
+		t.Fatalf("saving a block a worker was reading: %v", err)
+	}
+	got, err := s.disk.Load(key[0], key[1])
+	if err != nil || got == nil || got[0].Tone != 2 {
+		t.Fatalf("the file holds %v, %v; want the second save", got, err)
+	}
+}
+
+// Asking for blocks to be got ready allocates nothing once warm, since the
+// app asks every few ticks.
+func TestPrefetchDoesNotAllocate(t *testing.T) {
+	mats := testMaterials(t)
+	s, _ := newTestPrefetch(t, t.TempDir(), mats)
+	blocks := [][2]int{{1, 1}, {2, 1}, {3, 1}}
+	s.Prefetch(blocks)
+	for _, b := range blocks {
+		waitReady(t, s, b)
+	}
+	if n := testing.AllocsPerRun(20, func() { s.Prefetch(blocks) }); n != 0 {
+		t.Fatalf("Prefetch allocates %v times a call", n)
+	}
+}

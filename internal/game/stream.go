@@ -126,26 +126,37 @@ func (g *Game) evict(need blockRange, camX, camY int) error {
 // the camera will likely ask for next, nearest first. The app prepares
 // them in the background, so loading them later does not stall a tick. It
 // changes nothing; which blocks load and when is still Step's alone.
+//
+// The list is the game's own and holds until the next call, so asking
+// every few ticks allocates nothing once warm.
 func (g *Game) Upcoming(camX, camY, extra int) [][2]int {
 	if g.terrain == nil {
 		return nil
 	}
 	near := g.around(camX, camY, g.limits.Margin+extra)
-	var out [][2]int
+	cx, cy := 2*camX+g.viewW, 2*camY+g.viewH
+	g.ahead = g.ahead[:0]
 	for by := near.y0; by < near.y1; by++ {
 		for bx := near.x0; bx < near.x1; bx++ {
 			if !g.world.Resident(bx, by) {
-				out = append(out, [2]int{bx, by})
+				dx, dy := 2*bx*world.BlockSize+world.BlockSize-cx, 2*by*world.BlockSize+world.BlockSize-cy
+				g.ahead = append(g.ahead, aheadBlock{[2]int{bx, by}, dx*dx + dy*dy})
 			}
 		}
 	}
-	cx, cy := 2*camX+g.viewW, 2*camY+g.viewH
-	dist := func(b [2]int) int {
-		dx, dy := 2*b[0]*world.BlockSize+world.BlockSize-cx, 2*b[1]*world.BlockSize+world.BlockSize-cy
-		return dx*dx + dy*dy
+	slices.SortStableFunc(g.ahead, func(a, b aheadBlock) int { return a.dist - b.dist })
+	g.aheadList = g.aheadList[:0]
+	for _, a := range g.ahead {
+		g.aheadList = append(g.aheadList, a.at)
 	}
-	slices.SortStableFunc(out, func(a, b [2]int) int { return dist(a) - dist(b) })
-	return out
+	return g.aheadList
+}
+
+// aheadBlock is a block Upcoming lists and its distance from the camera,
+// in the units its sort uses.
+type aheadBlock struct {
+	at   [2]int
+	dist int
 }
 
 // blockRange is a half-open range of blocks, [x0, x1) × [y0, y1).

@@ -35,8 +35,13 @@ type prefetchStore struct {
 	ready map[[2]int]*world.Block
 	// pending holds copies of saved blocks not yet written.
 	pending map[[2]int]*world.Block
-	// busy marks the blocks a worker is getting ready.
+	// busy marks the blocks a worker is getting ready. The writer waits on
+	// idle until a block it writes is not busy: on Windows a file a worker
+	// holds open cannot be replaced.
 	busy map[[2]int]bool
+	idle *sync.Cond
+	// want is Prefetch's scratch set, kept so it does not allocate.
+	want map[[2]int]bool
 	// saves counts each block's saves, so a read that started before one
 	// is known to be stale.
 	saves map[[2]int]uint64
@@ -52,9 +57,10 @@ func newPrefetchStore(disk *diskStore, terrain *scene.Terrain) *prefetchStore {
 	s := &prefetchStore{
 		disk: disk, terrain: terrain,
 		ready: map[[2]int]*world.Block{}, pending: map[[2]int]*world.Block{},
-		busy: map[[2]int]bool{}, saves: map[[2]int]uint64{},
+		busy: map[[2]int]bool{}, saves: map[[2]int]uint64{}, want: map[[2]int]bool{},
 		jobs: make(chan [2]int, 64), writes: make(chan [2]int, 64),
 	}
+	s.idle = sync.NewCond(&s.mu)
 	s.workers.Add(prefetchWorkers + 1)
 	for range prefetchWorkers {
 		go s.prepare()
@@ -111,16 +117,17 @@ func (s *prefetchStore) Save(bx, by int, b *world.Block) error {
 
 // Prefetch gets the blocks listed ready in the background, nearest first
 // as listed, and forgets blocks got ready earlier that are no longer
-// listed, so the blocks waiting stay few. It never waits.
+// listed, so the blocks waiting stay few. It never waits, and once warm it
+// does not allocate.
 func (s *prefetchStore) Prefetch(blocks [][2]int) {
-	want := make(map[[2]int]bool, len(blocks))
-	for _, b := range blocks {
-		want[b] = true
-	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	clear(s.want)
+	for _, b := range blocks {
+		s.want[b] = true
+	}
 	for key := range s.ready {
-		if !want[key] {
+		if !s.want[key] {
 			delete(s.ready, key)
 		}
 	}
@@ -155,13 +162,21 @@ func (s *prefetchStore) prepare() {
 				b = nil
 			}
 		}
-		s.mu.Lock()
-		delete(s.busy, key)
-		if b != nil && s.saves[key] == saves && s.pending[key] == nil {
-			s.ready[key] = b
-		}
-		s.mu.Unlock()
+		s.done(key, b, saves)
 	}
+}
+
+// done records that a worker has finished with the block at key: b is
+// what it read or made, or nil, from a read begun when the block had been
+// saved saves times. A block saved again since is not kept.
+func (s *prefetchStore) done(key [2]int, b *world.Block, saves uint64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.busy, key)
+	if b != nil && s.saves[key] == saves && s.pending[key] == nil {
+		s.ready[key] = b
+	}
+	s.idle.Broadcast()
 }
 
 // write is the writer: it writes the latest copy of each block saved.
@@ -169,6 +184,11 @@ func (s *prefetchStore) write() {
 	defer s.workers.Done()
 	for key := range s.writes {
 		s.mu.Lock()
+		// No worker starts on a block waiting to be written, so once the
+		// ones at work on it are done, the file is the writer's alone.
+		for s.busy[key] {
+			s.idle.Wait()
+		}
 		c := s.pending[key]
 		s.mu.Unlock()
 		if c != nil {

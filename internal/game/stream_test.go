@@ -325,3 +325,13 @@ func TestUpcoming(t *testing.T) {
 		t.Fatal("Upcoming changed the world")
 	}
 }
+
+// Upcoming allocates nothing once warm: the app calls it every few ticks.
+func TestUpcomingDoesNotAllocate(t *testing.T) {
+	g := newTerrainGame(t, 1)
+	x, y := g.Spawn()
+	g.Upcoming(x, y, 512)
+	if n := testing.AllocsPerRun(20, func() { g.Upcoming(x, y, 512) }); n != 0 {
+		t.Fatalf("Upcoming allocates %v times a call", n)
+	}
+}
