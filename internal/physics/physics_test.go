@@ -1,6 +1,11 @@
 package physics
 
 import (
+	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
+	"io/fs"
 	"math"
 	"os"
 	"path/filepath"
@@ -8,7 +13,10 @@ import (
 	"testing"
 )
 
-const box2dSrc = "../../third_party/box2d/src"
+const (
+	box2dDir = "../../third_party/box2d"
+	box2dSrc = box2dDir + "/src"
+)
 
 func wrapperFor(source string) string {
 	return "// Compiles the vendored Box2D source of the same name (third_party/README.md).\n" +
@@ -49,6 +57,45 @@ func TestEveryBox2DSourceIsCompiled(t *testing.T) {
 			t.Errorf("%s wraps a Box2D source that is gone; remove it", name)
 		}
 	}
+}
+
+// TestBox2DSumIsCurrent checks that box2dSum matches the vendored Box2D
+// files. Go's build cache does not notice a change to a file that a C file
+// includes from outside this folder, so after a Box2D update the package
+// would keep the old compiled engine until box2dSum changes (Codex review,
+// 2026-11-07).
+func TestBox2DSumIsCurrent(t *testing.T) {
+	got, err := vendoredSum(box2dDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != box2dSum {
+		t.Fatalf("third_party/box2d changed: set box2dSum in box2d_sum.go to %q so Go rebuilds Box2D, then rerun", got)
+	}
+}
+
+// vendoredSum hashes every file under dir: its slash path, then its content
+// with carriage returns dropped, so a checkout's line endings do not count.
+func vendoredSum(dir string) (string, error) {
+	h := sha256.New()
+	err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(dir, path)
+		if err != nil {
+			return err
+		}
+		data = bytes.ReplaceAll(data, []byte("\r"), nil)
+		_, _ = fmt.Fprintf(h, "%s\n%d\n", filepath.ToSlash(rel), len(data)) // a hash never fails to write
+		_, _ = h.Write(data)
+		return nil
+	})
+	return hex.EncodeToString(h.Sum(nil)), err
 }
 
 // TestCompiledWithoutContraction checks that box2d_fp.h stops the C compiler
