@@ -8,7 +8,9 @@
 // update reaches more than MaxReach cells outside its chunk, chunks of one
 // phase never touch the same cell and run in parallel. Each chunk draws
 // its random numbers from its own stream keyed by (seed, tick, chunk), so
-// the result is the same for any number of workers.
+// the result is the same for any number of workers. Each row's scan
+// direction is a hash of (seed, tick, chunk, row) instead, so only the
+// cells that move draw from the stream.
 package world
 
 import (
@@ -254,7 +256,7 @@ func (w *World) stepChunk(i int) {
 	c := w.current[i]
 	s := rng.New(rng.Hash3(w.seed, uint64(w.tick), uint64(c.cx), uint64(c.cy)))
 	for y := c.y1 - 1; y >= c.y0; y-- {
-		if s.Bool() {
+		if w.scansRight(c.cx, y) {
 			for x := c.x0; x < c.x1; x++ {
 				w.update(x, y, &s)
 			}
@@ -264,4 +266,16 @@ func (w *World) stepChunk(i int) {
 			}
 		}
 	}
+}
+
+// rowSalt keys the scan directions apart from the chunks' random streams.
+const rowSalt = 0x6a09e667f3bcc909
+
+// scansRight reports whether this tick scans row y of the chunks in column
+// cx from left to right. It hashes (seed, tick, chunk, row) rather than
+// drawing from the chunk's stream, so a row that is skipped, or that holds
+// nothing that can move, shifts no other cell's random numbers
+// (TestRowsWithNothingToMoveDrawNoRandomNumbers).
+func (w *World) scansRight(cx, y int) bool {
+	return rng.Hash3(w.seed^rowSalt, uint64(w.tick), uint64(cx), uint64(y))>>63 == 1
 }

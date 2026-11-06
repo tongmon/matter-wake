@@ -374,6 +374,41 @@ func TestRestingCellsDrawNoRandomNumbers(t *testing.T) {
 	}
 }
 
+// A row's scan direction does not come from its chunk's random stream, so
+// rows that hold nothing that can move leave the other rows' random
+// numbers alone, however many there are. Chunk sleep, which skips such
+// rows, relies on this.
+func TestRowsWithNothingToMoveDrawNoRandomNumbers(t *testing.T) {
+	run := func(height int) *World {
+		w, ids := newTestWorld(t, 64, height, 1)
+		// Below the floor the chunk has only air, as many rows as the
+		// height leaves.
+		w.Fill(0, 30, 64, 31, ids.stone)
+		for y := range 30 {
+			for x := range 64 {
+				switch (x + y) % 3 {
+				case 0:
+					w.Set(x, y, ids.sand)
+				case 1:
+					w.Set(x, y, ids.water)
+				}
+			}
+		}
+		for range 150 {
+			w.Step()
+		}
+		return w
+	}
+	short, tall := run(40), run(60)
+	for y := range 31 {
+		for x := range 64 {
+			if a, b := short.cells[y*64+x], tall.cells[y*64+x]; a != b {
+				t.Fatalf("cell (%d, %d) differs with 9 or 29 rows of air below the floor: %+v, %+v", x, y, a, b)
+			}
+		}
+	}
+}
+
 // Water poured into a basin settles to a nearly flat surface.
 func TestWaterLevelsInABasin(t *testing.T) {
 	w, ids := newTestWorld(t, 40, 20, 1)
