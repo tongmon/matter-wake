@@ -28,9 +28,9 @@ func main() {
 
 func run() error {
 	var cfg app.Config
-	scene := flag.String("scene", "sandbox", "world to play in: sandbox, a small room, or terrain, the big world")
-	flag.IntVar(&cfg.Width, "width", 0, "world width in cells (default: 480 in the sandbox, 16384 in the terrain)")
-	flag.IntVar(&cfg.Height, "height", 0, "world height in cells (default: 270 in the sandbox, 16384 in the terrain)")
+	scene := flag.String("scene", "sandbox", "world to play in: sandbox, a small room; collapse, a room whose cells all fall at once, to measure; or terrain, the big world")
+	flag.IntVar(&cfg.Width, "width", 0, "world width in cells (default: 480 in the sandbox and the collapse room, 16384 in the terrain)")
+	flag.IntVar(&cfg.Height, "height", 0, "world height in cells (default: 270 in the sandbox and the collapse room, 16384 in the terrain)")
 	flag.IntVar(&cfg.Scale, "scale", 2, "window scale")
 	seed := flag.Uint64("seed", 0, "world seed (default: a new seed, logged at start)")
 	flag.IntVar(&cfg.Workers, "workers", runtime.GOMAXPROCS(0), "goroutines a tick may use")
@@ -125,18 +125,20 @@ func (k *keepError) Write(p []byte) (int, error) {
 }
 
 // setScene sets the scene and fills in the world size the flags left out:
-// the sandbox fills the screen, and the terrain is the big world of
-// design.md 7절 (🧪).
+// the sandbox and the collapse room fill the screen, and the terrain is
+// the big world of design.md 7절 (🧪).
 func setScene(cfg *app.Config, scene string) error {
 	width, height := 480, 270
 	switch scene {
 	case "sandbox":
 		cfg.Scene = game.SceneSandbox
+	case "collapse":
+		cfg.Scene = game.SceneCollapse
 	case "terrain":
 		cfg.Scene = game.SceneTerrain
 		width, height = 16384, 16384
 	default:
-		return fmt.Errorf("-scene %q: want sandbox or terrain", scene)
+		return fmt.Errorf("-scene %q: want sandbox, collapse or terrain", scene)
 	}
 	if !flagSet("width") {
 		cfg.Width = width
