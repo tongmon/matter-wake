@@ -22,8 +22,9 @@ var ebitenLayers = []string{"app", "input", "render"}
 // goroutines. Each must keep its results independent of scheduling.
 var concurrent = []string{"sched"}
 
-// cgoPackages are the logic packages allowed to use cgo.
-var cgoPackages = []string{}
+// cgoPackages are the logic packages allowed to use cgo. physics compiles
+// Box2D; nothing else may.
+var cgoPackages = []string{"physics"}
 
 // nondeterministic are standard packages game logic must not import: they
 // read the clock, draw unseeded random numbers, or synchronize goroutines.
@@ -112,6 +113,9 @@ func TestCheckLogicImport(t *testing.T) {
 		{file{pkg: "world", test: true}, "github.com/hajimehoshi/ebiten/v2", true},
 		{file{pkg: "sched"}, "sync/atomic", false},
 		{file{pkg: "sched"}, "time", true},
+		{file{pkg: "physics"}, "C", false},
+		{file{pkg: "physics"}, "sync", true},
+		{file{pkg: "sched"}, "C", true},
 	}
 	for _, tt := range tests {
 		if got := checkLogicImport(module, tt.f, tt.path) != ""; got != tt.reject {
