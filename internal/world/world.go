@@ -129,6 +129,9 @@ type Config struct {
 	// big to hold: the caller loads the blocks it needs. Otherwise every
 	// block starts in memory, filled with air.
 	Streamed bool
+	// Tick is how many ticks the world has run, for a world loaded from a
+	// save: the next Step runs tick Tick+1, with that tick's random numbers.
+	Tick uint32
 }
 
 // World is a grid of cells. It is not safe for concurrent use.
@@ -194,6 +197,7 @@ func New(cfg Config) (*World, error) {
 	w := &World{
 		width:  cfg.Width,
 		height: cfg.Height,
+		tick:   cfg.Tick,
 		seed:   cfg.Seed,
 		mats:   mats,
 		pool:   sched.New(cfg.Workers),
