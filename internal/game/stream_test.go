@@ -218,3 +218,27 @@ func TestNewRejectsBadTerrain(t *testing.T) {
 		})
 	}
 }
+
+// The spawn view lies in the world even when the world is too small for
+// the terrain's ground depth, so the session starts with blocks to play
+// in. Found by the Codex review of streaming (2026-11-06).
+func TestSpawnStaysInTheWorld(t *testing.T) {
+	for _, size := range [][2]int{{1024, 512}, {4096, 4096}, {300, 200}} {
+		g, err := New(&Config{
+			Width: size[0], Height: size[1], Seed: 0, Workers: 1, Materials: testTable(t),
+			Slots: []string{"sand"}, Tool: testTool,
+			Scene: SceneTerrain, ViewWidth: 480, ViewHeight: 270, Stream: testStream,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		x, y := g.Spawn()
+		if x < 0 || y < 0 || x+min(480, size[0]) > size[0] || y+min(270, size[1]) > size[1] {
+			t.Errorf("%dx%d world: spawn camera (%d, %d) puts the view outside", size[0], size[1], x, y)
+		}
+		if g.Blocks() == 0 {
+			t.Errorf("%dx%d world: no block in memory at the start", size[0], size[1])
+		}
+		g.Close()
+	}
+}

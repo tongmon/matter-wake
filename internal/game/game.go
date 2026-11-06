@@ -182,15 +182,27 @@ func (g *Game) setUp(cfg *Config) error {
 	return g.stream(x, y)
 }
 
+// Blocks returns how many blocks of the world are in memory.
+func (g *Game) Blocks() int {
+	if g.terrain == nil {
+		cols, rows := g.world.Blocks()
+		return cols * rows
+	}
+	return len(g.resident)
+}
+
 // Spawn returns where the camera starts: in the terrain, over the middle
-// of the world with the ground across the middle of the view; in the
-// sandbox, at the top left.
+// of the world with the ground across the middle of the view, moved as
+// little as it takes to keep the view in the world; in the sandbox, at
+// the top left.
 func (g *Game) Spawn() (cameraX, cameraY int) {
 	if g.terrain == nil {
 		return 0, 0
 	}
 	x := g.world.Width() / 2
-	return x - g.viewW/2, max(g.terrain.Surface(x)-g.viewH/2, 0)
+	cameraX = min(max(x-g.viewW/2, 0), max(g.world.Width()-g.viewW, 0))
+	cameraY = min(max(g.terrain.Surface(x)-g.viewH/2, 0), max(g.world.Height()-g.viewH, 0))
+	return cameraX, cameraY
 }
 
 // Close releases the session's resources.
