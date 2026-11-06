@@ -130,7 +130,7 @@ Choose checks in proportion to the change:
   - `go run ./cmd/matter-wake -replay out/replays/a.rpl -shots 0,120,600 -shots-dir out/shots` captures it.
 - **Performance:** `go test -run '^$' -bench . -count 5 ./internal/world/` before and after the change.
 - **Visual and render changes:** capture PNGs at chosen ticks and inspect them:
-  - `go run ./cmd/matter-wake -seed 1 -shots 0,60,300 -shots-dir out/shots`
+  - `go run ./cmd/matter-wake -seed 1 -shots 0,60,300 -shots-dir out/shots` (the sandbox; add `-scene terrain` for the big world, shot from where the camera starts)
   - The game saves `out/shots/tick_000060.png` etc. at the logical resolution, without the overlay, ignores the mouse and keyboard, and exits after the last tick. A window opens briefly while it runs.
 - **Feel:** whether digging or the falling sand *feels* right needs the developer's playtest. Say so instead of claiming it.
 - **Docs and config-only changes:** proofread and check links.

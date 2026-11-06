@@ -3,7 +3,6 @@ package render
 
 import (
 	"fmt"
-	"image"
 	"image/color"
 	"strings"
 
@@ -22,74 +21,117 @@ var (
 	brushStroke = color.RGBA{R: 0xff, G: 0xff, B: 0xff, A: 0x80}
 )
 
-// Renderer draws one world. It keeps an image of the cells between frames
-// and uploads only the chunks that changed since it last drew them
-// (world.World.ChunkVersion), so a quiet world costs little to draw.
-// Drawing does not allocate.
+// chunkImage is the picture of one chunk and the world version it shows.
+type chunkImage struct {
+	img     *ebiten.Image
+	version uint64
+}
+
+// Renderer draws what the camera sees of one world. It keeps a picture of
+// each chunk in view between frames and uploads a chunk again only when
+// it changed since (world.World.ChunkVersion), so a quiet world costs
+// little to draw. Pictures of chunks that leave the view go back to a
+// pool.
 type Renderer struct {
-	cells *ebiten.Image
-	// chunks are the parts of cells that show the world's chunks, row by
-	// row; cols is how many a row has.
-	chunks []*ebiten.Image
-	cols   int
-	// pix holds the pixels of the chunk being uploaded.
-	pix  []byte
 	pal  *palette.Palette
 	mats *material.Table
-	// seen is the world version cells shows, once drawn is set.
-	seen  uint64
-	drawn bool
+	// chunks holds the pictures of the chunks in view, by chunk index;
+	// spare holds pictures for reuse.
+	chunks map[int]*chunkImage
+	spare  []*ebiten.Image
+	// pix holds the pixels of the chunk being uploaded.
+	pix []byte
+	op  ebiten.DrawImageOptions
 }
 
-// New returns a renderer for a world of width × height cells.
-func New(mats *material.Table, width, height int) *Renderer {
-	r := &Renderer{
-		cells: ebiten.NewImage(width, height),
-		cols:  (width + world.ChunkSize - 1) / world.ChunkSize,
-		pix:   make([]byte, 4*world.ChunkSize*world.ChunkSize),
-		pal:   palette.New(mats),
-		mats:  mats,
+// New returns a renderer for the cells of mats.
+func New(mats *material.Table) *Renderer {
+	return &Renderer{
+		pal:    palette.New(mats),
+		mats:   mats,
+		chunks: map[int]*chunkImage{},
+		pix:    make([]byte, 4*world.ChunkSize*world.ChunkSize),
 	}
-	for y := 0; y < height; y += world.ChunkSize {
-		for x := 0; x < width; x += world.ChunkSize {
-			b := image.Rect(x, y, min(x+world.ChunkSize, width), min(y+world.ChunkSize, height))
-			// SubImage of an *ebiten.Image is always an *ebiten.Image.
-			r.chunks = append(r.chunks, r.cells.SubImage(b).(*ebiten.Image))
-		}
-	}
-	return r
 }
 
-// DrawWorld draws the cells of w, one pixel per cell, over the background.
-// w must be the world the renderer was made for, since the renderer keeps
-// what it drew of it.
-func (r *Renderer) DrawWorld(dst *ebiten.Image, w *world.World) {
-	r.upload(w)
+// DrawWorld draws the cells of w that the camera at (camX, camY) sees, one
+// pixel per cell, over the background; dst is the view. w must be the
+// world the renderer was made for, since the renderer keeps what it drew
+// of it. Cells of blocks not in memory are left as background.
+func (r *Renderer) DrawWorld(dst *ebiten.Image, w *world.World, camX, camY int) {
 	dst.Fill(background)
-	dst.DrawImage(r.cells, nil)
+	vw, vh := dst.Bounds().Dx(), dst.Bounds().Dy()
+	cols := (w.Width() + world.ChunkSize - 1) / world.ChunkSize
+	cx0, cy0 := max(camX, 0)/world.ChunkSize, max(camY, 0)/world.ChunkSize
+	cx1 := min(camX+vw, w.Width()-1) / world.ChunkSize
+	cy1 := min(camY+vh, w.Height()-1) / world.ChunkSize
+	r.forget(cx0, cy0, cx1, cy1, cols)
+	for cy := cy0; cy <= cy1; cy++ {
+		for cx := cx0; cx <= cx1; cx++ {
+			x, y := cx*world.ChunkSize, cy*world.ChunkSize
+			if _, ok := w.At(x, y); !ok {
+				continue // its block is not in memory
+			}
+			c := r.chunk(w, cx, cy, cy*cols+cx)
+			r.op.GeoM.Reset()
+			r.op.GeoM.Translate(float64(x-camX), float64(y-camY))
+			dst.DrawImage(c.img, &r.op)
+		}
+	}
 }
 
-// upload writes into the cell image the chunks of w that changed since the
-// last upload, or all of them the first time.
-func (r *Renderer) upload(w *world.World) {
-	for i, img := range r.chunks {
-		if r.drawn && w.ChunkVersion(i%r.cols, i/r.cols) <= r.seen {
-			continue
-		}
-		b := img.Bounds()
-		pix := r.pix[:4*b.Dx()*b.Dy()]
-		r.pal.FillRect(pix, w, b.Min.X, b.Min.Y, b.Max.X, b.Max.Y)
-		img.WritePixels(pix)
+// chunk returns the picture of chunk (cx, cy), the chunk with index i,
+// uploading it first if it is new or the chunk changed.
+func (r *Renderer) chunk(w *world.World, cx, cy, i int) *chunkImage {
+	c, ok := r.chunks[i]
+	if !ok {
+		c = &chunkImage{img: r.image()}
+		r.chunks[i] = c
+	} else if w.ChunkVersion(cx, cy) <= c.version {
+		return c
 	}
-	r.seen, r.drawn = w.Version(), true
+	x0, y0 := cx*world.ChunkSize, cy*world.ChunkSize
+	x1, y1 := min(x0+world.ChunkSize, w.Width()), min(y0+world.ChunkSize, w.Height())
+	// A chunk at the world's edge fills only part of its picture; the
+	// rest stays clear.
+	clear(r.pix)
+	for y := y0; y < y1; y++ {
+		r.pal.Fill(r.pix[4*(y-y0)*world.ChunkSize:], w.Row(x0, x1, y))
+	}
+	c.img.WritePixels(r.pix)
+	c.version = w.Version()
+	return c
+}
+
+// image returns a spare chunk picture or a new one.
+func (r *Renderer) image() *ebiten.Image {
+	if n := len(r.spare); n > 0 {
+		img := r.spare[n-1]
+		r.spare = r.spare[:n-1]
+		return img
+	}
+	return ebiten.NewImage(world.ChunkSize, world.ChunkSize)
+}
+
+// forget returns to the pool the pictures of chunks outside the chunk
+// rectangle [cx0, cx1] × [cy0, cy1] of a world with cols chunks a row.
+func (r *Renderer) forget(cx0, cy0, cx1, cy1, cols int) {
+	for i, c := range r.chunks {
+		if cx, cy := i%cols, i/cols; cx < cx0 || cx > cx1 || cy < cy0 || cy > cy1 {
+			r.spare = append(r.spare, c.img)
+			delete(r.chunks, i)
+		}
+	}
 }
 
 // DrawOverlay draws the brush outline at the cursor, a status line with
-// how many chunks the last tick ran, and what the inventory holds of each
-// slot's material.
-func (r *Renderer) DrawOverlay(dst *ebiten.Image, g *game.Game, cursorX, cursorY int) {
+// the camera, the blocks in memory and how many chunks the last tick ran,
+// and what the inventory holds of each slot's material. The cursor and
+// the camera are in world cells.
+func (r *Renderer) DrawOverlay(dst *ebiten.Image, g *game.Game, in game.Input) {
 	radius := float32(g.Tool().Radius) + 0.5
-	vector.StrokeCircle(dst, float32(cursorX)+0.5, float32(cursorY)+0.5, radius, 1, brushStroke, false)
+	sx, sy := float32(in.CursorX-in.CameraX)+0.5, float32(in.CursorY-in.CameraY)+0.5
+	vector.StrokeCircle(dst, sx, sy, radius, 1, brushStroke, false)
 	var held strings.Builder
 	if g.Creative() {
 		held.WriteString("creative (places without the inventory)  ")
@@ -98,7 +140,9 @@ func (r *Renderer) DrawOverlay(dst *ebiten.Image, g *game.Game, cursorX, cursorY
 		fmt.Fprintf(&held, "%d %s %d  ", i+1, r.mats.Def(id).Name, g.Inventory(id))
 	}
 	w := g.World()
-	status := fmt.Sprintf("%s  tick %d  TPS %.0f  FPS %.0f  awake %d/%d chunks\n%s\nLMB place  RMB dig  1-%d material",
-		g.Selected().Name, w.Tick(), ebiten.ActualTPS(), ebiten.ActualFPS(), w.Awake(), w.Chunks(), held.String(), len(g.Slots()))
+	status := fmt.Sprintf("%s  tick %d  TPS %.0f  FPS %.0f  awake %d chunks  %d blocks  camera %d,%d\n%s\n"+
+		"LMB place  RMB dig  1-%d material  WASD/arrows move (Shift faster)",
+		g.Selected().Name, w.Tick(), ebiten.ActualTPS(), ebiten.ActualFPS(), w.Awake(), g.Blocks(),
+		in.CameraX, in.CameraY, held.String(), len(g.Slots()))
 	ebitenutil.DebugPrint(dst, status)
 }

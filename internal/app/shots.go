@@ -34,13 +34,13 @@ func newShooter(ticks []uint32, dir string, width, height int) *shooter {
 	}
 }
 
-// capture saves the current tick if it was asked for. It reports whether
-// every shot has been taken.
-func (s *shooter) capture(g *game.Game, r *render.Renderer) (bool, error) {
+// capture saves the current tick, as the camera at (camX, camY) sees it,
+// if it was asked for. It reports whether every shot has been taken.
+func (s *shooter) capture(g *game.Game, r *render.Renderer, camX, camY int) (bool, error) {
 	tick := g.World().Tick()
 	for len(s.ticks) > 0 && s.ticks[0] <= tick {
 		if s.ticks[0] == tick {
-			if err := s.save(g, r, tick); err != nil {
+			if err := s.save(g, r, tick, camX, camY); err != nil {
 				return false, err
 			}
 		}
@@ -49,8 +49,8 @@ func (s *shooter) capture(g *game.Game, r *render.Renderer) (bool, error) {
 	return len(s.ticks) == 0, nil
 }
 
-func (s *shooter) save(g *game.Game, r *render.Renderer, tick uint32) error {
-	r.DrawWorld(s.img, g.World())
+func (s *shooter) save(g *game.Game, r *render.Renderer, tick uint32, camX, camY int) error {
+	r.DrawWorld(s.img, g.World(), camX, camY)
 	s.img.ReadPixels(s.pix)
 	// ReadPixels gives premultiplied RGBA, which is what image.RGBA holds.
 	img := &image.RGBA{Pix: s.pix, Stride: 4 * s.rect.Dx(), Rect: s.rect}
