@@ -38,6 +38,10 @@
 - **golangci-lint v2 설정 키가 바뀌었습니다.** gofumpt는 `extra-rules` 대신 `extra.group-params`/`extra.clothe-returns`, exhaustive는 `ignore-enum-types` 대신 `ignore-types`를 씁니다.
 - **govulncheck는 설치된 Go의 표준 라이브러리도 검사합니다.** 최신 패치보다 낮은 Go(예: 1.27.0)로 `-vuln`을 돌리면 이미 고쳐진 표준 라이브러리 취약점이 나옵니다. 로컬 Go를 최신 패치로 올립니다. CI는 항상 최신 `1.27.x`를 씁니다.
 - **`material.ID`는 enum이 아닙니다.** `Air` 상수 하나 때문에 exhaustive가 enum으로 오인하므로 설정에서 제외했습니다.
+- **CI의 `go test -race`는 일반 실행보다 약 16배 느리고, 패키지마다 10분 한도가 있습니다.**
+  - 2026-11-07 Windows 러너에서 `internal/app`이 10분을 넘어 main CI가 실패했습니다. Linux와 macOS도 552~559초로 한도에 붙어 있었습니다.
+  - 원인은 테스트가 매 틱 부르는 `World.Checksum`이었습니다. 바이트마다 FNV-1a를 돌려 셀 100만 개에 12.8 ms가 걸렸고, 로컬 `internal/app` 테스트 시간의 87%를 썼습니다. 셀을 64비트 단어 두 개로 묶어 섞는 자체 해시로 바꿔 2.1 ms가 됐습니다(`internal/world` checksum.go).
+  - 큰 월드를 여러 틱 돌리는 테스트를 더하면, PR CI에서 race 단계의 패키지 시간을 확인합니다. 로컬에서는 MinGW가 없으면 race를 못 돌리므로, 일반 실행 시간에 16을 곱해 가늠합니다.
 
 ## cgo (4단계부터)
 

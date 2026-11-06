@@ -35,7 +35,6 @@ package world
 import (
 	"errors"
 	"fmt"
-	"hash/fnv"
 
 	"github.com/tongmon/matter-wake/internal/fixed"
 	"github.com/tongmon/matter-wake/internal/material"
@@ -394,31 +393,6 @@ func (w *World) Counts(n []int) {
 			n[c.Mat]++
 		}
 	})
-}
-
-// Checksum hashes the cells in memory. Worlds with the same blocks in
-// memory and equal cells give equal checksums, so tests use it to compare
-// runs. It hashes the blocks in order, each row by row, so a world of one
-// block is hashed row by row.
-func (w *World) Checksum() uint64 {
-	h := fnv.New64a()
-	// 14 bytes a cell, hashed a row at a time.
-	buf := make([]byte, 0, 14*BlockSize)
-	w.eachRow(func(row []Cell) {
-		buf = buf[:0]
-		for _, c := range row {
-			falling := byte(0)
-			if c.Falling {
-				falling = 1
-			}
-			buf = append(buf, byte(c.Mat), byte(c.Mat>>8), c.Tone,
-				byte(c.Last), byte(c.Last>>8), byte(c.Last>>16), byte(c.Last>>24),
-				byte(c.Vy), byte(c.Vy>>8), byte(c.Ax), byte(c.Ax>>8), falling,
-				byte(c.Damage), byte(c.Damage>>8))
-		}
-		_, _ = h.Write(buf)
-	})
-	return h.Sum64()
 }
 
 // eachRow calls f with each row of cells in the world of each block in
