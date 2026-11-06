@@ -374,6 +374,85 @@ func TestRestingCellsDrawNoRandomNumbers(t *testing.T) {
 	}
 }
 
+// A row's scan direction does not come from its chunk's random stream, so
+// rows that hold nothing that can move leave the other rows' random
+// numbers alone, however many there are. Chunk sleep, which skips such
+// rows, relies on this.
+func TestRowsWithNothingToMoveDrawNoRandomNumbers(t *testing.T) {
+	run := func(height int) *World {
+		w, ids := newTestWorld(t, 64, height, 1)
+		// Below the floor the chunk has only air, as many rows as the
+		// height leaves.
+		w.Fill(0, 30, 64, 31, ids.stone)
+		for y := range 30 {
+			for x := range 64 {
+				switch (x + y) % 3 {
+				case 0:
+					w.Set(x, y, ids.sand)
+				case 1:
+					w.Set(x, y, ids.water)
+				}
+			}
+		}
+		for range 150 {
+			w.Step()
+		}
+		return w
+	}
+	short, tall := run(40), run(60)
+	for y := range 31 {
+		for x := range 64 {
+			if a, b := short.cells[y*64+x], tall.cells[y*64+x]; a != b {
+				t.Fatalf("cell (%d, %d) differs with 9 or 29 rows of air below the floor: %+v, %+v", x, y, a, b)
+			}
+		}
+	}
+}
+
+// Only a cell that moves is stamped with the tick, so a tick leaves a cell
+// that stays put exactly as it was, whether it visits the cell or not.
+func TestOnlyMovingCellsAreStamped(t *testing.T) {
+	w, ids := newTestWorld(t, 8, 8, 1)
+	w.Set(1, 7, ids.sand)  // rests on the floor
+	w.Set(4, 7, ids.water) // both sides open: rests (TestLiquidWithBothSidesOpenRests)
+	w.Set(6, 0, ids.sand)  // falls
+	w.Step()
+	for _, at := range [][2]int{{1, 7}, {4, 7}} {
+		if c, _ := w.At(at[0], at[1]); c.Last != 0 {
+			t.Errorf("the resting cell at %v was stamped with tick %d", at, c.Last)
+		}
+	}
+	if c, _ := w.At(6, 1); c.Mat != ids.sand || c.Last != w.Tick() {
+		t.Errorf("the sand that fell to (6, 1) is %+v, want sand stamped with tick %d", c, w.Tick())
+	}
+}
+
+// A cell knocked out of a place the scan has passed is done for the tick,
+// like one that moved: here sand falling from the even chunk pushes water
+// up into the odd chunk, which runs later, and the water must stay where
+// it was pushed. Found by the Codex review of the stamping change
+// (2026-11-06).
+func TestDisplacedCellIsNotUpdatedTwice(t *testing.T) {
+	tab := testTable(t, nil)
+	w, err := New(Config{Width: 128, Height: 8, Seed: 1113, Workers: 1, Materials: tab})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer w.Close()
+	sand, water, stone := tab.MustLookup("sand"), tab.MustLookup("water"), tab.MustLookup("stone")
+	w.Fill(0, 4, 128, 5, stone)
+	w.Set(63, 3, water)
+	w.Set(63, 0, sand)
+	w.cells[63].Vy, w.cells[63].Falling = maxFall, true
+	w.Step()
+	if c, _ := w.At(63, 3); c.Mat != sand {
+		t.Fatalf("the sand did not sink into the water at (63, 3); the setup no longer pushes the water out:%s", render(w, testIDs{stone, sand, water}))
+	}
+	if c, _ := w.At(64, 2); c.Mat != water {
+		t.Fatalf("the water pushed to (64, 2) moved again in the same tick:%s", render(w, testIDs{stone, sand, water}))
+	}
+}
+
 // Water poured into a basin settles to a nearly flat surface.
 func TestWaterLevelsInABasin(t *testing.T) {
 	w, ids := newTestWorld(t, 40, 20, 1)

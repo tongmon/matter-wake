@@ -51,7 +51,7 @@ type spot struct{ i, x, y int }
 // update moves one cell by updatePowder or updateLiquid. A cell that cannot
 // move draws no random numbers, so skipping it changes nothing else in its
 // chunk (TestRestingCellsDrawNoRandomNumbers).
-func (w *World) update(x, y int, s *rng.Stream) {
+func (w *World) update(x, y int, j *job) {
 	i := y*w.width + x
 	c := &w.cells[i]
 	if c.Mat == material.Air {
@@ -66,13 +66,12 @@ func (w *World) update(x, y int, s *rng.Stream) {
 	if c.Last == w.tick {
 		return
 	}
-	c.Last = w.tick
 	at := spot{i, x, y}
 	if p.kind == material.Liquid {
-		w.updateLiquid(at, p, s)
+		w.updateLiquid(at, p, j)
 		return
 	}
-	w.updatePowder(at, p, s)
+	w.updatePowder(at, p, j)
 }
 
 // updatePowder moves a powder. A falling powder now and then pauses for a
@@ -80,21 +79,21 @@ func (w *World) update(x, y int, s *rng.Stream) {
 // speeding up; after that it falls by fall. One blocked below keeps its
 // speed and may slide down diagonally. It comes to rest, no longer falling,
 // once both sides are blocked as well.
-func (w *World) updatePowder(at spot, p *matProps, s *rng.Stream) {
+func (w *World) updatePowder(at spot, p *matProps, j *job) {
 	c := &w.cells[at.i]
-	if c.Falling && w.mayMove(at, p) && pauses(p, s) {
+	if c.Falling && w.mayMove(at, p) && pauses(p, &j.s) {
 		return
 	}
 	if !c.Falling {
-		if w.enterable(at.x, at.y+1, p, s) {
-			j := w.swap(at.i, at.x, at.y+1)
-			w.cells[j].Vy, w.cells[j].Falling = 0, true
+		if w.enterable(at.x, at.y+1, p, &j.s) {
+			k := w.swap(at.i, at.x, at.y+1, j)
+			w.cells[k].Vy, w.cells[k].Falling = 0, true
 			return
 		}
-	} else if _, fell := w.fall(at, p, s); fell {
+	} else if _, fell := w.fall(at, p, j); fell {
 		return
 	}
-	if w.slide(at, p, s) {
+	if w.slide(at, p, j) {
 		return
 	}
 	if !w.isEmpty(at.x-1, at.y) && !w.isEmpty(at.x+1, at.y) {
@@ -122,17 +121,17 @@ func pauses(p *matProps, s *rng.Stream) bool {
 // up, in the same update. Only a liquid that did neither and has no
 // sideways push left slides down diagonally. A liquid blocked below loses
 // its speed.
-func (w *World) updateLiquid(at spot, p *matProps, s *rng.Stream) {
-	at, fell := w.fall(at, p, s)
+func (w *World) updateLiquid(at spot, p *matProps, j *job) {
+	at, fell := w.fall(at, p, j)
 	if !fell {
 		w.cells[at.i].Vy = 0
 	}
-	blocked := !fell || !w.enterable(at.x, at.y+1, p, s)
-	at, flowed := w.flow(at, p, blocked)
+	blocked := !fell || !w.enterable(at.x, at.y+1, p, &j.s)
+	at, flowed := w.flow(at, p, blocked, j)
 	if fell || flowed || w.cells[at.i].Ax.Abs() >= fixed.One {
 		return
 	}
-	w.slide(at, p, s)
+	w.slide(at, p, j)
 }
 
 // entry is whether a moving cell may move into a position.
@@ -181,12 +180,19 @@ func (w *World) isEmpty(x, y int) bool {
 	return w.InBounds(x, y) && w.mats[w.cells[y*w.width+x].Mat].kind == material.Empty
 }
 
-// swap exchanges the cell at index i with the cell at (x, y) and returns
-// the index the cell from i moved to.
-func (w *World) swap(i, x, y int) int {
-	j := y*w.width + x
-	w.cells[i], w.cells[j] = w.cells[j], w.cells[i]
-	return j
+// swap moves the cell at index i to (x, y), the cell there to i, and
+// returns the index the moving cell went to. The moving cell is then done
+// for the tick (Cell.Last), and so is the cell it pushes out if the scan
+// has passed where that cell was: it had its update there, moving or not
+// (TestDisplacedCellIsNotUpdatedTwice).
+func (w *World) swap(i, x, y int, j *job) int {
+	k := y*w.width + x
+	w.cells[i], w.cells[k] = w.cells[k], w.cells[i]
+	w.cells[k].Last = w.tick
+	if w.cells[i].Mat != material.Air && j.passed(x, y) {
+		w.cells[i].Last = w.tick
+	}
+	return k
 }
 
 // chance returns true with the given percent probability. It draws a
@@ -209,25 +215,25 @@ func chance(s *rng.Stream, percent uint8) bool {
 // Hitting something mid-fall, drifted or not, stops it with speed 0. It
 // returns where the cell ended and whether it fell; a cell that could not
 // fall keeps its speed.
-func (w *World) fall(at spot, p *matProps, s *rng.Stream) (spot, bool) {
-	if !w.enterable(at.x, at.y+1, p, s) {
+func (w *World) fall(at spot, p *matProps, j *job) (spot, bool) {
+	if !w.enterable(at.x, at.y+1, p, &j.s) {
 		return at, false
 	}
 	v := w.cells[at.i].Vy.Add(p.fallAccel).Clamp(0, maxFall)
 	push := w.cells[at.i].Ax
-	at.i = w.swap(at.i, at.x, at.y+1)
+	at.i = w.swap(at.i, at.x, at.y+1, j)
 	at.y++
 	drift := 0
 	for left := v.Sub(fixed.One); left > 0; left = left.Sub(2 * fixed.One) {
-		if s.Bool() {
-			drift = pickDrift(push, s)
+		if j.s.Bool() {
+			drift = pickDrift(push, &j.s)
 		}
 		nx := at.x + drift
-		if !w.enterable(nx, at.y+1, p, s) {
+		if !w.enterable(nx, at.y+1, p, &j.s) {
 			v = 0
 			break
 		}
-		at.i = w.swap(at.i, nx, at.y+1)
+		at.i = w.swap(at.i, nx, at.y+1, j)
 		at.x, at.y = nx, at.y+1
 	}
 	w.cells[at.i].Vy = v
@@ -257,7 +263,7 @@ func pickDrift(push fixed.Q8, s *rng.Stream) int {
 // dispersion, and the push is damped after each cell. Something in the way
 // stops the liquid but keeps the push. It returns where the liquid ended
 // and whether it moved.
-func (w *World) flow(at spot, p *matProps, blocked bool) (spot, bool) {
+func (w *World) flow(at spot, p *matProps, blocked bool, j *job) (spot, bool) {
 	push := w.cells[at.i].Ax
 	if blocked {
 		push = w.growPush(push, at.x, at.y, p)
@@ -271,7 +277,7 @@ func (w *World) flow(at spot, p *matProps, blocked bool) (spot, bool) {
 		if !w.isEmpty(at.x+dir, at.y) {
 			break
 		}
-		at.i = w.swap(at.i, at.x+dir, at.y)
+		at.i = w.swap(at.i, at.x+dir, at.y, j)
 		at.x += dir
 		moved = true
 		push = push.Mul(p.flowDamping)
@@ -299,24 +305,24 @@ func (w *World) growPush(push fixed.Q8, x, y int, p *matProps) fixed.Q8 {
 // (a settled heap is 45° whatever the chance), and is falling afterwards.
 // A liquid that slides goes on flowing that way: its push becomes one cell
 // in that direction. With neither diagonal open it draws no random numbers.
-func (w *World) slide(at spot, p *matProps, s *rng.Stream) bool {
+func (w *World) slide(at spot, p *matProps, j *job) bool {
 	if w.entryTo(at.x-1, at.y+1, p) == blocked && w.entryTo(at.x+1, at.y+1, p) == blocked {
 		return false
 	}
-	if p.kind == material.Powder && !chance(s, p.slideChance) {
+	if p.kind == material.Powder && !chance(&j.s, p.slideChance) {
 		return false
 	}
 	dir := 1
-	if s.Bool() {
+	if j.s.Bool() {
 		dir = -1
 	}
 	for _, d := range [2]int{dir, -dir} {
-		if w.enterable(at.x+d, at.y+1, p, s) {
-			j := w.swap(at.i, at.x+d, at.y+1)
+		if w.enterable(at.x+d, at.y+1, p, &j.s) {
+			k := w.swap(at.i, at.x+d, at.y+1, j)
 			if p.kind == material.Liquid {
-				w.cells[j].Ax = fixed.FromInt(d)
+				w.cells[k].Ax = fixed.FromInt(d)
 			} else {
-				w.cells[j].Falling = true
+				w.cells[k].Falling = true
 			}
 			return true
 		}
