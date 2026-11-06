@@ -26,8 +26,8 @@ func TestShippedTableLoads(t *testing.T) {
 		t.Errorf("air has ID %d, want %d", id, Air)
 	}
 	// Motion values arrive as fixed-point numbers.
-	if water := tab.Def(tab.MustLookup("water")); water.FlowSpeed.Float() != 0.5 {
-		t.Errorf("water flowSpeed = %v, want 0.5", water.FlowSpeed)
+	if water := tab.Def(tab.MustLookup("water")); water.FallAccel.Float() != 0.375 {
+		t.Errorf("water fallAccel = %v, want 0.375", water.FallAccel)
 	}
 }
 

@@ -7,8 +7,9 @@ import (
 )
 
 // Motion limits (🧪). They also bound how far one cell update reaches:
-// a fall at maxFall moves at most fallReach cells sideways, which must stay
-// within MaxReach (TestMotionStaysWithinReach).
+// a fall at maxFall moves at most fallReach cells sideways, and a liquid
+// then flows at most its dispersion further. Both must stay within MaxReach
+// (TestMotionStaysWithinReach, New).
 const (
 	// maxFall caps falling speed, in cells per tick.
 	maxFall = 12 * fixed.One
@@ -41,8 +42,11 @@ func propsOf(d *material.Def) matProps {
 	}
 }
 
-// update moves one cell: it falls if it can, a liquid flows sideways if it
-// cannot fall, and a cell that did neither may slide down diagonally.
+// spot is where a moving cell is: its index and coordinates.
+type spot struct{ i, x, y int }
+
+// update moves one cell. A powder falls if it can and otherwise may slide
+// down diagonally; a liquid follows updateLiquid.
 func (w *World) update(x, y int, s *rng.Stream) {
 	i := y*w.width + x
 	c := &w.cells[i]
@@ -59,13 +63,27 @@ func (w *World) update(x, y int, s *rng.Stream) {
 		return
 	}
 	c.Last = w.tick
-	if w.fall(i, x, y, p, s) {
+	at := spot{i, x, y}
+	if p.kind == material.Liquid {
+		w.updateLiquid(at, p, s)
 		return
 	}
-	if p.kind == material.Liquid && w.flow(i, x, y, p, s) {
+	if _, fell := w.fall(at, p, s); !fell {
+		w.slide(at, p, s)
+	}
+}
+
+// updateLiquid falls if it can, then flows sideways from wherever it ended
+// up, in the same update. Only a liquid that did neither and has no
+// sideways push left slides down diagonally.
+func (w *World) updateLiquid(at spot, p *matProps, s *rng.Stream) {
+	at, fell := w.fall(at, p, s)
+	blocked := !fell || !w.enterable(at.x, at.y+1, p, s)
+	at, flowed := w.flow(at, p, s, blocked)
+	if fell || flowed || w.cells[at.i].Ax.Abs() >= fixed.One {
 		return
 	}
-	w.slide(i, x, y, p, s)
+	w.slide(at, p, s)
 }
 
 // enterable reports whether a moving cell with values p may move into
@@ -115,34 +133,36 @@ func chance(s *rng.Stream, percent uint8) bool {
 // grows by fallAccel each tick, and at speed v it moves one cell plus one
 // more for every two whole units of v beyond the first. During those extra
 // cells it now and then picks a sideways drift, the way a stream frays.
-// Hitting something mid-fall stops it.
-func (w *World) fall(i, x, y int, p *matProps, s *rng.Stream) bool {
-	if !w.enterable(x, y+1, p, s) {
-		w.cells[i].Vy = 0
-		return false
+// Hitting something mid-fall stops it. A powder whose drift is blocked
+// falls on straight down if it can; a liquid stops there. It returns where
+// the cell ended and whether it fell.
+func (w *World) fall(at spot, p *matProps, s *rng.Stream) (spot, bool) {
+	if !w.enterable(at.x, at.y+1, p, s) {
+		w.cells[at.i].Vy = 0
+		return at, false
 	}
-	v := w.cells[i].Vy.Add(p.fallAccel).Clamp(0, maxFall)
-	push := w.cells[i].Ax
-	i = w.swap(i, x, y+1)
-	y++
+	v := w.cells[at.i].Vy.Add(p.fallAccel).Clamp(0, maxFall)
+	push := w.cells[at.i].Ax
+	at.i = w.swap(at.i, at.x, at.y+1)
+	at.y++
 	drift := 0
 	for left := v.Sub(fixed.One); left > 0; left = left.Sub(2 * fixed.One) {
 		if s.Bool() {
 			drift = pickDrift(push, s)
 		}
-		nx := x + drift
-		if !w.enterable(nx, y+1, p, s) {
-			if nx == x || !w.enterable(x, y+1, p, s) {
+		nx := at.x + drift
+		if !w.enterable(nx, at.y+1, p, s) {
+			if p.kind == material.Liquid || nx == at.x || !w.enterable(at.x, at.y+1, p, s) {
 				v = 0
 				break
 			}
-			nx = x
+			nx = at.x
 		}
-		i = w.swap(i, nx, y+1)
-		x, y = nx, y+1
+		at.i = w.swap(at.i, nx, at.y+1)
+		at.x, at.y = nx, at.y+1
 	}
-	w.cells[i].Vy = v
-	return true
+	w.cells[at.i].Vy = v
+	return at, true
 }
 
 // pickDrift chooses a falling cell's sideways drift: the direction a liquid
@@ -161,22 +181,47 @@ func pickDrift(push fixed.Q8, s *rng.Stream) int {
 	}
 }
 
-// flow moves a liquid that cannot fall sideways. It keeps a sideways push
-// from tick to tick, so it flows on in one direction instead of choosing
-// anew every tick: the push grows by flowSpeed each tick toward an open
-// side, moves the liquid one cell while it is at least one, and is damped
-// after each cell. Hitting something takes the push away.
-func (w *World) flow(i, x, y int, p *matProps, s *rng.Stream) bool {
+// flow moves a liquid sideways. The liquid keeps a sideways push from tick
+// to tick, so it flows on in one direction instead of choosing anew every
+// tick. While the liquid cannot move down, the push grows (growPush). While
+// the push is at least one, the liquid moves one cell that way, up to its
+// dispersion, and the push is damped after each cell. Something in the way
+// stops the liquid but keeps the push. It returns where the liquid ended
+// and whether it moved.
+func (w *World) flow(at spot, p *matProps, s *rng.Stream, blocked bool) (spot, bool) {
+	push := w.cells[at.i].Ax
+	if blocked {
+		push = w.growPush(push, at.x, at.y, p, s)
+	}
+	moved := false
+	for range p.dispersion {
+		if push.Abs() < fixed.One {
+			break
+		}
+		dir := push.Sign()
+		if !w.isEmpty(at.x+dir, at.y) {
+			break
+		}
+		at.i = w.swap(at.i, at.x+dir, at.y)
+		at.x += dir
+		moved = true
+		push = push.Mul(p.flowDamping)
+	}
+	w.cells[at.i].Ax = push
+	return at, moved
+}
+
+// growPush adds flowSpeed to a liquid's push toward its only open side. With
+// both sides open the push grows in the direction it already has, or a
+// random one; with neither open it stays as it is.
+func (w *World) growPush(push fixed.Q8, x, y int, p *matProps, s *rng.Stream) fixed.Q8 {
 	left, right := w.isEmpty(x-1, y), w.isEmpty(x+1, y)
-	push := w.cells[i].Ax
 	switch {
-	case !left && !right:
-		w.cells[i].Ax = 0
-		return false
 	case left && !right:
-		push = min(push, 0).Sub(p.flowSpeed)
+		push = push.Sub(p.flowSpeed)
 	case right && !left:
-		push = max(push, 0).Add(p.flowSpeed)
+		push = push.Add(p.flowSpeed)
+	case !left:
 	case push > 0:
 		push = push.Add(p.flowSpeed)
 	case push < 0:
@@ -186,43 +231,27 @@ func (w *World) flow(i, x, y int, p *matProps, s *rng.Stream) bool {
 	default:
 		push = -p.flowSpeed
 	}
-	push = push.Clamp(-maxPush, maxPush)
-	moved := false
-	for range p.dispersion {
-		if push.Abs() < fixed.One {
-			break
-		}
-		dir := push.Sign()
-		if !w.isEmpty(x+dir, y) {
-			push = 0
-			break
-		}
-		i = w.swap(i, x+dir, y)
-		x += dir
-		moved = true
-		push = push.Mul(p.flowDamping)
-	}
-	w.cells[i].Ax = push
-	return moved
+	return push.Clamp(-maxPush, maxPush)
 }
 
-// slide moves a cell blocked below one cell down to the left or right. A
-// liquid tries the way it was flowing first; a powder picks at random and
-// slides only with its slide chance, which sets how steep its heaps are.
-func (w *World) slide(i, x, y int, p *matProps, s *rng.Stream) {
+// slide moves a cell blocked below one cell down to the left or right,
+// trying a random side first. A powder slides only with its slide chance,
+// which sets how steep its heaps are. A liquid that slides goes on flowing
+// that way: its push becomes one cell in that direction.
+func (w *World) slide(at spot, p *matProps, s *rng.Stream) {
 	if p.kind == material.Powder && !chance(s, p.slideChance) {
 		return
 	}
-	dir := w.cells[i].Ax.Sign()
-	if dir == 0 {
-		dir = 1
-		if s.Bool() {
-			dir = -1
-		}
+	dir := 1
+	if s.Bool() {
+		dir = -1
 	}
 	for _, d := range [2]int{dir, -dir} {
-		if w.enterable(x+d, y+1, p, s) {
-			w.swap(i, x+d, y+1)
+		if w.enterable(at.x+d, at.y+1, p, s) {
+			j := w.swap(at.i, at.x+d, at.y+1)
+			if p.kind == material.Liquid {
+				w.cells[j].Ax = fixed.FromInt(d)
+			}
 			return
 		}
 	}
@@ -236,4 +265,11 @@ func fallReach() int {
 		steps++
 	}
 	return steps
+}
+
+// liquidReach is how far sideways one update of a liquid with the given
+// dispersion can read or write: a fall's drift, then its sideways flow,
+// which always looks at least one cell to each side.
+func liquidReach(dispersion uint8) int {
+	return fallReach() + max(1, int(dispersion))
 }

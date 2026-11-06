@@ -10,7 +10,8 @@ import (
 
 func TestNewRejectsBadConfig(t *testing.T) {
 	tab := testTable(t, nil)
-	tooFar := testTable(t, func(d []material.Def) { d[defWater].Dispersion = MaxReach + 1 })
+	// One cell more than a falling liquid may still flow.
+	tooFar := testTable(t, func(d []material.Def) { d[defWater].Dispersion = uint8(MaxReach - fallReach() + 1) })
 	tests := []struct {
 		name    string
 		cfg     Config

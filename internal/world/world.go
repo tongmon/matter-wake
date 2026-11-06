@@ -90,8 +90,9 @@ func New(cfg Config) (*World, error) {
 	mats := new([material.MaxMaterials]matProps)
 	for i := range cfg.Materials.Len() {
 		d := cfg.Materials.Def(material.ID(i))
-		if int(d.Dispersion) > MaxReach {
-			return nil, fmt.Errorf("world: material %q disperses %d cells, at most %d", d.Name, d.Dispersion, MaxReach)
+		if r := liquidReach(d.Dispersion); d.Kind == material.Liquid && r > MaxReach {
+			return nil, fmt.Errorf("world: material %q disperses %d cells, which with a fall's drift reaches %d, at most %d",
+				d.Name, d.Dispersion, r, MaxReach)
 		}
 		mats[i] = propsOf(&d)
 	}
