@@ -7,6 +7,7 @@ matter-wake-replay 2
 seed 2
 size 480 270
 tool 10 2000 4
+mode play
 slots sand water stone
 materials ee74dacd409567c3
 ticks 900

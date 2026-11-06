@@ -208,6 +208,44 @@ func TestPlaceTakesFromInventory(t *testing.T) {
 	placeAt(80, 20)
 }
 
+// Creative mode places any slot's material, liquids too, without taking
+// it from the inventory. Digging works as in play.
+func TestCreativePlacesWithoutInventory(t *testing.T) {
+	g, err := New(&Config{
+		Width: 128, Height: 96, Seed: 1, Workers: 2, Materials: testTable(t),
+		Slots: []string{"sand", "water", "stone"}, Tool: testTool, Creative: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(g.Close)
+	water, stone := g.mats.MustLookup("water"), g.mats.MustLookup("stone")
+	g.Step(Input{Select: 2})
+	before := g.world.Count(water)
+	g.Step(Input{CursorX: 64, CursorY: 20, Place: true})
+	if got := g.world.Count(water); got <= before {
+		t.Fatalf("creative placing left %d water cells, want more than %d", got, before)
+	}
+	if got := g.Inventory(water); got != 0 {
+		t.Fatalf("creative placing changed the water inventory to %d", got)
+	}
+	x, y := floor(g)
+	for range 4 {
+		g.Step(dig(x, y))
+	}
+	if got := matAt(t, g, x, y); got != material.Air {
+		t.Fatalf("4 ticks of creative digging left %d, want air", got)
+	}
+	held := g.Inventory(stone)
+	if held == 0 {
+		t.Fatal("creative digging put no stone in the inventory")
+	}
+	g.Step(Input{CursorX: 40, CursorY: 20, Place: true, Select: 3})
+	if got := g.Inventory(stone); got != held {
+		t.Fatalf("creative placing took stone from the inventory: %d left of %d", got, held)
+	}
+}
+
 // A short inventory fills the bottom of the brush first, row by row.
 func TestPlaceFillsFromTheBottom(t *testing.T) {
 	g := newTestGame(t, Tool{Power: 10, Rate: 1, Radius: 1})

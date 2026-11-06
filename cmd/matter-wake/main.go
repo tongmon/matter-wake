@@ -33,10 +33,11 @@ func run() error {
 	flag.StringVar(&cfg.ShotsDir, "shots-dir", "out/shots", "folder for -shots")
 	flag.StringVar(&cfg.ReplayPath, "replay", "", "play back this replay file instead of the devices, then exit")
 	flag.StringVar(&cfg.RecordPath, "record", "", "save this session's inputs to this replay file on exit")
+	flag.BoolVar(&cfg.Creative, "creative", false, "place without taking from the inventory, to try materials out")
 	flag.Parse()
 
 	if cfg.ReplayPath != "" {
-		for _, name := range []string{"seed", "width", "height"} {
+		for _, name := range []string{"seed", "width", "height", "creative"} {
 			if flagSet(name) {
 				return fmt.Errorf("-%s cannot be combined with -replay: the replay sets it", name)
 			}

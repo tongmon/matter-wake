@@ -7,7 +7,8 @@
 // The tools move cells between the world and the inventory and never make
 // or destroy one, and neither does the world's own tick. So for every
 // material, its cells in the world plus its count in the inventory stay
-// the same for the whole session.
+// the same for the whole session. Creative mode, for development, places
+// without taking from the inventory and so makes cells.
 package game
 
 import (
@@ -57,6 +58,10 @@ type Config struct {
 	// Slots name the materials the player can place, in key order.
 	Slots []string
 	Tool  Tool
+	// Creative places without taking from the inventory: any slot's
+	// material, as much as the brush holds. It is for trying materials out
+	// in development; play starts with an empty inventory instead.
+	Creative bool
 }
 
 // Game is a play session. It is not safe for concurrent use.
@@ -66,24 +71,12 @@ type Game struct {
 	slots    []material.ID
 	selected int
 	tool     Tool
+	creative bool
 	// inventory holds how many cells of each material the player carries,
 	// indexed by material.ID.
 	inventory []int
-	// worn is the damage dealt to the cells under the brush in the last
-	// tick, in increasing cell order; spare is the buffer the next tick
-	// fills. Both are sized for the whole brush, so digging never
-	// allocates.
-	worn, spare []wear
-}
-
-// wear is the damage one cell under the brush has taken. Its material and
-// tone tell whether the cell now in that place is still the one that took
-// it: a powder may fall away and another take its place.
-type wear struct {
-	cell   int
-	mat    material.ID
-	tone   uint8
-	damage uint32
+	// wear holds the damage of the cells being dug.
+	wear wearTable
 }
 
 // New starts a session in the sandbox scene with an empty inventory.
@@ -115,12 +108,10 @@ func New(cfg *Config) (*Game, error) {
 		w.Close()
 		return nil, err
 	}
-	side := 2*cfg.Tool.Radius + 1
 	return &Game{
-		world: w, mats: cfg.Materials, slots: slots, tool: cfg.Tool,
+		world: w, mats: cfg.Materials, slots: slots, tool: cfg.Tool, creative: cfg.Creative,
 		inventory: make([]int, cfg.Materials.Len()),
-		worn:      make([]wear, 0, side*side),
-		spare:     make([]wear, 0, side*side),
+		wear:      newWearTable(cfg.Tool.Radius),
 	}, nil
 }
 
@@ -150,6 +141,12 @@ func (g *Game) Tool() Tool {
 	return g.tool
 }
 
+// Creative reports whether the session places without taking from the
+// inventory.
+func (g *Game) Creative() bool {
+	return g.creative
+}
+
 // Inventory returns how many cells of id the player carries.
 func (g *Game) Inventory(id material.ID) int {
 	return g.inventory[id]
@@ -167,20 +164,18 @@ func (g *Game) Step(in Input) {
 		g.place(in.CursorX, in.CursorY)
 	}
 	if !in.Dig {
-		// Letting go of the button loses the damage dealt so far.
-		g.worn = g.worn[:0]
+		g.wear.forget()
 	}
 	g.world.Step()
 }
 
 // dig deals the tool's damage to every cell under the brush centred on
 // (cx, cy) that it can dig, and moves the cells dug out into the
-// inventory. A cell keeps its damage only while it stays under the brush.
+// inventory. How long a cell keeps its damage is up to g.wear.
 func (g *Game) dig(cx, cy int) {
 	r, width := g.tool.Radius, g.world.Width()
-	last, next := g.worn, g.spare[:0]
-	// The brush is scanned in increasing cell order, the order last is in,
-	// so last is searched by walking it forward.
+	g.wear.begin()
+	// Rows from the top, each from the left: increasing cell order.
 	for y := cy - r; y <= cy+r; y++ {
 		for x := cx - r; x <= cx+r; x++ {
 			dx, dy := x-cx, y-cy
@@ -193,34 +188,32 @@ func (g *Game) dig(cx, cy int) {
 				continue
 			}
 			cell := y*width + x
-			for len(last) > 0 && last[0].cell < cell {
-				last = last[1:]
-			}
-			var damage uint32
-			if len(last) > 0 && last[0].cell == cell && last[0].mat == c.Mat && last[0].tone == c.Tone {
-				damage = last[0].damage
-			}
-			// damage is below the hp, as a cell is dug out when it reaches it.
+			// The damage is below the hp: a cell is dug out when it reaches it.
+			damage := g.wear.dealt(cell, c)
 			if def.HP-damage <= g.tool.Rate {
 				g.world.Set(x, y, material.Air)
 				g.inventory[c.Mat]++
 				continue
 			}
-			next = append(next, wear{cell: cell, mat: c.Mat, tone: c.Tone, damage: damage + g.tool.Rate})
+			g.wear.keep(cell, c, damage+g.tool.Rate)
 		}
 	}
-	g.worn, g.spare = next, g.worn
+	g.wear.end()
 }
 
 // place fills the empty cells under the brush centred on (cx, cy) with the
 // selected material, one from the inventory for each, in rows from the
 // bottom, so a short inventory fills a hole from its floor. It stops when
-// the inventory runs out.
+// the inventory runs out. In creative mode it takes nothing and fills the
+// brush.
 func (g *Game) place(cx, cy int) {
 	r, sel := g.tool.Radius, g.slots[g.selected]
+	if g.mats.Def(sel).Kind == material.Empty {
+		return // placing air would fill nothing
+	}
 	for y := cy + r; y >= cy-r; y-- {
 		for x := cx - r; x <= cx+r; x++ {
-			if g.inventory[sel] == 0 {
+			if !g.creative && g.inventory[sel] == 0 {
 				return
 			}
 			dx, dy := x-cx, y-cy
@@ -229,7 +222,9 @@ func (g *Game) place(cx, cy int) {
 				continue
 			}
 			g.world.Set(x, y, sel)
-			g.inventory[sel]--
+			if !g.creative {
+				g.inventory[sel]--
+			}
 		}
 	}
 }

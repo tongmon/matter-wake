@@ -35,10 +35,14 @@ type Config struct {
 	ShotsDir string
 	// ReplayPath plays back the replay file there instead of reading the
 	// devices, and exits at its end. The replay sets the world size, the
-	// seed and the tools; Width, Height and Seed are ignored.
+	// seed, the tools and the mode; Width, Height, Seed and Creative are
+	// ignored.
 	ReplayPath string
 	// RecordPath saves the session's inputs there as a replay on exit.
 	RecordPath string
+	// Creative places without taking from the inventory, for trying
+	// materials out in development. A replay sets it instead.
+	Creative bool
 }
 
 // Slots are the materials keys 1, 2, 3… select. 🧪 sandbox controls.
@@ -115,10 +119,10 @@ func Run(cfg *Config) error {
 // else the one the command line asks for.
 func sessionConfig(cfg *Config, mats *material.Table, playback *replay.Replay) *game.Config {
 	if playback == nil {
-		slog.Info("starting", "seed", cfg.Seed, "workers", cfg.Workers)
+		slog.Info("starting", "seed", cfg.Seed, "workers", cfg.Workers, "creative", cfg.Creative)
 		return &game.Config{
 			Width: cfg.Width, Height: cfg.Height, Seed: cfg.Seed, Workers: cfg.Workers,
-			Materials: mats, Slots: slots, Tool: tool,
+			Materials: mats, Slots: slots, Tool: tool, Creative: cfg.Creative,
 		}
 	}
 	slog.Info("replaying", "path", cfg.ReplayPath, "seed", playback.Seed,

@@ -11,6 +11,7 @@
 //	seed 1
 //	size 480 270
 //	tool 10 2000 4
+//	mode play
 //	slots sand water stone
 //	materials 3f2a9c0d1e4b5a67
 //	ticks 600
@@ -20,8 +21,9 @@
 //
 // The first line names the format and its version. The header follows in
 // this order: the world seed, the world size in cells, the tool (its power,
-// its damage per tick and its brush radius, as in game.Tool), the materials
-// the slots hold in key order, the fingerprint of the material table
+// its damage per tick and its brush radius, as in game.Tool), the mode
+// (play, or creative for game.Config.Creative), the materials the slots
+// hold in key order, the fingerprint of the material table
 // (material.Table.Fingerprint) and the number of ticks.
 //
 // Each later line is a tick and the input from that tick on, written only
@@ -65,6 +67,9 @@ type Replay struct {
 	Seed          uint64
 	Width, Height int
 	Tool          game.Tool
+	// Creative is game.Config.Creative: placing takes nothing from the
+	// inventory.
+	Creative bool
 	// Slots name the materials the player can place, in key order.
 	Slots []string
 	// Materials is the fingerprint of the material table the session was
@@ -78,7 +83,7 @@ type Replay struct {
 // New returns an empty recording of a session started with cfg.
 func New(cfg *game.Config) *Replay {
 	return &Replay{
-		Seed: cfg.Seed, Width: cfg.Width, Height: cfg.Height, Tool: cfg.Tool,
+		Seed: cfg.Seed, Width: cfg.Width, Height: cfg.Height, Tool: cfg.Tool, Creative: cfg.Creative,
 		Slots: slices.Clone(cfg.Slots), Materials: cfg.Materials.Fingerprint(),
 	}
 }
@@ -88,7 +93,7 @@ func New(cfg *game.Config) *Replay {
 func (r *Replay) Config(mats *material.Table, workers int) *game.Config {
 	return &game.Config{
 		Width: r.Width, Height: r.Height, Seed: r.Seed, Workers: workers, Materials: mats,
-		Slots: slices.Clone(r.Slots), Tool: r.Tool,
+		Slots: slices.Clone(r.Slots), Tool: r.Tool, Creative: r.Creative,
 	}
 }
 
@@ -99,8 +104,8 @@ func Write(w io.Writer, r *Replay) error {
 	}
 	bw := bufio.NewWriter(w)
 	// A bufio.Writer keeps its first error and Flush returns it.
-	_, _ = fmt.Fprintf(bw, "%s %d\nseed %d\nsize %d %d\ntool %d %d %d\nslots %s\nmaterials %s\nticks %d\n",
-		magic, Version, r.Seed, r.Width, r.Height, r.Tool.Power, r.Tool.Rate, r.Tool.Radius,
+	_, _ = fmt.Fprintf(bw, "%s %d\nseed %d\nsize %d %d\ntool %d %d %d\nmode %s\nslots %s\nmaterials %s\nticks %d\n",
+		magic, Version, r.Seed, r.Width, r.Height, r.Tool.Power, r.Tool.Rate, r.Tool.Radius, mode(r.Creative),
 		strings.Join(r.Slots, " "), r.Materials, len(r.Inputs))
 	var prev game.Input
 	for i, in := range r.Inputs {
@@ -145,6 +150,19 @@ func (r *Replay) validate() error {
 // it reads back as one field.
 func isWord(s string) bool {
 	return s != "" && !strings.ContainsFunc(s, unicode.IsSpace)
+}
+
+// The words of the mode line.
+const (
+	modePlay     = "play"
+	modeCreative = "creative"
+)
+
+func mode(creative bool) string {
+	if creative {
+		return modeCreative
+	}
+	return modePlay
 }
 
 func buttons(in game.Input) string {
@@ -255,6 +273,16 @@ func (p *parser) header(r *Replay) (int, error) {
 	}
 	if r.Tool, err = parseTool(f); err != nil {
 		return 0, p.errorf("%v", err)
+	}
+	if f, err = p.field("mode", "mode play|creative", 1); err != nil {
+		return 0, err
+	}
+	switch f[0] {
+	case modePlay:
+	case modeCreative:
+		r.Creative = true
+	default:
+		return 0, p.errorf("mode %q: want %s or %s", f[0], modePlay, modeCreative)
 	}
 	if r.Slots, err = p.field("slots", "slots <material>...", 0); err != nil {
 		return 0, err
