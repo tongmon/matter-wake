@@ -2,6 +2,7 @@ package app
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -45,10 +46,24 @@ func saveReplay(path string, r *replay.Replay) error {
 	return nil
 }
 
-// makeParentDir creates the folder a file at path goes in.
-func makeParentDir(path string) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return fmt.Errorf("app: %w", err)
+// prepareRecording checks before the session starts that a replay can be
+// saved at path, so a bad path cannot lose the whole session's inputs on
+// exit. It creates the folder, refuses a path that is a folder, and makes
+// and removes a temporary file there to check that it can write.
+func prepareRecording(path string) error {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("app: -record: %w", err)
+	}
+	if info, err := os.Stat(path); err == nil && info.IsDir() {
+		return fmt.Errorf("app: -record %s is a directory", path)
+	}
+	f, err := os.CreateTemp(dir, filepath.Base(path)+".*.tmp")
+	if err != nil {
+		return fmt.Errorf("app: -record: %w", err)
+	}
+	if err := errors.Join(f.Close(), os.Remove(f.Name())); err != nil {
+		return fmt.Errorf("app: -record: %w", err)
 	}
 	return nil
 }

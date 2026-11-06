@@ -20,8 +20,12 @@ func testReplay() *replay.Replay {
 
 func TestSaveAndLoadReplay(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "replays", "a.rpl")
-	if err := makeParentDir(path); err != nil {
+	if err := prepareRecording(path); err != nil {
 		t.Fatal(err)
+	}
+	// It creates the folder and leaves nothing in it.
+	if entries, err := os.ReadDir(filepath.Dir(path)); err != nil || len(entries) != 0 {
+		t.Fatalf("after prepareRecording the folder holds %v (%v), want nothing", entries, err)
 	}
 	want := testReplay()
 	if err := saveReplay(path, want); err != nil {
@@ -119,5 +123,31 @@ func TestRunRejectsBadReplays(t *testing.T) {
 				t.Fatalf("Run error = %v, want one mentioning %q", err, tt.wantErr)
 			}
 		})
+	}
+}
+
+// A -record path that cannot be saved must stop Run before the session, or
+// the whole session's inputs would be lost on exit (Codex review).
+func TestRunRejectsAnUnsavableRecordPath(t *testing.T) {
+	dir := t.TempDir()
+	err := Run(&Config{Scale: 2, Width: 64, Height: 32, RecordPath: dir})
+	if err == nil || !strings.Contains(err.Error(), "is a directory") {
+		t.Fatalf("Run error = %v, want one saying the record path is a directory", err)
+	}
+}
+
+// A recording that outgrows what a replay may hold keeps its first
+// replay.MaxTicks inputs, so it can still be saved (Codex review).
+func TestRecordingStopsAtTheLimit(t *testing.T) {
+	a := &app{record: testReplay(), recordLimit: 4}
+	a.record.Inputs = nil
+	for i := range 6 {
+		a.recordInput(game.Input{CursorX: i})
+	}
+	if n := len(a.record.Inputs); n != 4 {
+		t.Fatalf("recorded %d inputs, want the limit of 4", n)
+	}
+	if a.record.Inputs[3].CursorX != 3 {
+		t.Fatalf("the last recorded input is %+v, want the fourth", a.record.Inputs[3])
 	}
 }
