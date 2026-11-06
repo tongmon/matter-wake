@@ -36,13 +36,25 @@ func (p *Palette) Fill(dst []byte, cells []world.Cell) {
 	}
 }
 
+// damageTint is how far toward white a cell is drawn at full damage, in
+// 256ths: about 60% (🧪). Damage lightens while tone only darkens, so a
+// worn cell never looks like natural variation.
+const damageTint = 154
+
 func (p *Palette) put(px []byte, c world.Cell) {
 	col := p.colors[c.Mat]
 	// A cell's tone darkens it by up to spread/255 of its base color.
 	shade := 255 - uint32(c.Tone)*uint32(p.spread[c.Mat])/255
+	// Its damage then moves it k/256 of the way toward white.
+	k := uint32(c.Damage) * damageTint / world.DamageScale
 	a := uint32(col.A)
-	px[0] = byte(uint32(col.R) * shade / 255 * a / 255)
-	px[1] = byte(uint32(col.G) * shade / 255 * a / 255)
-	px[2] = byte(uint32(col.B) * shade / 255 * a / 255)
+	px[0] = byte(lighten(uint32(col.R)*shade/255, k) * a / 255)
+	px[1] = byte(lighten(uint32(col.G)*shade/255, k) * a / 255)
+	px[2] = byte(lighten(uint32(col.B)*shade/255, k) * a / 255)
 	px[3] = byte(a)
+}
+
+// lighten moves the channel value v k/256 of the way toward 255.
+func lighten(v, k uint32) uint32 {
+	return v + (255-v)*k/256
 }

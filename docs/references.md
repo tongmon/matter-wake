@@ -10,6 +10,10 @@
 - 파괴와 강체: `clone-spec/DESTRUCTION_BRIDGE.txt`
 - 스트리밍·저장: `clone-spec/WORLD_STREAMING.txt`
 - 프레임 순서·RNG: `clone-spec/FRAME_ORDER.txt`
+- 셀 손상과 표시 색: `clone-spec/CELL_DAMAGE_VISUALS.txt`
+  - 2026-11-06에 개발자가 기존 관측 자료를 정리해 추가한 문서입니다.
+  - 확인된 색 변화: 연소 강체(C58), 그을림(C55), 특수 균열(C128, 미완료)
+  - 확인되지 않은 것: HP 비율에 따른 공통 표시 규칙
 
 사용 규칙(AGENTS.md와 같음): 규칙과 수치만 참고하고, 코드·의사코드·자산·이름을 옮기지 않습니다.
 
