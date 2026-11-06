@@ -19,6 +19,7 @@ package game
 import (
 	"errors"
 	"fmt"
+	"slices"
 
 	"github.com/tongmon/matter-wake/internal/material"
 	"github.com/tongmon/matter-wake/internal/scene"
@@ -110,6 +111,10 @@ type Resume struct {
 	// else the camera starts where a new session's does.
 	CameraX, CameraY int
 	HasCamera        bool
+	// Blocks lists the blocks that were in memory, as (bx, by). They come
+	// back before those the camera needs, so the blocks the stream had
+	// kept go on as they would have.
+	Blocks [][2]int
 }
 
 // Game is a play session. It is not safe for concurrent use.
@@ -231,6 +236,9 @@ func (g *Game) setUp(cfg *Config) error {
 		}
 		g.selected = r.Slot - 1
 		copy(g.inventory, r.Inventory)
+		if err := g.load(r.Blocks); err != nil {
+			return err
+		}
 	}
 	// Keep the view in the world, moving it as little as it takes.
 	g.spawnX = min(max(camX, 0), max(g.world.Width()-g.viewW, 0))
@@ -265,23 +273,37 @@ func (g *Game) Slot() int {
 	return g.selected + 1
 }
 
-// SaveBlocks takes every block of the terrain out of memory and into the
-// store, so the store holds the whole world as it is. The session may go
-// on: its next Step loads the blocks it needs again. The sandbox has
-// nothing to save.
+// SaveBlocks puts every block of the terrain in memory into the store, so
+// the store holds the whole world as it is, and keeps them in memory: the
+// session goes on as if nothing happened (taking a block out and putting
+// it back between ticks changes nothing). The sandbox has nothing to save.
 func (g *Game) SaveBlocks() error {
-	for len(g.resident) > 0 {
-		b := g.resident[len(g.resident)-1]
+	for _, b := range g.resident {
 		blk, err := g.world.UnloadBlock(b[0], b[1])
 		if err != nil {
 			return fmt.Errorf("game: %w", err)
 		}
-		if err := g.store.Save(b[0], b[1], blk); err != nil {
-			return fmt.Errorf("game: block (%d, %d): %w", b[0], b[1], err)
+		saveErr := g.store.Save(b[0], b[1], blk)
+		if err := g.world.LoadBlock(b[0], b[1], blk); err != nil {
+			return fmt.Errorf("game: %w", err)
 		}
-		g.resident = g.resident[:len(g.resident)-1]
+		if saveErr != nil {
+			return fmt.Errorf("game: block (%d, %d): %w", b[0], b[1], saveErr)
+		}
 	}
 	return nil
+}
+
+// ResidentBlocks returns the blocks in memory, as (bx, by), in row order.
+func (g *Game) ResidentBlocks() [][2]int {
+	blocks := slices.Clone(g.resident)
+	slices.SortFunc(blocks, func(a, b [2]int) int {
+		if a[1] != b[1] {
+			return a[1] - b[1]
+		}
+		return a[0] - b[0]
+	})
+	return blocks
 }
 
 // Close releases the session's resources.

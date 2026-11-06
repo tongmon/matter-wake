@@ -55,19 +55,21 @@ func TestDiskStoreRoundTrip(t *testing.T) {
 	}
 }
 
-// terrainConfig is a small terrain session that keeps only the blocks its
-// view needs, so a resumed session has the same blocks in memory as one
-// that went on.
+// terrainConfig is a terrain session with the stream the game uses.
 func terrainConfig(mats *material.Table) *game.Config {
 	return &game.Config{
-		Width: 2048, Height: 2048, Seed: 4, Workers: 2, Materials: mats,
-		Scene: game.SceneTerrain, ViewWidth: 480, ViewHeight: 270, Stream: game.Stream{Margin: 256, MaxBlocks: 4},
+		Width: 4096, Height: 4096, Seed: 4, Workers: 2, Materials: mats,
+		Scene: game.SceneTerrain, ViewWidth: 480, ViewHeight: 270, Stream: stream,
 		Slots: []string{"sand", "water", "stone"}, Tool: game.Tool{Power: 10, Rate: 2000, Radius: 4},
 	}
 }
 
 // A session saved and opened again goes on exactly as the session that
-// was saved: the world, the tick, the inventory, the slot and the camera.
+// was saved: the world, the tick, the inventory, the slot, the camera and
+// the blocks the stream kept in memory past the view. The camera moves
+// before the save, so blocks it left behind are still in memory and
+// running. Keeping them was found missing by the Codex review of the save
+// folder (2026-11-06).
 func TestSavedSessionGoesOnTheSame(t *testing.T) {
 	mats := testMaterials(t)
 	dir := t.TempDir()
@@ -87,7 +89,7 @@ func TestSavedSessionGoesOnTheSame(t *testing.T) {
 	inputs := func(from, to int) []game.Input {
 		var in []game.Input
 		for i := from; i < to; i++ {
-			x := camX + 4*i
+			x := camX + 16*i
 			in = append(in, game.Input{CameraX: x, CameraY: camY, CursorX: x + 240, CursorY: camY + 160, Dig: i%2 == 0, Select: 1 + i%3})
 		}
 		return in
@@ -98,6 +100,9 @@ func TestSavedSessionGoesOnTheSame(t *testing.T) {
 		}
 	}
 	last := inputs(49, 50)[0]
+	if n := len(played.ResidentBlocks()); n <= 6 {
+		t.Fatalf("only %d blocks are in memory at the save; the test needs some the view left behind", n)
+	}
 	if err := writeSave(dir, played, last.CameraX, last.CameraY); err != nil {
 		t.Fatal(err)
 	}
@@ -207,5 +212,26 @@ func TestSaveFolderIsOnlyForPlay(t *testing.T) {
 		if dir, err := saveFolder(&tt.cfg, tt.playback); dir != "" || err != nil {
 			t.Errorf("%s: saveFolder = %q, %v; want none", tt.name, dir, err)
 		}
+	}
+}
+
+// A saved world smaller than the view reopens with the view fitted to it,
+// though the command line's size was the default. Found by the Codex
+// review of the save folder (2026-11-06).
+func TestReopenedSmallWorldFitsTheView(t *testing.T) {
+	mats := testMaterials(t)
+	dir := t.TempDir()
+	small := terrainConfig(mats)
+	small.Width, small.Height, small.ViewWidth, small.ViewHeight = 300, 200, 300, 200
+	if _, err := openSave(dir, small, true); err != nil {
+		t.Fatal(err)
+	}
+	sess, err := openSave(dir, terrainConfig(mats), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sess.Width != 300 || sess.Height != 200 || sess.ViewWidth != 300 || sess.ViewHeight != 200 {
+		t.Fatalf("reopened a %dx%d world with a %dx%d view, want 300x200 both",
+			sess.Width, sess.Height, sess.ViewWidth, sess.ViewHeight)
 	}
 }

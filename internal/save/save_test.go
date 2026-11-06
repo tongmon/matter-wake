@@ -366,50 +366,81 @@ func TestBlockTakesAnyMaterialTable(t *testing.T) {
 	}
 }
 
-func TestPlayerRoundTrip(t *testing.T) {
-	want := &Player{CameraX: 7952, CameraY: -3, Slot: 3, Held: map[string]int{"stone": 15, "sand": 120}}
+func TestSessionRoundTrip(t *testing.T) {
+	in := &Session{
+		CameraX: 7952, CameraY: -3, Slot: 3,
+		Held:   map[string]int{"stone": 15, "water": 0, "sand": 120},
+		Blocks: [][2]int{{16, 2}, {15, 1}, {16, 1}},
+	}
 	var buf bytes.Buffer
-	if err := WritePlayer(&buf, &Player{CameraX: 7952, CameraY: -3, Slot: 3, Held: map[string]int{"stone": 15, "water": 0, "sand": 120}}); err != nil {
+	if err := WriteSession(&buf, in); err != nil {
 		t.Fatal(err)
 	}
-	if got := buf.String(); got != "matter-wake-player 1\ncamera 7952 -3\nslot 3\nheld sand 120\nheld stone 15\n" {
-		t.Fatalf("WritePlayer wrote %q", got)
+	want := "matter-wake-session 1\ncamera 7952 -3\nslot 3\nheld sand 120\nheld stone 15\nblock 15 1\nblock 16 1\nblock 16 2\n"
+	if got := buf.String(); got != want {
+		t.Fatalf("WriteSession wrote %q, want %q", got, want)
 	}
-	got, err := ReadPlayer(&buf)
+	got, err := ReadSession(&buf)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.CameraX != want.CameraX || got.CameraY != want.CameraY || got.Slot != want.Slot || len(got.Held) != 2 ||
-		got.Held["sand"] != 120 || got.Held["stone"] != 15 {
-		t.Fatalf("ReadPlayer = %+v, want %+v", got, want)
+	if got.CameraX != 7952 || got.CameraY != -3 || got.Slot != 3 || len(got.Held) != 2 ||
+		got.Held["sand"] != 120 || got.Held["stone"] != 15 || len(got.Blocks) != 3 || got.Blocks[2] != [2]int{16, 2} {
+		t.Fatalf("ReadSession = %+v", got)
 	}
 }
 
-func TestPlayerRefusesBadFiles(t *testing.T) {
-	const head = "matter-wake-player 1\ncamera 1 2\nslot 1\n"
+// A material name may be of any length, so a session holding one must read
+// back. Found by the Codex review of the save folder (2026-11-06).
+func TestSessionTakesLongNames(t *testing.T) {
+	long := strings.Repeat("n", 1<<16)
+	var buf bytes.Buffer
+	if err := WriteSession(&buf, &Session{Slot: 1, Held: map[string]int{long: 2}}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := ReadSession(&buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Held[long] != 2 {
+		t.Fatalf("the long name reads back holding %d, want 2", got.Held[long])
+	}
+}
+
+func TestSessionRefusesBadFiles(t *testing.T) {
+	const head = "matter-wake-session 1\ncamera 1 2\nslot 1\n"
 	tests := []struct {
 		name, text, wantErr string
 	}{
 		{"empty", "", "missing"},
-		{"newer version", "matter-wake-player 2\n", "format version 2"},
-		{"bad camera", "matter-wake-player 1\ncamera 1 x\n", "camera y"},
-		{"slot 0", "matter-wake-player 1\ncamera 1 2\nslot 0\n", "slot 0"},
+		{"newer version", "matter-wake-session 2\n", "format version 2"},
+		{"bad camera", "matter-wake-session 1\ncamera 1 x\n", "camera y"},
+		{"slot 0", "matter-wake-session 1\ncamera 1 2\nslot 0\n", "slot 0"},
 		{"bad held line", head + "held sand\n", "held <material> <count>"},
 		{"negative count", head + "held sand -4\n", "count of sand"},
 		{"held twice", head + "held sand 1\nheld sand 2\n", "twice"},
-		{"other line", head + "seed 4\n", "held <material> <count>"},
+		{"negative block", head + "block -1 2\n", "block x"},
+		{"block twice", head + "block 1 2\nblock 1 2\n", "twice"},
+		{"other line", head + "seed 4\n", "block <x> <y>"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := ReadPlayer(strings.NewReader(tt.text))
+			_, err := ReadSession(strings.NewReader(tt.text))
 			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
-				t.Fatalf("ReadPlayer error = %v, want one mentioning %q", err, tt.wantErr)
+				t.Fatalf("ReadSession error = %v, want one mentioning %q", err, tt.wantErr)
 			}
 		})
 	}
-	for _, p := range []*Player{{Slot: 0}, {Slot: 1, Held: map[string]int{"sand": -1}}, {Slot: 1, Held: map[string]int{"wet sand": 1}}} {
-		if err := WritePlayer(&bytes.Buffer{}, p); err == nil {
-			t.Errorf("WritePlayer accepted %+v", p)
+	bad := []*Session{
+		{Slot: 0},
+		{Slot: 1, Held: map[string]int{"sand": -1}},
+		{Slot: 1, Held: map[string]int{"wet sand": 1}},
+		{Slot: 1, Blocks: [][2]int{{-1, 0}}},
+		{Slot: 1, Blocks: [][2]int{{1, 0}, {1, 0}}},
+	}
+	for _, s := range bad {
+		if err := WriteSession(&bytes.Buffer{}, s); err == nil {
+			t.Errorf("WriteSession accepted %+v", s)
 		}
 	}
 }

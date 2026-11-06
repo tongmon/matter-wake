@@ -15,12 +15,12 @@ import (
 	"github.com/tongmon/matter-wake/internal/world"
 )
 
-// A save folder holds the world header, the player and one file a block
-// (design.md 7절).
+// A save folder holds the world header, the session (the player and the
+// blocks in memory) and one file a block (design.md 7절).
 const (
-	worldFile  = "world.txt"
-	playerFile = "player.txt"
-	blocksDir  = "blocks"
+	worldFile   = "world.txt"
+	sessionFile = "session.txt"
+	blocksDir   = "blocks"
 )
 
 // defaultSave returns the save folder used when -save is not given: the
@@ -89,7 +89,7 @@ func writeFile(path string, write func(w io.Writer) error) error {
 // openSave prepares the save folder dir for a terrain session started
 // with sess and returns the session to play. If dir holds a world, the
 // session goes on with it: its seed, size and tick, its blocks and the
-// player. Then fixed, set when the command line chose the seed or the
+// session file, and the view fits the saved size. Then fixed, set when the command line chose the seed or the
 // size, is an error, so a world is never mixed with another's blocks.
 // Otherwise dir becomes the save of a new world, and its header is
 // written now, before any block, so the blocks always have their world.
@@ -116,7 +116,8 @@ func openSave(dir string, sess *game.Config, fixed bool) (*game.Config, error) {
 		return nil, fmt.Errorf("app: %s holds a world, which sets the seed and the size; drop -seed, -width and -height, or pick another -save folder", dir)
 	}
 	out.Seed, out.Width, out.Height = meta.Seed, meta.Width, meta.Height
-	out.Resume, err = readPlayer(dir, meta.Tick, sess.Materials)
+	out.ViewWidth, out.ViewHeight = min(viewWidth, out.Width), min(viewHeight, out.Height)
+	out.Resume, err = readSession(dir, meta.Tick, sess.Materials)
 	if err != nil {
 		return nil, err
 	}
@@ -153,10 +154,11 @@ func emptyBlocks(dir string) error {
 	return nil
 }
 
-// readPlayer reads the player of dir into a game.Resume at tick. Without a
-// player file the player starts as new, where the world's middle is.
-func readPlayer(dir string, tick uint32, mats *material.Table) (*game.Resume, error) {
-	path := filepath.Join(dir, playerFile)
+// readSession reads the session file of dir into a game.Resume at tick.
+// Without one, after a session that did not end, the player starts as
+// new, where the world's middle is.
+func readSession(dir string, tick uint32, mats *material.Table) (*game.Resume, error) {
+	path := filepath.Join(dir, sessionFile)
 	r := &game.Resume{Tick: tick, Slot: 1, Inventory: make([]int, mats.Len())}
 	data, err := os.ReadFile(path)
 	if errors.Is(err, fs.ErrNotExist) {
@@ -165,11 +167,11 @@ func readPlayer(dir string, tick uint32, mats *material.Table) (*game.Resume, er
 	if err != nil {
 		return nil, fmt.Errorf("app: %w", err)
 	}
-	p, err := save.ReadPlayer(bytes.NewReader(data))
+	p, err := save.ReadSession(bytes.NewReader(data))
 	if err != nil {
 		return nil, fmt.Errorf("app: %s: %w", path, err)
 	}
-	r.Slot, r.CameraX, r.CameraY, r.HasCamera = p.Slot, p.CameraX, p.CameraY, true
+	r.Slot, r.CameraX, r.CameraY, r.HasCamera, r.Blocks = p.Slot, p.CameraX, p.CameraY, true, p.Blocks
 	for name, n := range p.Held {
 		id, ok := mats.Lookup(name)
 		if !ok {
@@ -180,9 +182,10 @@ func readPlayer(dir string, tick uint32, mats *material.Table) (*game.Resume, er
 	return r, nil
 }
 
-// writeSave puts the session into dir: every block, then the world header
-// at the current tick and the player with the camera at (camX, camY). The
-// blocks go first, so a header never runs ahead of its blocks.
+// writeSave puts the session into dir: every block in memory, then the
+// world header at the current tick and the session with the camera at
+// (camX, camY). The blocks go first, so a header never runs ahead of its
+// blocks. The session's blocks stay in memory; it may go on.
 func writeSave(dir string, g *game.Game, camX, camY int) error {
 	if err := g.SaveBlocks(); err != nil {
 		return err
@@ -192,11 +195,11 @@ func writeSave(dir string, g *game.Game, camX, camY int) error {
 	if err := writeFile(filepath.Join(dir, worldFile), func(out io.Writer) error { return save.WriteMeta(out, m) }); err != nil {
 		return err
 	}
-	p := &save.Player{CameraX: camX, CameraY: camY, Slot: g.Slot(), Held: map[string]int{}}
+	p := &save.Session{CameraX: camX, CameraY: camY, Slot: g.Slot(), Held: map[string]int{}, Blocks: g.ResidentBlocks()}
 	for id := range g.Materials().Len() {
 		if n := g.Inventory(material.ID(id)); n > 0 {
 			p.Held[g.Materials().Def(material.ID(id)).Name] = n
 		}
 	}
-	return writeFile(filepath.Join(dir, playerFile), func(out io.Writer) error { return save.WritePlayer(out, p) })
+	return writeFile(filepath.Join(dir, sessionFile), func(out io.Writer) error { return save.WriteSession(out, p) })
 }
