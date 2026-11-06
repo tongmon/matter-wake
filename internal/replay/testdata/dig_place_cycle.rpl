@@ -1,4 +1,4 @@
-matter-wake-replay 3
+matter-wake-replay 4
 # Digs and places the same material again and again: sand out of the heap
 # and back on top of it, stone out of the left ledge and into a block in
 # the air and back, sand with the two buttons in quick turns, and stone
@@ -9,7 +9,7 @@ seed 2
 size 480 270
 scene sandbox
 view 480 270
-stream 256 12
+stream 64 4 512 12 60
 tool 10 2000 4
 mode play
 slots sand water stone

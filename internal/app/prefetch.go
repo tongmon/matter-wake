@@ -9,13 +9,14 @@ import (
 )
 
 // Prefetch settings (🧪, design.md 7절).
-const (
-	// prefetchMargin is how much farther than the stream's margin the
-	// blocks are got ready ahead of the camera: one block.
-	prefetchMargin = world.BlockSize
-	// prefetchWorkers read and make blocks in the background.
-	prefetchWorkers = 2
-)
+
+// prefetchMargin is how far past the camera's area the blocks are got
+// ready: as far as the area ahead reaches when the camera's area moves by
+// one grid step, and one block more.
+var prefetchMargin = stream.Lead*stream.Grid + world.BlockSize
+
+// prefetchWorkers read and make blocks in the background.
+const prefetchWorkers = 2
 
 // prefetchStore is the game.Store of a session that saves on disk. It does
 // the slow work away from the tick: it reads, or makes from the terrain,

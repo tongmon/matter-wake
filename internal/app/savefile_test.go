@@ -1,6 +1,7 @@
 package app
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -65,15 +66,27 @@ func terrainConfig(mats *material.Table) *game.Config {
 }
 
 // A session saved and opened again goes on exactly as the session that
-// was saved: the world, the tick, the inventory, the slot, the camera and
-// the blocks the stream kept in memory past the view. The camera moves
-// before the save, so blocks it left behind are still in memory and
-// running. Keeping them was found missing by the Codex review of the save
-// folder (2026-11-06).
+// was saved: the world, the tick, the inventory, the slot, the camera, the
+// blocks the stream kept in memory past the view, and where the stream's
+// requests and checks stood. The camera moves before the save, so blocks
+// it left behind are still in memory and running. Keeping them was found
+// missing by the Codex review of the save folder (2026-11-06). The second
+// stream checks every 7 ticks and keeps 4 blocks, so checks unload blocks
+// on both sides of the save, and the save lands between two checks.
 func TestSavedSessionGoesOnTheSame(t *testing.T) {
+	for _, s := range []game.Stream{stream, {Grid: 64, Lead: 4, LeadMax: 512, Target: 4, Check: 7}} {
+		t.Run(fmt.Sprintf("target %d check %d", s.Target, s.Check), func(t *testing.T) {
+			checkSavedSessionGoesOn(t, s)
+		})
+	}
+}
+
+func checkSavedSessionGoesOn(t *testing.T, s game.Stream) {
 	mats := testMaterials(t)
 	dir := t.TempDir()
-	sess, err := openSave(dir, terrainConfig(mats), false)
+	cfg := terrainConfig(mats)
+	cfg.Stream = s
+	sess, err := openSave(dir, cfg, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -100,7 +113,9 @@ func TestSavedSessionGoesOnTheSame(t *testing.T) {
 		}
 	}
 	last := inputs(49, 50)[0]
-	if n := len(played.ResidentBlocks()); n <= 6 {
+	// Blocks the view left behind, and more than Target, so checks after
+	// the save have blocks to unload.
+	if n := len(played.ResidentBlocks()); n <= min(6, s.Target) {
 		t.Fatalf("only %d blocks are in memory at the save; the test needs some the view left behind", n)
 	}
 	if err := writeSave(dir, played, last.CameraX, last.CameraY, nil); err != nil {
@@ -110,7 +125,7 @@ func TestSavedSessionGoesOnTheSame(t *testing.T) {
 	// is opened again elsewhere.
 	copied := t.TempDir()
 	copyDir(t, dir, copied)
-	again, err := openSave(copied, terrainConfig(mats), false)
+	again, err := openSave(copied, cfg, false)
 	if err != nil {
 		t.Fatal(err)
 	}

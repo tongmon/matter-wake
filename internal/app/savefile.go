@@ -230,6 +230,9 @@ func readSession(dir string, tick uint32, mats *material.Table) (*game.Resume, e
 		return nil, fmt.Errorf("app: %s: %w", path, err)
 	}
 	r.Slot, r.CameraX, r.CameraY, r.HasCamera, r.Blocks = p.Slot, p.CameraX, p.CameraY, true, p.Blocks
+	if s := p.Stream; s != nil {
+		r.Stream = &game.StreamState{Area: s.Area, Requested: true, LastCheck: s.LastCheck, Interval: s.Interval}
+	}
 	for name, n := range p.Held {
 		id, ok := mats.Lookup(name)
 		if !ok {
@@ -254,6 +257,9 @@ func writeSave(dir string, g *game.Game, camX, camY int, flush func() error) err
 		return fmt.Errorf("app: %w", err)
 	}
 	p := &save.Session{CameraX: camX, CameraY: camY, Slot: g.Slot(), Held: map[string]int{}, Blocks: g.ResidentBlocks()}
+	if s := g.StreamState(); s.Requested {
+		p.Stream = &save.SessionStream{Area: s.Area, LastCheck: s.LastCheck, Interval: s.Interval}
+	}
 	for id := range g.Materials().Len() {
 		if n := g.Inventory(material.ID(id)); n > 0 {
 			p.Held[g.Materials().Def(material.ID(id)).Name] = n

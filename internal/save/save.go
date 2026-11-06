@@ -530,8 +530,9 @@ func (l *lines) end() {
 	}
 }
 
-// SessionVersion is the session file layout this build reads and writes.
-const SessionVersion = 1
+// SessionVersion is the session file layout this build writes. It reads
+// version 1 too, which had no stream line.
+const SessionVersion = 2
 
 const sessionMagic = "matter-wake-session"
 
@@ -542,25 +543,50 @@ const sessionMagic = "matter-wake-session"
 //
 // It is line-based text, like the world header:
 //
-//	matter-wake-session 1
+//	matter-wake-session 2
 //	camera 7952 955
 //	slot 3
+//	stream 7872 832 608 398 4200 60
 //	held "sand" 120
 //	held "stone" 15
 //	block 15 1
 //	block 16 1
 //
-// Only materials the inventory holds get a held line, in name order, the
-// name quoted as in Go, since it may hold spaces; the blocks follow in
-// row order.
+// The stream line holds the camera's last area (x, y, width, height), the
+// tick of the last check and the ticks to the next; a session that had
+// none has no stream line. Only materials the inventory holds get a held
+// line, in name order, the name quoted as in Go, since it may hold
+// spaces; the blocks follow in row order.
 type Session struct {
 	CameraX, CameraY int
 	// Slot is the selected slot, 1-based as the keys are.
 	Slot int
+	// Stream is where the stream's requests and checks stood, or nil.
+	Stream *SessionStream
 	// Held is how many cells of each material the inventory holds.
 	Held map[string]int
 	// Blocks lists the blocks that were in memory, as (bx, by).
 	Blocks [][2]int
+}
+
+// SessionStream is where a session's stream stood: the camera's last area
+// as x, y, width and height in cells, the tick of its last check, and the
+// ticks from that check to the next.
+type SessionStream struct {
+	Area      [4]int
+	LastCheck uint32
+	Interval  int
+}
+
+// valid reports what is wrong with s, or nil.
+func (s *SessionStream) valid() error {
+	switch {
+	case s.Area[2] < 0 || s.Area[3] < 0:
+		return fmt.Errorf("stream area width and height %d, %d are negative", s.Area[2], s.Area[3])
+	case s.Interval < 1:
+		return fmt.Errorf("stream interval %d is not 1 or more", s.Interval)
+	}
+	return nil
 }
 
 // WriteSession writes s.
@@ -571,6 +597,12 @@ func WriteSession(w io.Writer, s *Session) error {
 	bw := bufio.NewWriter(w)
 	// A bufio.Writer keeps its first error and Flush returns it.
 	_, _ = fmt.Fprintf(bw, "%s %d\ncamera %d %d\nslot %d\n", sessionMagic, SessionVersion, s.CameraX, s.CameraY, s.Slot)
+	if st := s.Stream; st != nil {
+		if err := st.valid(); err != nil {
+			return fmt.Errorf("save: %w", err)
+		}
+		_, _ = fmt.Fprintf(bw, "stream %d %d %d %d %d %d\n", st.Area[0], st.Area[1], st.Area[2], st.Area[3], st.LastCheck, st.Interval)
+	}
 	names := make([]string, 0, len(s.Held))
 	for name, n := range s.Held {
 		if n < 0 || name == "" {
@@ -625,11 +657,34 @@ func (l *lines) held(held map[string]int, rest string) {
 	held[name] = int(l.uint("count of "+quoted, f[0], 62))
 }
 
-// ReadSession reads a session file that WriteSession wrote.
+// stream reads the fields of a stream line into s.
+func (l *lines) stream(s *Session, f []string) {
+	if len(f) != 6 {
+		l.err = fmt.Errorf("line %q, want %q", l.line, "stream <x> <y> <width> <height> <last check> <interval>")
+		return
+	}
+	if s.Stream != nil {
+		l.err = errors.New("the stream line is there twice")
+		return
+	}
+	st := &SessionStream{
+		Area:      [4]int{l.int("stream x", f[0]), l.int("stream y", f[1]), l.int("stream width", f[2]), l.int("stream height", f[3])},
+		LastCheck: uint32(l.uint("stream last check", f[4], 32)),
+		Interval:  int(l.uint("stream interval", f[5], 31)),
+	}
+	if l.err == nil {
+		l.err = st.valid()
+	}
+	s.Stream = st
+}
+
+// ReadSession reads a session file that WriteSession wrote, or one of
+// version 1.
 func ReadSession(r io.Reader) (*Session, error) {
 	l := newLines(r)
-	if v := l.uint("version", l.next(sessionMagic, 1)[0], 16); l.err == nil && v != SessionVersion {
-		l.err = fmt.Errorf("format version %d; this build reads version %d", v, SessionVersion)
+	v := l.uint("version", l.next(sessionMagic, 1)[0], 16)
+	if l.err == nil && (v < 1 || v > SessionVersion) {
+		l.err = fmt.Errorf("format version %d; this build reads versions 1 to %d", v, SessionVersion)
 	}
 	camera := l.next("camera", 2)
 	s := &Session{Held: map[string]int{}}
@@ -643,6 +698,12 @@ func ReadSession(r io.Reader) (*Session, error) {
 		switch {
 		case strings.HasPrefix(l.line, "held "):
 			l.held(s.Held, strings.TrimPrefix(l.line, "held "))
+		case len(f) > 0 && f[0] == "stream":
+			if v < 2 {
+				l.err = fmt.Errorf("line %q: a version 1 session has no stream line", l.line)
+				break
+			}
+			l.stream(s, f[1:])
 		case len(f) == 3 && f[0] == "block":
 			b := [2]int{int(l.uint("block x", f[1], 31)), int(l.uint("block y", f[2], 31))}
 			if seen[b] {
