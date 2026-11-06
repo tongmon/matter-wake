@@ -166,3 +166,19 @@ func BenchmarkStepBigWorldAsleep(b *testing.B) {
 		w.Step()
 	}
 }
+
+// A world loaded from a save goes on from the tick it was saved at.
+func TestWorldStartsAtItsTick(t *testing.T) {
+	w, err := New(Config{Width: 64, Height: 64, Seed: 1, Materials: testTable(t, nil), Tick: 100})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer w.Close()
+	if w.Tick() != 100 {
+		t.Fatalf("Tick() = %d, want 100", w.Tick())
+	}
+	w.Step()
+	if w.Tick() != 101 {
+		t.Fatalf("after a step Tick() = %d, want 101", w.Tick())
+	}
+}
