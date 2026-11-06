@@ -35,6 +35,10 @@ type Cell struct {
 	Mat material.ID
 	// Tone varies the cell's color; it is set when the cell is created.
 	Tone uint8
+	// Falling is set while a powder is in motion: from its first fall until
+	// it lies blocked below with both sides blocked. It fills what would
+	// otherwise be padding, so the cell stays 12 bytes.
+	Falling bool
 	// Last is the tick in which the cell was last updated, so a cell that
 	// moved ahead of the scan is not updated twice in one tick.
 	Last uint32
@@ -207,13 +211,17 @@ func (w *World) Count(id material.ID) int {
 // tests use it to compare runs.
 func (w *World) Checksum() uint64 {
 	h := fnv.New64a()
-	var b [11]byte
+	var b [12]byte
 	for _, c := range w.cells {
 		b[0], b[1] = byte(c.Mat), byte(c.Mat>>8)
 		b[2] = c.Tone
 		b[3], b[4], b[5], b[6] = byte(c.Last), byte(c.Last>>8), byte(c.Last>>16), byte(c.Last>>24)
 		b[7], b[8] = byte(c.Vy), byte(c.Vy>>8)
 		b[9], b[10] = byte(c.Ax), byte(c.Ax>>8)
+		b[11] = 0
+		if c.Falling {
+			b[11] = 1
+		}
 		_, _ = h.Write(b[:])
 	}
 	return h.Sum64()

@@ -4,7 +4,7 @@
     { "name": "stone", "kind": "static", "density": 255, "color": "#6b6a72", "toneSpread": 40 },
     {
       "name": "sand", "kind": "powder", "density": 30,
-      "fallAccel": 0.25, "sinkChance": 25, "slideChance": 80,
+      "fallAccel": 0.225, "sinkChance": 25, "slideChance": 50,
       "color": "#e0c27a", "toneSpread": 50
     },
     {
