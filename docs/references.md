@@ -126,7 +126,7 @@
 
 ### 결정성 (2026-11-07)
 
-- Box2D v3.2가 밝힌 조건: 컴파일러가 곱셈과 덧셈을 FMA 하나로 합치지 않아야 합니다. Box2D의 CMake는 gcc와 clang에 `-ffp-contract=off`를 넘기고, 그 이유를 "기본으로 켜진 유일한 값 바꾸는 변환"이라고 적었습니다(v3.2.0 `CMakeLists.txt`, [Box2D 결정성 글](https://box2d.org/posts/2024/08/determinism/)). 삼각함수는 C 라이브러리 대신 자체 근사를 씁니다(`b2ComputeCosSin`, `b2Atan2`). 비정규수를 0으로 바꾸는 CPU 모드가 켜져 있으면 결정성을 지원하지 않는다고 기록합니다(`physics_world.c` `b2CreateWorld`). Go 런타임은 그 모드를 켜지 않습니다.
+- Box2D v3.2가 밝힌 조건: 컴파일러가 곱셈과 덧셈을 FMA 하나로 합치지 않아야 합니다. Box2D의 CMake는 gcc와 clang에 `-ffp-contract=off`를 넘기고, 그 이유를 "기본으로 켜진 유일한 값 바꾸는 변환"이라고 적었습니다(v3.2.0 `CMakeLists.txt`, [Box2D 결정성 글](https://box2d.org/posts/2024/08/determinism/)). fast-math 류 설정은 쓰지 않습니다(우리 플래그에도 없음). 삼각함수는 C 라이브러리 대신 자체 근사를 씁니다(`b2ComputeCosSin`, `b2Atan2`). 그 글에 따르면 `atan2f`가 플랫폼마다 달랐고 `sqrtf`는 같았습니다. 비정규수를 0으로 바꾸는 CPU 모드가 켜져 있으면 결정성을 지원하지 않는다고 기록합니다(`physics_world.c` `b2CreateWorld`). Go 런타임은 그 모드를 켜지 않습니다.
 - Go는 `#cgo CFLAGS`에 `-ffp-contract=off`를 허용하지 않습니다(`cmd/go/internal/work/security.go`의 허용 목록). 그래서 같은 규칙을 pragma로 겁니다(`internal/physics/box2d_fp.h`, pitfalls.md cgo 절). `TestCompiledWithoutContraction`이 컴파일러마다 확인합니다. 개발 PC의 clang 23.1.5는 pragma가 없으면 합쳤고(결과 2^-26), 있으면 합치지 않았습니다.
 - SIMD 경로: Box2D는 실행할 때 AVX2(8칸)와 SSE2(4칸)를 고르고 arm64에서는 NEON(4칸)을 씁니다. `BOX2D_DISABLE_SIMD`로 컴파일하면 스칼라입니다. 개발 PC에서 AVX2, SSE2, 스칼라(`-tags box2dscalar`)가 600스텝 동안 같은 해시를 냈습니다(`internal/physics/testdata/determinism.golden`).
 - 3개 OS: PR CI에서 확인합니다(Windows gcc, macOS Apple clang과 NEON, Linux gcc).
