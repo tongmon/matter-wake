@@ -43,8 +43,10 @@ type Cell struct {
 	// Falling is set while a powder is in motion: from its first fall until
 	// it lies blocked below with both sides blocked.
 	Falling bool
-	// Last is the tick in which the cell was last updated, so a cell that
-	// moved ahead of the scan is not updated twice in one tick.
+	// Last is the tick in which the cell last moved, so a cell that moved
+	// ahead of the scan is not updated twice in one tick. A cell that stays
+	// put keeps it, so a tick leaves a resting cell exactly as it was
+	// whether it visits the cell or not.
 	Last uint32
 	// Vy is the speed of a falling cell, in cells per tick.
 	Vy fixed.Q8

@@ -409,6 +409,24 @@ func TestRowsWithNothingToMoveDrawNoRandomNumbers(t *testing.T) {
 	}
 }
 
+// Only a cell that moves is stamped with the tick, so a tick leaves a cell
+// that stays put exactly as it was, whether it visits the cell or not.
+func TestOnlyMovingCellsAreStamped(t *testing.T) {
+	w, ids := newTestWorld(t, 8, 8, 1)
+	w.Set(1, 7, ids.sand)  // rests on the floor
+	w.Set(4, 7, ids.water) // both sides open: rests (TestLiquidWithBothSidesOpenRests)
+	w.Set(6, 0, ids.sand)  // falls
+	w.Step()
+	for _, at := range [][2]int{{1, 7}, {4, 7}} {
+		if c, _ := w.At(at[0], at[1]); c.Last != 0 {
+			t.Errorf("the resting cell at %v was stamped with tick %d", at, c.Last)
+		}
+	}
+	if c, _ := w.At(6, 1); c.Mat != ids.sand || c.Last != w.Tick() {
+		t.Errorf("the sand that fell to (6, 1) is %+v, want sand stamped with tick %d", c, w.Tick())
+	}
+}
+
 // Water poured into a basin settles to a nearly flat surface.
 func TestWaterLevelsInABasin(t *testing.T) {
 	w, ids := newTestWorld(t, 40, 20, 1)

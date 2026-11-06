@@ -66,7 +66,6 @@ func (w *World) update(x, y int, s *rng.Stream) {
 	if c.Last == w.tick {
 		return
 	}
-	c.Last = w.tick
 	at := spot{i, x, y}
 	if p.kind == material.Liquid {
 		w.updateLiquid(at, p, s)
@@ -181,11 +180,13 @@ func (w *World) isEmpty(x, y int) bool {
 	return w.InBounds(x, y) && w.mats[w.cells[y*w.width+x].Mat].kind == material.Empty
 }
 
-// swap exchanges the cell at index i with the cell at (x, y) and returns
-// the index the cell from i moved to.
+// swap moves the cell at index i to (x, y), the cell there to i, and
+// returns the index the moving cell went to. It stamps the moving cell
+// with the tick, so the scan does not update it again if it moved ahead.
 func (w *World) swap(i, x, y int) int {
 	j := y*w.width + x
 	w.cells[i], w.cells[j] = w.cells[j], w.cells[i]
+	w.cells[j].Last = w.tick
 	return j
 }
 
