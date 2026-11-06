@@ -98,7 +98,7 @@
 - [ ] 셀 HP와 폭발·투사체의 셀 파괴(C66, C67, C75). 재질의 등급·내구는 채굴과 같은 값을 씀. 채굴과 같은 셀 손상 칸을 `World.Wear`로 깎음([채굴 참고 요약](briefs/digging.md))
 - [x] MinGW 계열 컴파일러 설치, `go test -race` 로컬 실행(2026-11-07, pitfalls.md cgo 절): 개발자가 llvm-mingw(clang 23.1.5, UCRT)를 설치함. `go run ./tools/check`의 race가 SKIP 없이 통과. cgo가 없으면 이제 check가 실패함(Box2D에 필요)
 - [x] 공식 Box2D v3.2를 저장소에 포함하고 cgo 어댑터 패키지 작성(2026-11-07, design.md 2절, [참고 요약](briefs/rigid-body-base.md)): `third_party/box2d`(v3.2.0, 고치지 않음), `internal/physics`(월드, 정적·동적 상자, Step, 위치·각도). CMake 없이 `go build` 하나로 빌드됨
-  - 결정성: 상자 300개 600스텝의 해시 골든. 개발 PC에서 AVX2, SSE2, 스칼라가 같음. 3개 OS CI 결과는 PR에 적음
+  - 결정성: 상자 300개 600스텝의 해시 골든. 개발 PC에서 AVX2, SSE2, 스칼라가 같고, 3개 OS CI(Windows gcc, macOS Apple clang과 NEON, Linux gcc)에서도 같음(references.md 3절)
   - 강체만의 기준점: 상자 300개 한 틱(Step과 위치 읽기) 개발 PC 1 worker 약 75~84 µs, 기준 CPU 추정 약 0.2 ms(references.md 3절). Step과 읽기는 할당 0회
 - [ ] 최대 부하 장면(design.md 2절)에 강체 300개를 더해 프레임 시간 측정(3단계에서 옮김, Noita 최대 부하 수준). 기준 CPU에서 한 틱 전체가 16.7 ms 안
   - 기준 CPU 실기에서 잽니다(2026-11-07 결정, design.md 2절). 셀만 8 ms 이하인지도 함께 확인합니다. 3단계는 개발 PC 추정으로 닫았고, 그 추정에는 캐시 차이가 드러나지 않습니다
