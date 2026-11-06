@@ -70,10 +70,15 @@ func TestFallSpeedIsCapped(t *testing.T) {
 // A liquid keeps flowing the way it started until something blocks it,
 // instead of choosing a new direction every tick.
 func TestLiquidKeepsFlowDirection(t *testing.T) {
-	for _, start := range []int{1, 30} { // against the left wall, and mid-floor
+	for _, tc := range []struct{ start, push int }{
+		{1, 0},  // against the left wall, which leaves one side open
+		{30, 2}, // mid-floor, already flowing
+	} {
+		start := tc.start
 		w, ids := newTestWorld(t, 60, 2, 1)
 		w.Set(0, 1, ids.stone)
 		w.Set(start, 1, ids.water)
+		w.cells[w.Width()+start].Ax = fixed.FromInt(tc.push)
 		prevX, dir := start, 0
 		for range 300 {
 			w.Step()
@@ -167,6 +172,20 @@ func TestLiquidKeepsPushWhenBlocked(t *testing.T) {
 	}
 }
 
+// A liquid with both sides open does not build up a sideways push, so a
+// lone drop on a flat floor rests where it lands.
+func TestLiquidWithBothSidesOpenRests(t *testing.T) {
+	w, ids := newTestWorld(t, 9, 1, 1)
+	w.Set(4, 0, ids.water)
+	for range 50 {
+		w.Step()
+	}
+	x, _, _ := find(w, ids.water)
+	if c, _ := w.At(x, 0); x != 4 || c.Ax != 0 {
+		t.Fatalf("lone water at x=%d with push %v after 50 ticks, want it at rest at x=4", x, c.Ax)
+	}
+}
+
 // A liquid that slides down diagonally goes on flowing that way: the slide
 // sets its push to one cell in that direction.
 func TestLiquidSlideSetsPush(t *testing.T) {
@@ -199,8 +218,8 @@ func TestLiquidFlowsInTheTickItLands(t *testing.T) {
 func TestPouredWaterSpreadsInsteadOfPiling(t *testing.T) {
 	water := pourOnFloor(t, false, 60, 1600)
 	sand := pourOnFloor(t, true, 60, 1600)
-	if water*3 > sand {
-		t.Fatalf("poured water piles %d cells high and sand %d; want water at most a third of sand", water, sand)
+	if water*2 > sand {
+		t.Fatalf("poured water piles %d cells high and sand %d; want water at most half of sand", water, sand)
 	}
 }
 

@@ -79,7 +79,7 @@ func (w *World) update(x, y int, s *rng.Stream) {
 func (w *World) updateLiquid(at spot, p *matProps, s *rng.Stream) {
 	at, fell := w.fall(at, p, s)
 	blocked := !fell || !w.enterable(at.x, at.y+1, p, s)
-	at, flowed := w.flow(at, p, s, blocked)
+	at, flowed := w.flow(at, p, blocked)
 	if fell || flowed || w.cells[at.i].Ax.Abs() >= fixed.One {
 		return
 	}
@@ -188,10 +188,10 @@ func pickDrift(push fixed.Q8, s *rng.Stream) int {
 // dispersion, and the push is damped after each cell. Something in the way
 // stops the liquid but keeps the push. It returns where the liquid ended
 // and whether it moved.
-func (w *World) flow(at spot, p *matProps, s *rng.Stream, blocked bool) (spot, bool) {
+func (w *World) flow(at spot, p *matProps, blocked bool) (spot, bool) {
 	push := w.cells[at.i].Ax
 	if blocked {
-		push = w.growPush(push, at.x, at.y, p, s)
+		push = w.growPush(push, at.x, at.y, p)
 	}
 	moved := false
 	for range p.dispersion {
@@ -212,24 +212,14 @@ func (w *World) flow(at spot, p *matProps, s *rng.Stream, blocked bool) (spot, b
 }
 
 // growPush adds flowSpeed to a liquid's push toward its only open side. With
-// both sides open the push grows in the direction it already has, or a
-// random one; with neither open it stays as it is.
-func (w *World) growPush(push fixed.Q8, x, y int, p *matProps, s *rng.Stream) fixed.Q8 {
+// both sides open or both blocked the push stays as it is.
+func (w *World) growPush(push fixed.Q8, x, y int, p *matProps) fixed.Q8 {
 	left, right := w.isEmpty(x-1, y), w.isEmpty(x+1, y)
 	switch {
 	case left && !right:
 		push = push.Sub(p.flowSpeed)
 	case right && !left:
 		push = push.Add(p.flowSpeed)
-	case !left:
-	case push > 0:
-		push = push.Add(p.flowSpeed)
-	case push < 0:
-		push = push.Sub(p.flowSpeed)
-	case s.Bool():
-		push = p.flowSpeed
-	default:
-		push = -p.flowSpeed
 	}
 	return push.Clamp(-maxPush, maxPush)
 }
