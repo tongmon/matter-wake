@@ -30,7 +30,9 @@ jobs:
           sudo apt-get install -y libc6-dev libgl1-mesa-dev libxcursor-dev libxi-dev libxinerama-dev libxrandr-dev libxxf86vm-dev libasound2-dev pkg-config
       - name: Run checks
         env:
-          # The race detector needs cgo; the check skips it where no C
-          # compiler is found.
+          # Box2D (internal/physics) and the race detector need cgo. The
+          # runners' own compilers build it: gcc on Linux, Apple clang on
+          # macOS, and on Windows the image's MinGW gcc, which is on PATH.
+          # The check fails without one and prints which one it used.
           CGO_ENABLED: "1"
         run: go run ./tools/check -vuln

@@ -52,14 +52,15 @@ func main() {
 			return "", gocmd(append(lint, "fmt", "--diff", "./...")...)
 		}},
 		{"go mod tidy", func() (string, error) { return "", gocmd("mod", "tidy", "-diff") }},
+		{"cgo", func() (string, error) { return "", cgoCompiler() }},
 		{"lint", func() (string, error) { return "", gocmd(append(lint, "run", "./...")...) }},
 		{"test", func() (string, error) { return "", gocmd("test", "-shuffle=on", "./...") }},
-		{"race", func() (string, error) {
-			if reason := cgoMissing(); reason != "" {
-				return reason, nil
-			}
-			return "", gocmd("test", "-race", "./...")
+		// The determinism golden once more with Box2D's SIMD compiled out,
+		// so every OS also checks the scalar path against the SIMD ones.
+		{"box2d scalar", func() (string, error) {
+			return "", gocmd("test", "-tags", "box2dscalar", "-run", "Determinism", "./internal/physics/")
 		}},
+		{"race", func() (string, error) { return "", gocmd("test", "-race", "./...") }},
 		{"vuln", func() (string, error) {
 			if !*vuln {
 				return "not requested (-vuln)", nil
@@ -113,19 +114,24 @@ func gocmd(args ...string) error {
 	return nil
 }
 
-// cgoMissing returns why the race detector cannot run here, or "". It
-// needs cgo and a C compiler (on Windows, a MinGW-family gcc or clang).
-func cgoMissing() string {
+// cgoCompiler fails unless cgo is on and its C compiler runs, and prints
+// which compiler it is, so a CI log shows what built Box2D. The game needs
+// cgo for Box2D (internal/physics) and the race detector needs it too. On
+// Windows that takes a MinGW-family gcc or clang.
+func cgoCompiler() error {
 	out, err := exec.Command("go", "env", "CGO_ENABLED", "CC").Output()
 	if err != nil {
-		return "cannot read go env: " + err.Error()
+		return fmt.Errorf("cannot read go env: %w", err)
 	}
 	fields := strings.Fields(string(out))
 	if len(fields) < 2 || fields[0] != "1" {
-		return "cgo is disabled; install a C compiler (MinGW on Windows) for -race"
+		return errors.New("cgo is disabled; install a C compiler (MinGW-family gcc or clang on Windows)")
 	}
-	if _, err := exec.LookPath(fields[1]); err != nil {
-		return fmt.Sprintf("C compiler %q not found", fields[1])
+	version, err := exec.Command(fields[1], "--version").Output()
+	if err != nil {
+		return fmt.Errorf("the C compiler %q does not run: %w", fields[1], err)
 	}
-	return ""
+	first, _, _ := strings.Cut(string(version), "\n")
+	fmt.Printf("CC=%s: %s\n", fields[1], strings.TrimSpace(first))
+	return nil
 }
