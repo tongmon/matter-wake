@@ -100,6 +100,59 @@ func TestTerrainGolden(t *testing.T) {
 	compareGolden(t, filepath.Join("testdata", "terrain.golden"), b.String())
 }
 
+// noise2 is the value noise Block computed cell by cell before it used
+// grids, kept as the oracle grids must match.
+func noise2(seed, salt uint64, x, y, span int) int {
+	i, j := x/span, y/span
+	fx, fy := smooth((x-i*span)<<noiseBits/span), smooth((y-j*span)<<noiseBits/span)
+	top := blend(lattice(seed, salt, i, j), lattice(seed, salt, i+1, j), fx)
+	bottom := blend(lattice(seed, salt, i, j+1), lattice(seed, salt, i+1, j+1), fx)
+	return blend(top, bottom, fy)
+}
+
+// oracleBlock makes block (bx, by) the way Block did before it used grids.
+func oracleBlock(t *Terrain, bx, by int) *world.Block {
+	b := new(world.Block)
+	x0, y0 := bx*world.BlockSize, by*world.BlockSize
+	for x := x0; x < min(x0+world.BlockSize, t.width); x++ {
+		for y := max(y0, t.Surface(x)); y < min(y0+world.BlockSize, t.height); y++ {
+			m := t.stone
+			cave := (2*noise2(t.seed, saltCaveLarge, x, y, caveSpanLarge) + noise2(t.seed, saltCaveSmall, x, y, caveSpanSmall)) / 3
+			if cave >= caveOpen {
+				switch pocket := noise2(t.seed, saltPockets, x, y, pocketSpan); {
+				case pocket > sandFrom:
+					m = t.sand
+				case pocket < waterTo:
+					m = t.water
+				default:
+					m = material.Air
+				}
+			}
+			b[(y-y0)*world.BlockSize+x-x0] = world.Cell{Mat: m, Tone: t.tone(x, y)}
+		}
+	}
+	return b
+}
+
+// Block makes the same cells as the noise computed cell by cell, over
+// seeds, places and a world whose edge cuts its last blocks.
+func TestTerrainBlockMatchesTheNoise(t *testing.T) {
+	tab := loadTable(t)
+	for _, seed := range []uint64{0, 1, 77, 1 << 63} {
+		tr, err := NewTerrain(seed, 1500, 1300, tab)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for by := range 3 {
+			for bx := range 3 {
+				if *tr.Block(bx, by) != *oracleBlock(tr, bx, by) {
+					t.Fatalf("seed %d: block (%d, %d) differs from the noise cell by cell", seed, bx, by)
+				}
+			}
+		}
+	}
+}
+
 func BenchmarkTerrainBlock(b *testing.B) {
 	tr, err := NewTerrain(1, 16384, 16384, loadTable(b))
 	if err != nil {

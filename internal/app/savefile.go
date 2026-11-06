@@ -242,11 +242,12 @@ func readSession(dir string, tick uint32, mats *material.Table) (*game.Resume, e
 
 // writeSave puts the session into dir: every block in memory, then the
 // world header at the current tick and the session with the camera at
-// (camX, camY). The blocks go first, so a header never runs ahead of its
+// (camX, camY). flush, if not nil, waits for the store to write the
+// blocks it keeps writing in the background. The blocks go first, so a header never runs ahead of its
 // blocks. The header and the session are encoded before anything is
 // written, so a failure to encode them cannot leave half a save. The
 // session's blocks stay in memory; it may go on.
-func writeSave(dir string, g *game.Game, camX, camY int) error {
+func writeSave(dir string, g *game.Game, camX, camY int, flush func() error) error {
 	w := g.World()
 	var meta, session bytes.Buffer
 	if err := save.WriteMeta(&meta, save.Meta{Seed: w.Seed(), Width: w.Width(), Height: w.Height(), Tick: w.Tick()}); err != nil {
@@ -263,6 +264,11 @@ func writeSave(dir string, g *game.Game, camX, camY int) error {
 	}
 	if err := g.SaveBlocks(); err != nil {
 		return err
+	}
+	if flush != nil {
+		if err := flush(); err != nil {
+			return err
+		}
 	}
 	if err := writeFile(filepath.Join(dir, worldFile), func(out io.Writer) error {
 		_, err := out.Write(meta.Bytes())

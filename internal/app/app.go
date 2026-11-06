@@ -16,6 +16,7 @@ import (
 	"github.com/tongmon/matter-wake/internal/material"
 	"github.com/tongmon/matter-wake/internal/render"
 	"github.com/tongmon/matter-wake/internal/replay"
+	"github.com/tongmon/matter-wake/internal/scene"
 )
 
 // Config describes how to run a session.
@@ -102,19 +103,20 @@ func Run(cfg *Config) error {
 	if err != nil {
 		return err
 	}
-	sess, saveDir, unlock, err := openSession(cfg, mats, playback)
+	sess, sv, err := openSession(cfg, mats, playback)
 	if err != nil {
 		return err
 	}
-	// Deferred first, so it runs last: after the save is written.
-	defer unlock()
 	g, err := game.New(sess)
 	if err != nil {
-		return err
+		return errors.Join(err, sv.close())
 	}
 	defer g.Close()
 
 	a := &app{game: g, rend: render.New(mats), width: sess.ViewWidth, height: sess.ViewHeight}
+	if sv != nil {
+		a.prefetch = sv.store
+	}
 	camX, camY := g.Spawn()
 	// Until the first tick, draw what the session starts with.
 	a.in = game.Input{CameraX: camX, CameraY: camY}
@@ -134,12 +136,12 @@ func Run(cfg *Config) error {
 	ebiten.SetWindowResizingMode(ebiten.WindowResizingModeEnabled)
 	// RunGame returns nil when Update returns ebiten.Termination.
 	runErr := ebiten.RunGame(a)
-	if saveDir != "" {
-		if err := writeSave(saveDir, g, a.in.CameraX, a.in.CameraY); err != nil {
-			runErr = errors.Join(runErr, err)
-		} else {
-			slog.Info("saved", "save", saveDir, "tick", g.World().Tick())
+	if sv != nil {
+		err := writeSave(sv.dir, g, a.in.CameraX, a.in.CameraY, sv.store.Flush)
+		if err == nil {
+			slog.Info("saved", "save", sv.dir, "tick", g.World().Tick())
 		}
+		runErr = errors.Join(runErr, err, sv.close())
 	}
 	if a.record != nil {
 		if err := saveReplay(cfg.RecordPath, a.record); err != nil {
@@ -175,29 +177,60 @@ func sessionConfig(cfg *Config, mats *material.Table, playback *replay.Replay) *
 	return playback.Config(mats, cfg.Workers)
 }
 
-// openSession returns the session to start and the folder it saves in,
-// if any: a saved world goes on from there. The folder stays locked to
-// this process until unlock, which does nothing without a folder.
-func openSession(cfg *Config, mats *material.Table, playback *replay.Replay) (
-	sess *game.Config, dir string, unlock func(), err error,
-) {
-	sess = sessionConfig(cfg, mats, playback)
-	if dir, err = saveFolder(cfg, playback); err != nil || dir == "" {
-		return sess, "", func() {}, err
+// saving is where a session saves: its folder, locked to this process
+// until close, and the store that reads and writes the folder's blocks in
+// the background.
+type saving struct {
+	dir    string
+	store  *prefetchStore
+	unlock func()
+}
+
+// close stops the store, writing what is left, and unlocks the folder. A
+// nil saving has nothing to close.
+func (s *saving) close() error {
+	if s == nil {
+		return nil
 	}
-	if unlock, err = lockSave(dir); err != nil {
-		return nil, "", nil, err
+	err := s.store.Close()
+	s.unlock()
+	return err
+}
+
+// openSession returns the session to start and where it saves, nil for a
+// session that does not: a saved world goes on from there.
+func openSession(cfg *Config, mats *material.Table, playback *replay.Replay) (*game.Config, *saving, error) {
+	sess := sessionConfig(cfg, mats, playback)
+	dir, err := saveFolder(cfg, playback)
+	if err != nil || dir == "" {
+		return sess, nil, err
+	}
+	unlock, err := lockSave(dir)
+	if err != nil {
+		return nil, nil, err
 	}
 	if sess, err = openSave(dir, sess, cfg.FixedWorld); err != nil {
 		unlock()
-		return nil, "", nil, err
+		return nil, nil, err
 	}
+	terrain, err := scene.NewTerrain(sess.Seed, sess.Width, sess.Height, mats)
+	if err != nil {
+		unlock()
+		return nil, nil, err
+	}
+	disk, ok := sess.Store.(*diskStore)
+	if !ok {
+		unlock()
+		return nil, nil, errors.New("app: the save folder has no disk store")
+	}
+	sv := &saving{dir: dir, store: newPrefetchStore(disk, terrain), unlock: unlock}
+	sess.Store = sv.store
 	if sess.Resume != nil {
 		slog.Info("resuming", "save", dir, "seed", sess.Seed, "tick", sess.Resume.Tick)
 	} else {
 		slog.Info("saving a new world", "save", dir)
 	}
-	return sess, dir, unlock, nil
+	return sess, sv, nil
 }
 
 // saveFolder returns the folder the session saves in: the terrain's, when
@@ -243,6 +276,9 @@ type app struct {
 	camera input.Camera
 	// width and height are the view's size, the logical screen.
 	width, height int
+	// prefetch gets ready the blocks the camera will need next, in a
+	// session that saves on disk.
+	prefetch *prefetchStore
 }
 
 func (a *app) Update() error {
@@ -263,7 +299,15 @@ func (a *app) Update() error {
 		a.recordInput(in)
 	}
 	a.in = in
-	return a.game.Step(in)
+	if err := a.game.Step(in); err != nil {
+		return err
+	}
+	// Getting blocks ready is cheap to ask for but needs no asking every
+	// tick: the camera crosses the extra block in no fewer than 32 ticks.
+	if a.prefetch != nil && a.game.World().Tick()%4 == 0 {
+		a.prefetch.Prefetch(a.game.Upcoming(in.CameraX, in.CameraY, prefetchMargin))
+	}
+	return nil
 }
 
 // recordInput keeps in for the replay. At the limit it stops recording

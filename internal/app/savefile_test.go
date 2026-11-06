@@ -103,7 +103,7 @@ func TestSavedSessionGoesOnTheSame(t *testing.T) {
 	if n := len(played.ResidentBlocks()); n <= 6 {
 		t.Fatalf("only %d blocks are in memory at the save; the test needs some the view left behind", n)
 	}
-	if err := writeSave(dir, played, last.CameraX, last.CameraY); err != nil {
+	if err := writeSave(dir, played, last.CameraX, last.CameraY, nil); err != nil {
 		t.Fatal(err)
 	}
 	// The session that was saved goes on in its folder; a copy of the save

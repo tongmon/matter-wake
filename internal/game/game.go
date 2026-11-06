@@ -138,6 +138,9 @@ type Game struct {
 	viewW, viewH int
 	// spawnX and spawnY are where the camera starts.
 	spawnX, spawnY int
+	// ahead and aheadList are Upcoming's buffers.
+	ahead     []aheadBlock
+	aheadList [][2]int
 }
 
 // New starts a session in cfg.Scene with an empty inventory. In the

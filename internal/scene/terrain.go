@@ -67,31 +67,81 @@ func (t *Terrain) Surface(x int) int {
 }
 
 // Block makes block (bx, by). Cells past the world's edge stay air.
+//
+// It hashes each lattice point the block's noises use once, not once a
+// cell: that was half the time of making a block, which happens while the
+// game waits (TestTerrainBlockMatchesTheNoise).
 func (t *Terrain) Block(bx, by int) *world.Block {
 	b := new(world.Block)
 	x0, y0 := bx*world.BlockSize, by*world.BlockSize
-	for x := x0; x < min(x0+world.BlockSize, t.width); x++ {
+	x1, y1 := min(x0+world.BlockSize, t.width), min(y0+world.BlockSize, t.height)
+	if x0 >= x1 || y0 >= y1 {
+		return b
+	}
+	large := newGrid(t.seed, saltCaveLarge, caveSpanLarge, x0, y0, x1, y1)
+	small := newGrid(t.seed, saltCaveSmall, caveSpanSmall, x0, y0, x1, y1)
+	pockets := newGrid(t.seed, saltPockets, pocketSpan, x0, y0, x1, y1)
+	for x := x0; x < x1; x++ {
 		surface := t.Surface(x)
-		for y := max(y0, surface); y < min(y0+world.BlockSize, t.height); y++ {
-			b[(y-y0)*world.BlockSize+x-x0] = world.Cell{Mat: t.at(x, y), Tone: t.tone(x, y)}
+		for y := max(y0, surface); y < y1; y++ {
+			dx, dy := x-x0, y-y0
+			m := t.stone
+			if (2*large.at(dx, dy)+small.at(dx, dy))/3 >= caveOpen {
+				switch pocket := pockets.at(dx, dy); {
+				case pocket > sandFrom:
+					m = t.sand
+				case pocket < waterTo:
+					m = t.water
+				default:
+					m = material.Air
+				}
+			}
+			b[dy*world.BlockSize+dx] = world.Cell{Mat: m, Tone: t.tone(x, y)}
 		}
 	}
 	return b
 }
 
-// at returns the material of the ground at (x, y), below the surface.
-func (t *Terrain) at(x, y int) material.ID {
-	cave := (2*noise2(t.seed, saltCaveLarge, x, y, caveSpanLarge) + noise2(t.seed, saltCaveSmall, x, y, caveSpanSmall)) / 3
-	if cave < caveOpen {
-		return t.stone
+// grid is one noise over the cells [x0, x1) × [y0, y1): the values of the
+// lattice points it uses, and for each column and row the lattice step it
+// lies in and how far into it, eased. Its at gives what noise2 gives.
+type grid struct {
+	values []int
+	// cols is how many lattice points a row of values has.
+	cols   int
+	ix, iy []int
+	fx, fy []int
+}
+
+func newGrid(seed, salt uint64, span, x0, y0, x1, y1 int) *grid {
+	i0, j0 := x0/span, y0/span
+	g := &grid{cols: (x1-1)/span - i0 + 2}
+	rows := (y1-1)/span - j0 + 2
+	g.values = make([]int, g.cols*rows)
+	for j := range rows {
+		for i := range g.cols {
+			g.values[j*g.cols+i] = lattice(seed, salt, i0+i, j0+j)
+		}
 	}
-	switch pocket := noise2(t.seed, saltPockets, x, y, pocketSpan); {
-	case pocket > sandFrom:
-		return t.sand
-	case pocket < waterTo:
-		return t.water
+	steps := func(from, to, first int) (idx, f []int) {
+		for v := from; v < to; v++ {
+			i := v / span
+			idx = append(idx, i-first)
+			f = append(f, smooth((v-i*span)<<noiseBits/span))
+		}
+		return idx, f
 	}
-	return material.Air
+	g.ix, g.fx = steps(x0, x1, i0)
+	g.iy, g.fy = steps(y0, y1, j0)
+	return g
+}
+
+// at returns the noise at the cell dx, dy into the grid.
+func (g *grid) at(dx, dy int) int {
+	k := g.iy[dy]*g.cols + g.ix[dx]
+	top := blend(g.values[k], g.values[k+1], g.fx[dx])
+	bottom := blend(g.values[k+g.cols], g.values[k+g.cols+1], g.fx[dx])
+	return blend(top, bottom, g.fy[dy])
 }
 
 func (t *Terrain) tone(x, y int) uint8 {
@@ -110,17 +160,9 @@ func lattice(seed, salt uint64, i, j int) int {
 	return int(rng.Hash3(seed, salt, uint64(i), uint64(j)) >> (64 - noiseBits))
 }
 
-// noise2 is value noise: random values at the points of a lattice span
-// cells apart, smoothly blended between them. x and y are 0 or more.
-func noise2(seed, salt uint64, x, y, span int) int {
-	i, j := x/span, y/span
-	fx, fy := smooth((x-i*span)<<noiseBits/span), smooth((y-j*span)<<noiseBits/span)
-	top := blend(lattice(seed, salt, i, j), lattice(seed, salt, i+1, j), fx)
-	bottom := blend(lattice(seed, salt, i, j+1), lattice(seed, salt, i+1, j+1), fx)
-	return blend(top, bottom, fy)
-}
-
-// noise1 is value noise along one row.
+// noise1 is value noise along one row: random values at the points of a
+// lattice span cells apart, smoothly blended between them. The ground's
+// noises (grid) are the same in two dimensions. x is 0 or more.
 func noise1(seed, salt uint64, x, span int) int {
 	i := x / span
 	return blend(lattice(seed, salt, i, 0), lattice(seed, salt, i+1, 0), smooth((x-i*span)<<noiseBits/span))
