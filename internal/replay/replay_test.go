@@ -86,9 +86,7 @@ func TestRoundTrip(t *testing.T) {
 			r := sample()
 			r.Inputs = inputs
 			r.Creative = i%2 == 1
-			if i%2 == 0 {
-				r.Scene = game.SceneTerrain
-			}
+			r.Scene = []game.Scene{game.SceneTerrain, game.SceneSandbox, game.SceneCollapse}[i%3]
 			var buf bytes.Buffer
 			if err := Write(&buf, r); err != nil {
 				t.Fatal(err)

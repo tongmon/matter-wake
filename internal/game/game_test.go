@@ -8,6 +8,8 @@ import (
 
 	"github.com/tongmon/matter-wake/internal/material"
 	"github.com/tongmon/matter-wake/internal/rng"
+	"github.com/tongmon/matter-wake/internal/scene"
+	"github.com/tongmon/matter-wake/internal/world"
 )
 
 // testMaterials is the tests' own table, so tuning data/materials.json does
@@ -25,7 +27,7 @@ const testMaterials = `{"materials": [
 // testTool digs stone (hardness 10, hp 1000) in four ticks and sand in one.
 var testTool = Tool{Power: 10, Rate: 300, Radius: 3}
 
-func testTable(t *testing.T) *material.Table {
+func testTable(t testing.TB) *material.Table {
 	t.Helper()
 	tab, err := material.ParseBytes([]byte(testMaterials))
 	if err != nil {
@@ -53,7 +55,7 @@ func floor(g *Game) (x, y int) {
 }
 
 // step runs one tick of g and fails the test on an error.
-func step(t *testing.T, g *Game, in Input) {
+func step(t testing.TB, g *Game, in Input) {
 	t.Helper()
 	if err := g.Step(in); err != nil {
 		t.Fatal(err)
@@ -400,6 +402,34 @@ func TestStepDoesNotAllocate(t *testing.T) {
 		}); n != 0 {
 			t.Fatalf("Step(%+v) allocates %v times", in, n)
 		}
+	}
+}
+
+// The collapse scene is the room scene.Collapse lays out, all of it in
+// memory, seen from the top left.
+func TestCollapseScene(t *testing.T) {
+	tab := testTable(t)
+	g, err := New(&Config{
+		Width: 480, Height: 270, Seed: 5, Workers: 2, Materials: tab,
+		Slots: []string{"sand"}, Tool: testTool, Scene: SceneCollapse,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer g.Close()
+	w, err := world.New(world.Config{Width: 480, Height: 270, Seed: 5, Workers: 2, Materials: tab})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer w.Close()
+	if err := scene.Collapse(w, tab, 5); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := g.World().Checksum(), w.Checksum(); got != want {
+		t.Fatalf("the session's world has checksum %#x, scene.Collapse's %#x", got, want)
+	}
+	if x, y := g.Spawn(); x != 0 || y != 0 || g.Blocks() != 1 {
+		t.Fatalf("spawn (%d, %d) with %d blocks, want (0, 0) with the one block of the room", x, y, g.Blocks())
 	}
 }
 

@@ -10,9 +10,9 @@
 // the same for the whole session. Creative mode, for development, places
 // without taking from the inventory and so makes cells.
 //
-// A session plays either the sandbox, a small room kept whole in memory,
-// or the terrain, the big world of which only the blocks around the camera
-// stay in memory (stream.go). The terrain makes a block the first time the
+// A session plays the sandbox, a small room kept whole in memory; the
+// collapse room, as small, for measuring; or the terrain, the big world of
+// which only the blocks around the camera stay in memory (stream.go). The terrain makes a block the first time the
 // camera comes near it; after that the block lives in the store.
 package game
 
@@ -39,6 +39,9 @@ const (
 	// SceneTerrain is the big seeded world, kept in memory around the
 	// camera only (design.md 7절).
 	SceneTerrain Scene = "terrain"
+	// SceneCollapse is a room like the sandbox whose cells all fall at
+	// once: the heaviest scene for a screen, to measure (design.md 2절).
+	SceneCollapse Scene = "collapse"
 )
 
 // Input is what the player does during one tick.
@@ -170,7 +173,7 @@ func New(cfg *Config) (*Game, error) {
 		slots[i] = id
 	}
 	switch cfg.Scene {
-	case SceneSandbox, SceneTerrain:
+	case SceneSandbox, SceneTerrain, SceneCollapse:
 	default:
 		return nil, fmt.Errorf("game: unknown scene %q", cfg.Scene)
 	}
@@ -227,8 +230,12 @@ func resumeTick(cfg *Config) (uint32, error) {
 
 // setUp lays out the session's scene.
 func (g *Game) setUp(cfg *Config) error {
-	if cfg.Scene == SceneSandbox {
+	switch cfg.Scene {
+	case SceneSandbox:
 		return scene.Sandbox(g.world, cfg.Materials)
+	case SceneCollapse:
+		return scene.Collapse(g.world, cfg.Materials, cfg.Seed)
+	case SceneTerrain:
 	}
 	switch {
 	case cfg.ViewWidth < 1 || cfg.ViewHeight < 1:

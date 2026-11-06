@@ -1,0 +1,20 @@
+matter-wake-replay 4
+# The load scene of design.md 2절: in a 4096x4096 world of the terrain, the
+# camera jumps from the spawn into the caves at tick 1, and every block it
+# needs there loads at once and wakes. It stays five seconds while the sand
+# and water of the caves settle. Play it with -timing to measure a load;
+# give it more ticks to watch longer. Cells come and go with their blocks,
+# so this replay is not checked for conservation.
+seed 1
+size 4096 4096
+scene terrain
+view 480 270
+stream 64 4 512 12 60
+tool 10 2000 4
+mode play
+slots sand water stone
+materials ee74dacd409567c3
+ticks 301
+
+0 0 0 - 0 1808 955
+1 0 0 - 0 1808 2600

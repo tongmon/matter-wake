@@ -87,7 +87,7 @@ Module path: `github.com/tongmon/matter-wake`.
 | `internal/world/` | The cell grid, kept in 512×512 blocks that can be loaded and unloaded, and its tick. | **no** |
 | `internal/material/` | Material kinds and the data loader. | **no** |
 | `internal/palette/` | Cells to premultiplied RGBA, testable without a GPU. | **no** |
-| `internal/scene/` | Starting worlds: the sandbox, and the seeded terrain the big world makes its blocks from. | **no** |
+| `internal/scene/` | Starting worlds: the sandbox, the collapse room for measuring, and the seeded terrain the big world makes its blocks from. | **no** |
 | `internal/save/` | Encodes a world for saving: each block of cells, field by field, and the world header. | **no** |
 | `internal/replay/` | Encodes and decodes replays: how a session started and its input for every tick. Holds the replay goldens. | **no** |
 | `internal/sched/` | The fixed goroutine pool. The only logic package with `sync`. | **no** |
@@ -130,6 +130,7 @@ Choose checks in proportion to the change:
   - `go run ./cmd/matter-wake -replay out/replays/a.rpl -shots 0,120,600 -shots-dir out/shots` captures it.
 - **Performance:** `go test -run '^$' -bench . -count 5 ./internal/world/` before and after the change.
   - In the game, `-timing` logs on exit how much CPU time the ticks, the draws and the frames took (median, p99, max, and frames over the 16.7 ms budget). With `-shots` or `-replay` the run is repeatable: `go run ./cmd/matter-wake -seed 1 -shots 600 -timing`. `-workers 2` stands in for the reference CPU's two cores (design.md 2절).
+  - The two heaviest scenes (design.md 2절): `go test -run '^$' -bench Scene -count 5 ./internal/game/`, and in the game `go run ./cmd/matter-wake -scene collapse -seed 1 -shots 300 -timing -workers 2` and `go run ./cmd/matter-wake -replay internal/replay/testdata/terrain_load.rpl -timing -workers 2`.
   - `-cpuprofile out/prof/cpu.pprof` writes a CPU profile of the run. Read it with `go tool pprof -top -focus matter-wake/internal out/prof/cpu.pprof`; without the focus, waiting for the screen fills it (pitfalls.md).
 - **Visual and render changes:** capture PNGs at chosen ticks and inspect them:
   - `go run ./cmd/matter-wake -seed 1 -shots 0,60,300 -shots-dir out/shots` (the sandbox; add `-scene terrain` for the big world, shot from where the camera starts)

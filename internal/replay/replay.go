@@ -24,7 +24,7 @@
 //
 // The first line names the format and its version. The header follows in
 // this order: the world seed, the world size in cells, the scene (sandbox
-// or terrain, game.Scene), the size of the camera's view in cells, the
+// collapse or terrain, game.Scene), the size of the camera's view in cells, the
 // stream (the grid, the lead and its cap, the target and the ticks between
 // checks, as in game.Stream), the tool (its power, its damage per tick and its brush
 // radius, as in game.Tool), the mode (play, or creative for
@@ -143,7 +143,7 @@ func (r *Replay) validate() error {
 	switch {
 	case r.Width < 1 || r.Height < 1:
 		return fmt.Errorf("replay: world size %dx%d is not positive", r.Width, r.Height)
-	case r.Scene != game.SceneSandbox && r.Scene != game.SceneTerrain:
+	case r.Scene != game.SceneSandbox && r.Scene != game.SceneTerrain && r.Scene != game.SceneCollapse:
 		return fmt.Errorf("replay: unknown scene %q", r.Scene)
 	case r.ViewWidth < 1 || r.ViewHeight < 1:
 		return fmt.Errorf("replay: view %dx%d is not positive", r.ViewWidth, r.ViewHeight)
@@ -185,13 +185,18 @@ const (
 
 // The words of the scene line.
 const (
-	sceneSandbox = "sandbox"
-	sceneTerrain = "terrain"
+	sceneSandbox  = "sandbox"
+	sceneTerrain  = "terrain"
+	sceneCollapse = "collapse"
 )
 
 func sceneWord(s game.Scene) string {
-	if s == game.SceneTerrain {
+	switch s {
+	case game.SceneTerrain:
 		return sceneTerrain
+	case game.SceneCollapse:
+		return sceneCollapse
+	case game.SceneSandbox:
 	}
 	return sceneSandbox
 }
@@ -347,7 +352,7 @@ func (p *parser) header(r *Replay) (int, error) {
 
 // view reads the scene, view and stream lines into r.
 func (p *parser) view(r *Replay) error {
-	f, err := p.field("scene", "scene sandbox|terrain", 1)
+	f, err := p.field("scene", "scene sandbox|collapse|terrain", 1)
 	if err != nil {
 		return err
 	}
@@ -356,8 +361,10 @@ func (p *parser) view(r *Replay) error {
 		r.Scene = game.SceneSandbox
 	case sceneTerrain:
 		r.Scene = game.SceneTerrain
+	case sceneCollapse:
+		r.Scene = game.SceneCollapse
 	default:
-		return p.errorf("scene %q: want %s or %s", f[0], sceneSandbox, sceneTerrain)
+		return p.errorf("scene %q: want %s, %s or %s", f[0], sceneSandbox, sceneCollapse, sceneTerrain)
 	}
 	if f, err = p.field("view", "view <width> <height>", 2); err != nil {
 		return err
