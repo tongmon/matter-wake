@@ -4,6 +4,7 @@ import (
 	"flag"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -22,10 +23,12 @@ func TestDeterminismGolden(t *testing.T) {
 		t.Fatal("-tags box2dscalar did not reach the C code: Box2D still has its AVX2 solver")
 	}
 	got := pileTrace(t, false)
-	t.Logf("%s path:\n%s", simdPath(), got)
+	t.Logf("%s/%s, %s path:\n%s", runtime.GOOS, runtime.GOARCH, simdPath(), got)
 	if hasAVX2() {
 		if sse2 := pileTrace(t, true); sse2 != got {
 			t.Errorf("the SSE2 fallback differs from AVX2:\nSSE2:\n%sAVX2:\n%s", sse2, got)
+		} else {
+			t.Log("the SSE2 fallback matches AVX2")
 		}
 	}
 	if *update {
