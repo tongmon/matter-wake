@@ -61,6 +61,7 @@ The source of **The Powder Toy** (release v100.1.400) lives outside the repo at 
   - The world is a grid of cells; one cell is one pixel of the logical screen.
   - Cell logic uses integers only, so results are identical across CPUs and operating systems.
   - A tick updates rows of 64×64 chunks from the bottom up, each row in two parallel phases (even columns, then odd). No cell update may reach more than `world.MaxReach` cells sideways outside its chunk, nor write upward; that is what makes a phase safe to run in parallel. Rising matter (gas) will need its own pass.
+  - A chunk scans only its change rectangle; a chunk with an empty one sleeps. Every change to a cell must be marked: `World.mark` during a tick, `World.touch` between ticks. An update that leaves its cell as it was and draws no random number may decide that from only the cell, the two beside it and the three below it; the marks cover exactly those. A new rule that looks further before doing nothing, or a new way to change cells, must widen the marks to match. `TestSleepMatchesScanningEverything` checks that sleeping changes nothing.
 - **Determinism:**
   - Pass seeded RNG (`internal/rng`) explicitly. Per-chunk streams are keyed by (seed, tick, chunk), never by goroutine.
   - No wall-clock time, map-iteration-order dependence, or scheduling dependence inside the simulation.
