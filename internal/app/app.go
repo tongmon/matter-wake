@@ -69,7 +69,7 @@ func Run(cfg *Config) error {
 	}
 	if cfg.RecordPath != "" {
 		// Fail now rather than after the session, when the inputs would be lost.
-		if err := makeParentDir(cfg.RecordPath); err != nil {
+		if err := prepareRecording(cfg.RecordPath); err != nil {
 			return err
 		}
 	}
@@ -89,7 +89,7 @@ func Run(cfg *Config) error {
 		a.playback, a.replaying = playback.Inputs, true
 	}
 	if cfg.RecordPath != "" {
-		a.record = replay.New(sess)
+		a.record, a.recordLimit = replay.New(sess), replay.MaxTicks
 	}
 	if len(cfg.Shots) > 0 {
 		a.shots = newShooter(cfg.Shots, cfg.ShotsDir, sess.Width, sess.Height)
@@ -147,8 +147,11 @@ type app struct {
 	// playback holds the inputs of the replay being played, if replaying.
 	playback  []game.Input
 	replaying bool
-	// record collects the inputs to save, if recording.
+	// record collects the inputs to save, if recording, up to recordLimit
+	// of them, the most a replay may hold.
 	record        *replay.Replay
+	recordLimit   int
+	recordFull    bool
 	in            game.Input
 	width, height int
 }
@@ -168,11 +171,24 @@ func (a *app) Update() error {
 		return ebiten.Termination
 	}
 	if a.record != nil {
-		a.record.Inputs = append(a.record.Inputs, in)
+		a.recordInput(in)
 	}
 	a.in = in
 	a.game.Step(in)
 	return nil
+}
+
+// recordInput keeps in for the replay. At the limit it stops recording
+// rather than make the whole replay too long to save.
+func (a *app) recordInput(in game.Input) {
+	if len(a.record.Inputs) < a.recordLimit {
+		a.record.Inputs = append(a.record.Inputs, in)
+		return
+	}
+	if !a.recordFull {
+		a.recordFull = true
+		slog.Warn("the recording is full; later inputs are not recorded", "ticks", a.recordLimit)
+	}
 }
 
 // nextInput returns the input for the coming tick, or false when the
