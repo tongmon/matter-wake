@@ -4,6 +4,7 @@ import (
 	"testing"
 	"unsafe"
 
+	"github.com/tongmon/matter-wake/internal/fixed"
 	"github.com/tongmon/matter-wake/internal/material"
 )
 
@@ -20,6 +21,12 @@ func TestCellSize(t *testing.T) {
 func TestMotionStaysWithinReach(t *testing.T) {
 	if reach := fallReach(); reach < 1 || reach >= MaxReach {
 		t.Fatalf("a fall at maxFall drifts %d cells; it must be in [1, %d)", reach, MaxReach)
+	}
+	if reach := liquidReach(0); reach > MaxReach {
+		t.Fatalf("a liquid that falls and flows reaches %d cells, more than MaxReach %d", reach, MaxReach)
+	}
+	if _, err := New(Config{Width: 8, Height: 8, Materials: testTable(t, nil)}); err != nil {
+		t.Fatalf("the test materials exceed the reach: %v", err)
 	}
 }
 
@@ -143,6 +150,98 @@ func TestSlideChanceZeroStacksAColumn(t *testing.T) {
 			t.Fatalf("sand with slideChance 0 left its column:\n%s", render(w, ids))
 		}
 	}
+}
+
+// A liquid keeps its sideways push while something blocks it, so it flows
+// on the same way once the way is clear.
+func TestLiquidKeepsPushWhenBlocked(t *testing.T) {
+	w, ids := newTestWorld(t, 5, 1, 1)
+	w.Set(1, 0, ids.stone)
+	w.Set(3, 0, ids.stone)
+	w.Set(2, 0, ids.water)
+	push := 2 * fixed.One
+	w.cells[2].Ax = push
+	w.Step()
+	if c, _ := w.At(2, 0); c.Ax != push {
+		t.Fatalf("blocked water has push %v, want %v kept", c.Ax, push)
+	}
+}
+
+// A liquid that slides down diagonally goes on flowing that way: the slide
+// sets its push to one cell in that direction.
+func TestLiquidSlideSetsPush(t *testing.T) {
+	w, ids := newTestWorldWith(t, 3, 3, 1, func(d []material.Def) { d[defWater].FlowSpeed = 0 })
+	w.Set(1, 2, ids.stone)
+	w.Set(1, 1, ids.water)
+	w.Step()
+	x, y, _ := find(w, ids.water)
+	c, _ := w.At(x, y)
+	if y != 2 || x == 1 || c.Ax != fixed.FromInt(x-1) {
+		t.Fatalf("water at (%d, %d) with push %v, want it slid to a lower corner with push %v",
+			x, y, c.Ax, fixed.FromInt(x-1))
+	}
+}
+
+// A falling liquid flows sideways in the tick it lands, instead of resting
+// for a tick on whatever it hit.
+func TestLiquidFlowsInTheTickItLands(t *testing.T) {
+	w, ids := newTestWorld(t, 20, 2, 1)
+	w.Set(5, 0, ids.water)
+	w.cells[5].Ax = 2 * fixed.One
+	w.Step()
+	if x, y, _ := find(w, ids.water); y != 1 || x <= 5 {
+		t.Fatalf("water at (%d, %d) after one tick, want it on the floor right of x=5", x, y)
+	}
+}
+
+// Water poured from a height spreads into a low mound. Before the liquid
+// rules followed the observed ones, it piled up as high as sand.
+func TestPouredWaterSpreadsInsteadOfPiling(t *testing.T) {
+	water := pourOnFloor(t, false, 60, 1600)
+	sand := pourOnFloor(t, true, 60, 1600)
+	if water*3 > sand {
+		t.Fatalf("poured water piles %d cells high and sand %d; want water at most a third of sand", water, sand)
+	}
+}
+
+// pourOnFloor paints a disk of sand or water drop cells above a walled stone
+// floor each tick, as the sandbox brush does, until volume cells rest on the
+// floor or the pile reaches the brush. It returns the pile's height under
+// the pour.
+func pourOnFloor(t *testing.T, sand bool, drop, volume int) int {
+	t.Helper()
+	const width, cx, brush = 401, 200, 4
+	floor := drop + 10
+	w, ids := newTestWorld(t, width, floor+1, 1)
+	w.Fill(0, floor, width, floor+1, ids.stone)
+	w.Fill(0, 0, 1, floor, ids.stone)
+	w.Fill(width-1, 0, width, floor, ids.stone)
+	id := ids.water
+	if sand {
+		id = ids.sand
+	}
+	column := func(x int) int {
+		h := 0
+		for y := floor - 1; y >= 0; y-- {
+			if c, _ := w.At(x, y); c.Mat != id {
+				break
+			}
+			h++
+		}
+		return h
+	}
+	for range 1000 {
+		w.Paint(cx, floor-drop, brush, id, true)
+		w.Step()
+		resting := 0
+		for x := 1; x < width-1; x++ {
+			resting += column(x)
+		}
+		if resting >= volume || column(cx) >= drop-brush-1 {
+			break
+		}
+	}
+	return column(cx)
 }
 
 // Water poured into a basin settles to a nearly flat surface.

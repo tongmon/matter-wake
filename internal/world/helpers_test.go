@@ -39,8 +39,8 @@ func testDefs() []material.Def {
 		},
 		{
 			Name: "water", Kind: material.Liquid, Density: 20,
-			FallAccel: q(0.25), SinkChance: 50,
-			FlowSpeed: q(0.5), FlowDamping: q(0.9), Dispersion: 4,
+			FallAccel: q(0.375), SinkChance: 50,
+			FlowSpeed: q(0.9), FlowDamping: q(0.8), Dispersion: 4,
 		},
 	}
 }
