@@ -75,8 +75,6 @@ type Game struct {
 	// inventory holds how many cells of each material the player carries,
 	// indexed by material.ID.
 	inventory []int
-	// wear holds the damage of the cells being dug.
-	wear wearTable
 }
 
 // New starts a session in the sandbox scene with an empty inventory.
@@ -111,7 +109,6 @@ func New(cfg *Config) (*Game, error) {
 	return &Game{
 		world: w, mats: cfg.Materials, slots: slots, tool: cfg.Tool, creative: cfg.Creative,
 		inventory: make([]int, cfg.Materials.Len()),
-		wear:      newWearTable(cfg.Tool.Radius),
 	}, nil
 }
 
@@ -163,19 +160,14 @@ func (g *Game) Step(in Input) {
 	case in.Place:
 		g.place(in.CursorX, in.CursorY)
 	}
-	if !in.Dig {
-		g.wear.forget()
-	}
 	g.world.Step()
 }
 
 // dig deals the tool's damage to every cell under the brush centred on
-// (cx, cy) that it can dig, and moves the cells dug out into the
-// inventory. How long a cell keeps its damage is up to g.wear.
+// (cx, cy) that it can dig, and moves the cells it uses up into the
+// inventory. The damage stays in the cells (world.World.Wear).
 func (g *Game) dig(cx, cy int) {
-	r, width := g.tool.Radius, g.world.Width()
-	g.wear.begin()
-	// Rows from the top, each from the left: increasing cell order.
+	r := g.tool.Radius
 	for y := cy - r; y <= cy+r; y++ {
 		for x := cx - r; x <= cx+r; x++ {
 			dx, dy := x-cx, y-cy
@@ -187,18 +179,12 @@ func (g *Game) dig(cx, cy int) {
 			if !def.Kind.Diggable() || def.Hardness > g.tool.Power {
 				continue
 			}
-			cell := y*width + x
-			// The damage is below the hp: a cell is dug out when it reaches it.
-			damage := g.wear.dealt(cell, c)
-			if def.HP-damage <= g.tool.Rate {
+			if g.world.Wear(x, y, g.tool.Rate) {
 				g.world.Set(x, y, material.Air)
 				g.inventory[c.Mat]++
-				continue
 			}
-			g.wear.keep(cell, c, damage+g.tool.Rate)
 		}
 	}
-	g.wear.end()
 }
 
 // place fills the empty cells under the brush centred on (cx, cy) with the

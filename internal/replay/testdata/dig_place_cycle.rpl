@@ -1,7 +1,8 @@
 matter-wake-replay 2
 # Digs and places the same material again and again: sand out of the heap
 # and back on top of it, stone out of the left ledge and into a block in
-# the air and back, and sand with the two buttons in quick turns. The test
+# the air and back, sand with the two buttons in quick turns, and stone
+# cut in two strokes, which works because cells keep their damage. The test
 # checks after every tick that each material's cells plus its inventory
 # stay what they were at the start.
 seed 2
@@ -64,4 +65,10 @@ ticks 900
 552 120 130 D 0
 554 120 100 P 0
 556 120 100 - 0
+# Stone keeps its damage between strokes: 30 ticks, a pause, then 25 more
+# cut through the left ledge, where 50 in all are needed.
+600 100 150 D 0
+630 100 150 - 0
+640 100 150 D 0
+665 100 150 - 0
 # Then everything settles until tick 900.
