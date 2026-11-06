@@ -41,6 +41,7 @@
 | 거리, 동률, 거리 0 | stream.go `farthest` | 같음 | |
 | delay_until 미루기 | 없음 | 없음 | 의미가 미확정이라 두지 않음 |
 | 내릴 때 저장 | stream.go `check`의 `store.Save` | 같음 | |
+| 접근 범위가 상주하지 않는 작업 영역은 자기 칸만으로 돌림(C122) | internal/world blocks.go `reachable` | 다름 | 우리는 그 청크를 멈춤(#14, references.md에 적음). 카메라 영역이 화면 끝 청크의 접근 범위를 덮지 못할 수 있어, stream.go `viewReach`로 그 블록을 올리고 보호함(Codex 리뷰, 2026-11-06) |
 
 ## 증상 재현 (증상을 고치는 작업일 때)
 - 증상을 고치는 작업은 아닙니다. 개발자 결정(2026-11-06, "Noita 방식으로")에 따른 규칙 교체입니다.
@@ -76,6 +77,7 @@
   - keep-alive 대신 지금 카메라 영역을 보호. 개체가 없고 화면 블록은 늘 있어야 하므로 (자체 설계)
   - 카메라 영역은 바뀔 때만이 아니라 매 틱 상주를 확인 (자체 설계)
   - 간격 하한 1틱 (자체 설계)
+  - 화면에 걸친 청크가 닿는 블록도 올리고 보호. Noita의 축소 실행(C122)을 쓰지 않아 화면 끝 청크가 멈추는 것을 막음 (자체 설계, Codex 리뷰)
 - 쓰지 않음: delay_until 미루기(의미 미확정), 요청 뒤 refresh 함수(물리·재질 정리를 포함하나 의미 미확정), 자동 저장 분기(범위 밖)
 
 ## 자료에 없음 / OPEN → 우리 설계
@@ -88,10 +90,11 @@ TPT(The Powder Toy)에는 월드 스트리밍이 없습니다. 스킬의 tpt.md�
 | 요청부터 상주 완료까지의 지연, 로딩 우선순위·취소 | OPEN(STREAMING_POLICY:130) | 없음 | 틱 안에서 올림. 미리 읽기가 늦으면 그 틱이 기다림 | 늦은 블록 수 임시 계측(디스크 지연 20 ms까지 늦음 없음) | 아니오 |
 | 개체 keep-alive와 카메라 요청을 합치는 규칙 | OPEN(WORLD_STREAMING:35, STREAMING_POLICY:129-132) | 없음 | 생명체를 넣을 때 설계 | 생명체를 넣을 때 | 나중에 판단 |
 | 저장 뒤 재개할 때 요청·검사 상태 | 미검증 | 없음 | `session.txt`의 `stream` 줄에 지난 영역, 마지막 검사 틱, 간격을 저장 | `TestSavedSessionGoesOnTheSame` | 아니오 |
+| 화면 끝 청크가 닿는 블록 | Noita는 축소 실행으로 처리(C122:3577-3582), 카메라 영역과의 관계는 자료에 없음 | 없음 | `viewReach`로 올리고 보호 | `TestViewChunksRun`, `TestViewReachStaysInMemory` | 아니오 |
 | delay_until의 의미 | 미확정(STREAMING_POLICY:64-65) | 없음 | 두지 않음 | 없음 | 아니오 (세 조건 미충족: 아직 문제로 드러나지 않음) |
 
 ## 검증 계획
-- 테스트: `TestRequestArea`, `TestAreaBlocksIncludeTheFarEdge`, `TestStreamRequestsAhead`, `TestEvictionCheckSchedule`, `TestEvictionPicksFarthestFirst`, `TestStandingStillUnloadsDownToTarget`, `TestLeavingAndComingBackKeepsTheBlocks`, `TestSavedSessionGoesOnTheSame`(검사를 7틱마다 하는 경우 포함), 세션 형식 테스트
+- 테스트: `TestRequestArea`, `TestAreaBlocksIncludeTheFarEdge`, `TestStreamRequestsAhead`, `TestViewChunksRun`, `TestViewReachStaysInMemory`, `TestEvictionCheckSchedule`, `TestEvictionPicksFarthestFirst`, `TestStandingStillUnloadsDownToTarget`, `TestLeavingAndComingBackKeepsTheBlocks`, `TestSavedSessionGoesOnTheSame`(검사를 7틱마다 하는 경우 포함), 세션 형식 테스트
 - 측정값과 기준: 60Hz 지형 걷기에서 16.7 ms를 넘는 틱 0개. 구현 뒤 측정(16384² 지형, 900틱, 16 worker, 디스크 저장과 미리 읽기 켬):
   - 틱당 4칸: 중앙값 1.00 ms, 최대 2.6 ms, 상주 블록 최대 14개.
   - 틱당 16칸: 중앙값 1.00 ms, 최대 4.8 ms, 상주 블록 최대 26개.

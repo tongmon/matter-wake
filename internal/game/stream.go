@@ -87,6 +87,9 @@ func (g *Game) request(camX, camY int) error {
 	if err := g.loadArea(area); err != nil {
 		return err
 	}
+	if err := g.loadRange(g.viewReach(camX, camY)); err != nil {
+		return err
+	}
 	if s.Requested && area == s.Area {
 		return nil
 	}
@@ -136,6 +139,34 @@ func (g *Game) areaBlocks(a [4]int) blockRange {
 	return blockRange{x0, y0, x1, y1}
 }
 
+// viewReach returns the blocks that the chunks the view at (camX, camY)
+// shows may reach when they run: the chunks widened by world.MaxReach
+// beside and below. The world runs a chunk only when all of those are in
+// memory, and the camera's area can end short of them on the view's
+// bottom and right, by as much as a chunk and its reach. Noita runs such
+// an edge region on its own cells alone; here it would freeze on screen,
+// so these blocks stay in memory too.
+func (g *Game) viewReach(camX, camY int) blockRange {
+	x0, y0 := chunkStart(camX)-world.MaxReach, chunkStart(camY)
+	x1 := chunkStart(camX+g.viewW+world.ChunkSize-1) + world.MaxReach
+	y1 := chunkStart(camY+g.viewH+world.ChunkSize-1) + world.MaxReach
+	cols, rows := g.world.Blocks()
+	r := blockRange{max(blockOf(x0), 0), max(blockOf(y0), 0), min(blockOf(x1-1)+1, cols), min(blockOf(y1-1)+1, rows)}
+	if r.x0 >= r.x1 || r.y0 >= r.y1 {
+		return blockRange{}
+	}
+	return r
+}
+
+// chunkStart returns the first cell coordinate of the chunk holding cell
+// coordinate c.
+func chunkStart(c int) int {
+	if c < 0 {
+		return -((-c + world.ChunkSize - 1) / world.ChunkSize) * world.ChunkSize
+	}
+	return c / world.ChunkSize * world.ChunkSize
+}
+
 // blockOf returns the block coordinate of cell coordinate c, rounding
 // down, so cells left of or above the world fall in negative blocks.
 func blockOf(c int) int {
@@ -147,7 +178,11 @@ func blockOf(c int) int {
 
 // loadArea puts in memory the blocks of area a that are not.
 func (g *Game) loadArea(a [4]int) error {
-	r := g.areaBlocks(a)
+	return g.loadRange(g.areaBlocks(a))
+}
+
+// loadRange puts in memory the blocks of r that are not.
+func (g *Game) loadRange(r blockRange) error {
 	for by := r.y0; by < r.y1; by++ {
 		for bx := r.x0; bx < r.x1; bx++ {
 			if err := g.loadBlock(bx, by); err != nil {
@@ -191,7 +226,8 @@ func (g *Game) loadBlock(bx, by int) error {
 // check runs a check at tick now if Interval ticks have passed since the
 // last: with more than Target blocks in memory, it saves and unloads one,
 // or as many as there are over three times Target, each the farthest from
-// the camera at (camX, camY) outside the camera's area. With Target or
+// the camera at (camX, camY) outside the camera's area and the view's
+// reach (viewReach). With Target or
 // fewer it sets Interval back to Check; at twice Target or more it halves
 // it, down to a tick. Noita times its checks in seconds of real time;
 // here they count ticks, so a session's result never depends on how fast
@@ -211,7 +247,7 @@ func (g *Game) check(now uint32, camX, camY int) error {
 		s.Interval = max(s.Interval/2, 1)
 	}
 	tries := max(1, n-3*lim.Target)
-	keep := g.areaBlocks(s.Area)
+	keep := [2]blockRange{g.areaBlocks(s.Area), g.viewReach(camX, camY)}
 	cx, cy := blockOf(camX+g.viewW/2), blockOf(camY+g.viewH/2)
 	for range tries {
 		i := g.farthest(keep, cx, cy)
@@ -231,14 +267,15 @@ func (g *Game) check(now uint32, camX, camY int) error {
 	return nil
 }
 
-// farthest returns the index in resident of the block outside keep that
-// lies farthest, in whole blocks, from block (cx, cy); of equally far
-// ones, the first in row order, so the choice never depends on the order
-// of resident. It returns -1 if there is none, and never picks (cx, cy).
-func (g *Game) farthest(keep blockRange, cx, cy int) int {
+// farthest returns the index in resident of the block outside both
+// ranges of keep that lies farthest, in whole blocks, from block (cx, cy);
+// of equally far ones, the first in row order, so the choice never
+// depends on the order of resident. It returns -1 if there is none, and
+// never picks (cx, cy).
+func (g *Game) farthest(keep [2]blockRange, cx, cy int) int {
 	best, bestD := -1, 0
 	for i, b := range g.resident {
-		if keep.has(b) {
+		if keep[0].has(b) || keep[1].has(b) {
 			continue
 		}
 		dx, dy := b[0]-cx, b[1]-cy

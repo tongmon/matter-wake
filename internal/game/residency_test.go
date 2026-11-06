@@ -3,7 +3,56 @@ package game
 import (
 	"slices"
 	"testing"
+
+	"github.com/tongmon/matter-wake/internal/world"
 )
+
+// The chunks the view shows run: the blocks their updates may reach,
+// beside and below, are in memory even where the camera's area ends short
+// of them. Noita's camera area ends 1 to 64 cells past the view's bottom
+// and right edges, so the chunk on the view's edge can reach into a block
+// it does not request. Found by the Codex review of the residency rule
+// (2026-11-06): sand on screen hung in the air.
+func TestViewChunksRun(t *testing.T) {
+	g := newTerrainGame(t, 1)
+	sand := g.mats.MustLookup("sand")
+	// The camera's area ends at row 462, inside block row 0; the view's
+	// last chunk row, 448 to 511, reaches row 542 in block row 1.
+	step(t, g, Input{CameraX: 100, CameraY: 188})
+	for y := 450; y < 520; y++ {
+		if c, _ := g.world.At(200, y); c.Mat != 0 {
+			t.Fatalf("cell (200, %d) holds material %d; the test needs sky below the sand", y, c.Mat)
+		}
+	}
+	g.world.Set(200, 450, sand)
+	for range 10 {
+		step(t, g, Input{CameraX: 100, CameraY: 188})
+	}
+	if c, _ := g.world.At(200, 450); c.Mat == sand {
+		t.Fatal("the sand at (200, 450), on screen, has not fallen in 10 ticks")
+	}
+}
+
+// For any camera, every block that a chunk on screen may reach is in
+// memory.
+func TestViewReachStaysInMemory(t *testing.T) {
+	g := newTerrainGame(t, 1)
+	for camY := 0; camY < 1200; camY += 37 {
+		for camX := 0; camX < 1400; camX += 53 {
+			step(t, g, Input{CameraX: camX, CameraY: camY})
+			x0, y0 := camX/world.ChunkSize*world.ChunkSize-world.MaxReach, camY/world.ChunkSize*world.ChunkSize
+			x1 := (camX+480+world.ChunkSize-1)/world.ChunkSize*world.ChunkSize + world.MaxReach
+			y1 := (camY+270+world.ChunkSize-1)/world.ChunkSize*world.ChunkSize + world.MaxReach
+			for by := max(y0, 0) / world.BlockSize; by <= min(y1-1, 4095)/world.BlockSize; by++ {
+				for bx := max(x0, 0) / world.BlockSize; bx <= min(x1-1, 4095)/world.BlockSize; bx++ {
+					if !g.world.Resident(bx, by) {
+						t.Fatalf("camera (%d, %d): block (%d, %d), which a chunk on screen reaches, is not in memory", camX, camY, bx, by)
+					}
+				}
+			}
+		}
+	}
+}
 
 // newViewGame starts a terrain session of 16×16 blocks with a view of
 // w×h cells and the stream s.
