@@ -155,6 +155,111 @@ func TestPaint(t *testing.T) {
 	}
 }
 
+// Skipping what lies outside the chunks' change rectangles must not change
+// the world: tick by tick, a world that sleeps matches one that scans
+// every cell of every chunk, with cells set, filled, painted and worn
+// between ticks.
+func TestSleepMatchesScanningEverything(t *testing.T) {
+	for _, workers := range []int{1, 4} {
+		t.Run(fmt.Sprintf("workers=%d", workers), func(t *testing.T) {
+			sleeping, ids := newTestWorld(t, 200, 150, workers)
+			scanning, _ := newTestWorld(t, 200, 150, workers)
+			scanning.scanAll = true
+			for _, w := range []*World{sleeping, scanning} {
+				scatter(w, ids, 13)
+			}
+			for tick := range 500 {
+				for _, w := range []*World{sleeping, scanning} {
+					edit(w, ids, tick)
+					w.Step()
+				}
+				if a, b := sleeping.Checksum(), scanning.Checksum(); a != b {
+					t.Fatalf("tick %d: the sleeping world's checksum is %#x, the scanned world's %#x",
+						sleeping.Tick(), a, b)
+				}
+			}
+			if sleeping.Awake() >= scanning.Awake() {
+				t.Fatalf("at the end %d chunks are awake, as many as the %d a full scan runs", sleeping.Awake(), scanning.Awake())
+			}
+		})
+	}
+}
+
+// edit changes w before the given tick the way the player's tools do,
+// mostly where things have settled: it digs through the ledges, drops sand
+// and water, and wears cells down.
+func edit(w *World, ids testIDs, tick int) {
+	ledge := w.Height() * 6 / 10
+	switch tick {
+	case 200:
+		w.Paint(w.Width()/2, ledge, 5, material.Air, false)
+	case 230:
+		w.Fill(20, 0, 50, 12, ids.sand)
+	case 260:
+		w.Paint(w.Width()*3/4, 20, 6, ids.water, true)
+	case 300:
+		w.Set(w.Width()/3, 2, ids.sand)
+	case 330:
+		w.Paint(w.Width()/4, w.Height()*8/10, 4, material.Air, false)
+	}
+	if tick >= 350 && tick < 400 {
+		w.Wear(w.Width()/5, w.Height()-1, 900)
+	}
+}
+
+// Layers that cannot move put their chunks to sleep after one tick.
+func TestRestingLayersSleep(t *testing.T) {
+	w, ids := newTestWorld(t, 256, 128, 1)
+	// Water on sand, wall to wall.
+	w.Fill(0, 64, 256, 96, ids.water)
+	w.Fill(0, 96, 256, 128, ids.sand)
+	w.Step()
+	if w.Awake() == 0 {
+		t.Fatal("the first tick after the fill ran no chunk")
+	}
+	w.Step()
+	if n := w.Awake(); n != 0 {
+		t.Fatalf("%d of %d chunks are awake in layers that cannot move", n, w.Chunks())
+	}
+}
+
+// A chunk wakes when something changes in or next to it, and sleeps again
+// once nothing in it can move. The world holds only sand: an unfilled row
+// on top of a pool keeps moving under the liquid rule (design.md 7절).
+func TestChunksWakeAndSleepAgain(t *testing.T) {
+	w, ids := newTestWorld(t, 256, 128, 1)
+	w.Fill(0, 96, 256, 128, ids.sand)
+	settle(t, w)
+	edits := []struct {
+		name string
+		edit func()
+	}{
+		{"set", func() { w.Set(100, 0, ids.sand) }},
+		{"fill", func() { w.Fill(10, 10, 30, 30, ids.sand) }},
+		{"paint", func() { w.Paint(200, 100, 4, material.Air, false) }},
+	}
+	for _, e := range edits {
+		e.edit()
+		w.Step()
+		if w.Awake() == 0 {
+			t.Fatalf("%s woke no chunk", e.name)
+		}
+		settle(t, w)
+	}
+}
+
+// settle steps w until every chunk sleeps, and fails if that takes long.
+func settle(t *testing.T, w *World) {
+	t.Helper()
+	for range 2000 {
+		w.Step()
+		if w.Awake() == 0 {
+			return
+		}
+	}
+	t.Fatalf("%d chunks are still awake after 2000 ticks", w.Awake())
+}
+
 func TestStepDoesNotAllocate(t *testing.T) {
 	for _, workers := range []int{1, 4} {
 		w, ids := newTestWorld(t, 256, 192, workers)
@@ -165,6 +270,7 @@ func TestStepDoesNotAllocate(t *testing.T) {
 	}
 }
 
+// BenchmarkStep runs a busy world: a random mix falling onto ledges.
 func BenchmarkStep(b *testing.B) {
 	for _, workers := range []int{1, 8} {
 		b.Run(fmt.Sprintf("workers=%d", workers), func(b *testing.B) {
@@ -176,5 +282,36 @@ func BenchmarkStep(b *testing.B) {
 				w.Step()
 			}
 		})
+	}
+}
+
+// BenchmarkStepScanAll runs the busy world of BenchmarkStep with every
+// chunk scanned whole, as before chunks could sleep: the cost of keeping
+// the change rectangles without the saving.
+func BenchmarkStepScanAll(b *testing.B) {
+	for _, workers := range []int{1, 8} {
+		b.Run(fmt.Sprintf("workers=%d", workers), func(b *testing.B) {
+			w, ids := newTestWorld(b, 1024, 1024, workers)
+			w.scanAll = true
+			scatter(w, ids, 5)
+			b.ReportAllocs()
+			b.ResetTimer()
+			for range b.N {
+				w.Step()
+			}
+		})
+	}
+}
+
+// BenchmarkStepAsleep runs a world in which nothing can move.
+func BenchmarkStepAsleep(b *testing.B) {
+	w, ids := newTestWorld(b, 1024, 1024, 1)
+	w.Fill(0, 512, 1024, 768, ids.water)
+	w.Fill(0, 768, 1024, 1024, ids.sand)
+	w.Step()
+	b.ReportAllocs()
+	b.ResetTimer()
+	for range b.N {
+		w.Step()
 	}
 }

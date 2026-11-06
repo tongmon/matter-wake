@@ -11,6 +11,14 @@
 // the result is the same for any number of workers. Each row's scan
 // direction is a hash of (seed, tick, chunk, row) instead, so only the
 // cells that move draw from the stream.
+//
+// A chunk scans only the cells in its change rectangle: those that moved,
+// changed or drew a random number in its last run, and those around any
+// cell that changed since. A chunk whose rectangle is empty sleeps. The
+// skipped cells would not have done anything: an update that does nothing
+// decides so from the cell, the two beside it and the three below it, so a
+// cell that did nothing last time does nothing again until one of those
+// changes, and then it is marked (TestSleepMatchesScanningEverything).
 package world
 
 import (
@@ -60,8 +68,13 @@ type Cell struct {
 }
 
 type chunk struct {
-	cx, cy         int
-	x0, y0, x1, y1 int
+	cx, cy int
+	// cells are the chunk's cells.
+	cells rect
+	// i indexes the world's state of each chunk.
+	i int
+	// phase is the index of the phase the chunk runs in.
+	phase int
 	// first is set for the chunks of the first phase of their row, which
 	// run before the chunks beside them.
 	first bool
@@ -72,6 +85,21 @@ type job struct {
 	c chunk
 	// s is the chunk's random stream for the tick.
 	s rng.Stream
+	// live is what the run scans. It starts as the chunk's change
+	// rectangle and grows as cells change, so the run also reaches the
+	// cells it has not passed yet that a change may set moving.
+	live rect
+	// next is what the run marked in its own chunk for the chunk's next
+	// run.
+	next rect
+	// path covers the places the cell being updated has been.
+	path rect
+	// out covers the changes the run marked outside its chunk. They are
+	// merged into the chunks there after the phase.
+	out rect
+	// Each run writes its job for every cell it changes. The padding keeps
+	// two jobs off one cache line, so workers do not slow each other down.
+	_ [64]byte
 }
 
 // passed reports whether the tick's scan has already been over (x, y), a
@@ -79,7 +107,8 @@ type job struct {
 // row of chunks below has run, and so has the job's own row except, while
 // the first phase runs, the chunks beside it.
 func (j *job) passed(x, y int) bool {
-	return !j.c.first || y >= j.c.y1 || x >= j.c.x0 && x < j.c.x1
+	c := j.c.cells
+	return !j.c.first || y >= c.y1 || x >= c.x0 && x < c.x1
 }
 
 // Config describes a new world.
@@ -103,11 +132,27 @@ type World struct {
 	// MaxMaterials entries with a material.ID needs no bounds check.
 	mats *[material.MaxMaterials]matProps
 	pool *sched.Pool
+	// bounds are all the cells.
+	bounds rect
+	// chunks holds every chunk, row by row; cols is how many a row has.
+	chunks []chunk
+	cols   int
+	// dirty is each chunk's change rectangle: the cells its next run
+	// scans. An empty one means the chunk sleeps.
+	dirty []rect
+	// keep holds what was marked in a chunk earlier in the tick than it
+	// runs. The run scans it, and so does the run after.
+	keep []rect
 	// phases run in order: for each row of chunks from the bottom, its even
 	// columns, then its odd columns.
 	phases [][]chunk
 	// jobs are the runs of the phase being run; stepChunk reads them.
 	jobs []job
+	// awake is how many chunks the last tick ran.
+	awake int
+	// scanAll makes every chunk scan all its cells every tick, for tests
+	// that check that sleeping changes nothing.
+	scanAll bool
 	// stepChunkFn is stepChunk bound once, so Step does not allocate.
 	stepChunkFn func(int)
 }
@@ -136,16 +181,27 @@ func New(cfg Config) (*World, error) {
 		seed:   cfg.Seed,
 		mats:   mats,
 		pool:   sched.New(cfg.Workers),
+		bounds: rect{0, 0, cfg.Width, cfg.Height},
+		cols:   (cfg.Width + ChunkSize - 1) / ChunkSize,
 	}
 	rows := (cfg.Height + ChunkSize - 1) / ChunkSize
+	for cy := range rows {
+		for cx := range w.cols {
+			x0, y0 := cx*ChunkSize, cy*ChunkSize
+			w.chunks = append(w.chunks, chunk{
+				cx: cx, cy: cy, i: len(w.chunks), first: cx%2 == 0,
+				cells: rect{x0, y0, min(x0+ChunkSize, cfg.Width), min(y0+ChunkSize, cfg.Height)},
+			})
+		}
+	}
+	w.dirty = make([]rect, len(w.chunks))
+	w.keep = make([]rect, len(w.chunks))
 	for cy := rows - 1; cy >= 0; cy-- {
 		for parity := range 2 {
 			var phase []chunk
-			for cx := parity; cx*ChunkSize < cfg.Width; cx += 2 {
-				c := chunk{cx: cx, cy: cy, x0: cx * ChunkSize, y0: cy * ChunkSize, first: parity == 0}
-				c.x1 = min(c.x0+ChunkSize, cfg.Width)
-				c.y1 = min(c.y0+ChunkSize, cfg.Height)
-				phase = append(phase, c)
+			for cx := parity; cx < w.cols; cx += 2 {
+				w.chunks[cy*w.cols+cx].phase = len(w.phases)
+				phase = append(phase, w.chunks[cy*w.cols+cx])
 			}
 			if len(phase) > 0 {
 				w.phases = append(w.phases, phase)
@@ -171,6 +227,13 @@ func (w *World) Height() int { return w.height }
 // Tick returns how many ticks have run.
 func (w *World) Tick() uint32 { return w.tick }
 
+// Chunks returns how many chunks the grid is cut into.
+func (w *World) Chunks() int { return len(w.chunks) }
+
+// Awake returns how many chunks the last tick ran. The others slept:
+// nothing in them could move.
+func (w *World) Awake() int { return w.awake }
+
 // Cells returns the grid in row-major order. Callers must not modify it.
 func (w *World) Cells() []Cell { return w.cells }
 
@@ -194,15 +257,18 @@ func (w *World) Set(x, y int, id material.ID) {
 		return
 	}
 	w.cells[y*w.width+x] = Cell{Mat: id, Tone: w.tone(x, y)}
+	w.touch(rect{x, y, x + 1, y + 1})
 }
 
 // Fill sets every cell in the half-open rectangle [x0, x1) × [y0, y1) to id.
 func (w *World) Fill(x0, y0, x1, y1 int, id material.ID) {
-	for y := max(y0, 0); y < min(y1, w.height); y++ {
-		for x := max(x0, 0); x < min(x1, w.width); x++ {
+	r := rect{x0, y0, x1, y1}.clip(w.bounds)
+	for y := r.y0; y < r.y1; y++ {
+		for x := r.x0; x < r.x1; x++ {
 			w.cells[y*w.width+x] = Cell{Mat: id, Tone: w.tone(x, y)}
 		}
 	}
+	w.touch(r)
 }
 
 // Paint sets the cells within radius r of (cx, cy) to id and returns how
@@ -222,6 +288,9 @@ func (w *World) Paint(cx, cy, r int, id material.ID, onlyEmpty bool) int {
 			*c = Cell{Mat: id, Tone: w.tone(x, y)}
 			changed++
 		}
+	}
+	if changed > 0 {
+		w.touch(rect{cx - r, cy - r, cx + r + 1, cy + r + 1})
 	}
 	return changed
 }
@@ -262,31 +331,99 @@ func (w *World) tone(x, y int) uint8 {
 	return uint8(rng.Hash3(w.seed, uint64(x), uint64(y), uint64(w.tick)) >> 56)
 }
 
-// Step advances the world by one tick.
+// Step advances the world by one tick. It runs the chunks whose change
+// rectangle is not empty, phase by phase, and after each phase merges what
+// the runs marked in the chunks around them, so a chunk that runs later in
+// the tick already sees it.
 func (w *World) Step() {
 	w.tick++
-	for _, phase := range w.phases {
-		for k, c := range phase {
-			w.jobs[k] = job{c: c}
+	w.awake = 0
+	for p, phase := range w.phases {
+		n := 0
+		for _, c := range phase {
+			live := w.dirty[c.i]
+			if w.scanAll {
+				live = c.cells
+			}
+			if live.empty() {
+				continue
+			}
+			w.dirty[c.i], w.keep[c.i] = w.keep[c.i], rect{}
+			w.jobs[n] = job{c: c, live: live}
+			n++
 		}
-		w.pool.Run(len(phase), w.stepChunkFn)
+		if n == 0 {
+			continue
+		}
+		w.awake += n
+		w.pool.Run(n, w.stepChunkFn)
+		// Bounding boxes merge in any order to the same result, so the
+		// worker count does not matter.
+		for k := range n {
+			w.wake(w.jobs[k].out, p)
+		}
 	}
 }
 
-// stepChunk updates the cells of one chunk of the current phase, from the
-// bottom row up, each row in a random direction.
+// stepChunk runs one job of the current phase: it updates the cells of its
+// rectangle from the bottom row up, each row in a random direction. The
+// rectangle may grow as it goes.
 func (w *World) stepChunk(i int) {
 	j := &w.jobs[i]
 	c := j.c
 	j.s = rng.New(rng.Hash3(w.seed, uint64(w.tick), uint64(c.cx), uint64(c.cy)))
-	for y := c.y1 - 1; y >= c.y0; y-- {
+	for y := j.live.y1 - 1; y >= j.live.y0; y-- {
 		if w.scansRight(c.cx, y) {
-			for x := c.x0; x < c.x1; x++ {
+			for x := j.live.x0; x < j.live.x1; x++ {
 				w.update(x, y, j)
 			}
 		} else {
-			for x := c.x1 - 1; x >= c.x0; x-- {
+			for x := j.live.x1 - 1; x >= j.live.x0; x-- {
 				w.update(x, y, j)
+			}
+		}
+	}
+	w.dirty[c.i].add(j.next)
+}
+
+// mark records that the cells in r changed during the job's run, so that
+// every cell whose update reads them is updated: in this run if the scan
+// has not passed it yet, and in the chunk's next run. The part outside the
+// job's chunk waits in j.out until the phase is over.
+func (w *World) mark(j *job, r rect) {
+	m := r.readers()
+	own := m.clip(j.c.cells)
+	j.live.add(own)
+	j.next.add(own)
+	if own != m {
+		// Past the world's edge too; wake clips it.
+		j.out.add(m)
+	}
+}
+
+// touch records that the cells in r changed between ticks, so that every
+// cell whose update reads them is updated in the next tick.
+func (w *World) touch(r rect) {
+	w.wake(r.readers(), len(w.phases))
+}
+
+// wake adds the cells of r, marked in phase p of a tick, to the change
+// rectangles of the chunks they lie in. A chunk that runs later in the
+// tick scans them in this tick and the next, as a run does with what it
+// marks in its own chunk: a cell that is done for the tick when the scan
+// reaches it gets its update in the next one.
+func (w *World) wake(r rect, p int) {
+	r = r.clip(w.bounds)
+	if r.empty() {
+		return
+	}
+	for cy := r.y0 / ChunkSize; cy <= (r.y1-1)/ChunkSize; cy++ {
+		for cx := r.x0 / ChunkSize; cx <= (r.x1-1)/ChunkSize; cx++ {
+			c := &w.chunks[cy*w.cols+cx]
+			part := r.clip(c.cells)
+			w.dirty[c.i].add(part)
+			if c.phase > p {
+				w.keep[c.i].add(part)
 			}
 		}
 	}

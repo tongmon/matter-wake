@@ -50,7 +50,9 @@ type spot struct{ i, x, y int }
 
 // update moves one cell by updatePowder or updateLiquid. A cell that cannot
 // move draws no random numbers, so skipping it changes nothing else in its
-// chunk (TestRestingCellsDrawNoRandomNumbers).
+// chunk (TestRestingCellsDrawNoRandomNumbers). A cell that moved, changed
+// or drew a random number marks where it has been, so it and the cells
+// around it are updated again.
 func (w *World) update(x, y int, j *job) {
 	i := y*w.width + x
 	c := &w.cells[i]
@@ -66,12 +68,18 @@ func (w *World) update(x, y int, j *job) {
 	if c.Last == w.tick {
 		return
 	}
+	before, s := *c, j.s
+	j.path = rect{x, y, x + 1, y + 1}
 	at := spot{i, x, y}
 	if p.kind == material.Liquid {
 		w.updateLiquid(at, p, j)
-		return
+	} else {
+		w.updatePowder(at, p, j)
 	}
-	w.updatePowder(at, p, j)
+	// A cell that moved left another one at i.
+	if *c != before || j.s != s {
+		w.mark(j, j.path)
+	}
 }
 
 // updatePowder moves a powder. A falling powder now and then pauses for a
@@ -192,6 +200,7 @@ func (w *World) swap(i, x, y int, j *job) int {
 	if w.cells[i].Mat != material.Air && j.passed(x, y) {
 		w.cells[i].Last = w.tick
 	}
+	j.path.add(rect{x, y, x + 1, y + 1})
 	return k
 }
 

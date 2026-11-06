@@ -48,8 +48,9 @@ func (r *Renderer) DrawWorld(dst *ebiten.Image, w *world.World) {
 	dst.DrawImage(r.cells, nil)
 }
 
-// DrawOverlay draws the brush outline at the cursor, a status line and
-// what the inventory holds of each slot's material.
+// DrawOverlay draws the brush outline at the cursor, a status line with
+// how many chunks the last tick ran, and what the inventory holds of each
+// slot's material.
 func (r *Renderer) DrawOverlay(dst *ebiten.Image, g *game.Game, cursorX, cursorY int) {
 	radius := float32(g.Tool().Radius) + 0.5
 	vector.StrokeCircle(dst, float32(cursorX)+0.5, float32(cursorY)+0.5, radius, 1, brushStroke, false)
@@ -60,7 +61,8 @@ func (r *Renderer) DrawOverlay(dst *ebiten.Image, g *game.Game, cursorX, cursorY
 	for i, id := range g.Slots() {
 		fmt.Fprintf(&held, "%d %s %d  ", i+1, r.mats.Def(id).Name, g.Inventory(id))
 	}
-	status := fmt.Sprintf("%s  tick %d  TPS %.0f  FPS %.0f\n%s\nLMB place  RMB dig  1-%d material",
-		g.Selected().Name, g.World().Tick(), ebiten.ActualTPS(), ebiten.ActualFPS(), held.String(), len(g.Slots()))
+	w := g.World()
+	status := fmt.Sprintf("%s  tick %d  TPS %.0f  FPS %.0f  awake %d/%d chunks\n%s\nLMB place  RMB dig  1-%d material",
+		g.Selected().Name, w.Tick(), ebiten.ActualTPS(), ebiten.ActualFPS(), w.Awake(), w.Chunks(), held.String(), len(g.Slots()))
 	ebitenutil.DebugPrint(dst, status)
 }
