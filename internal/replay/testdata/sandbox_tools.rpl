@@ -1,0 +1,53 @@
+matter-wake-replay 1
+# The sandbox at its default size. It uses every tool: it selects each
+# slot, places every material, digs through a ledge and the floor, digs
+# away what it placed, presses both buttons at once, selects a slot that
+# does not exist and brushes outside the world. Then everything settles.
+seed 1
+size 480 270
+brush 4
+slots sand water stone
+materials 6e7eb28e6efa51f0
+ticks 600
+
+# Wait while the sand and the water fall.
+0 240 20 - 0
+# Select stone and place two disks of it in the air, 49 cells each.
+20 240 40 - 3
+21 240 40 P 0
+22 260 40 - 0
+23 260 40 P 0
+24 260 40 - 0
+# Select water and pour it for ten ticks; it falls to the floor.
+40 200 120 - 2
+41 200 120 P 0
+51 200 120 - 0
+# Select sand and pour it onto the water on the right ledge.
+60 360 150 - 1
+61 360 150 P 0
+71 360 150 - 0
+# Dig a hole through the left ledge under the heap of sand.
+90 120 150 D 0
+96 128 150 D 0
+102 136 150 D 0
+108 136 150 - 0
+# Dig into the floor.
+150 240 268 D 0
+151 240 268 - 0
+# Dig away the two stone disks, 49 cells each.
+180 240 40 D 0
+181 240 40 - 0
+182 260 40 D 0
+183 260 40 - 0
+# Both buttons at once: digging wins.
+200 300 255 PD 0
+201 300 255 - 0
+# Slot 9 does not exist, so sand stays selected.
+210 40 120 - 9
+211 40 120 P 0
+212 40 120 - 0
+# The brush outside the world changes nothing.
+230 -20 -20 D 0
+231 500 100 P 0
+232 500 100 - 0
+# Then everything settles until tick 600.

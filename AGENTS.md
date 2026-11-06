@@ -79,7 +79,7 @@ Module path: `github.com/tongmon/matter-wake`.
 | Path | Role | Ebitengine |
 |---|---|---|
 | `cmd/matter-wake/` | Entry point. Parses flags and calls `app.Run`. | via app |
-| `internal/app/` | Window, fixed-step loop, `-shots` capture. | yes |
+| `internal/app/` | Window, fixed-step loop, `-shots` capture, replay files (`-record`, `-replay`). | yes |
 | `internal/render/` | Draws a session: uploads cell colors, overlay. | yes |
 | `internal/input/` | Maps devices to `game.Input`. | yes |
 | `internal/game/` | A play session: the world plus the player's tools, stepped by `Input`. | **no** |
@@ -87,6 +87,7 @@ Module path: `github.com/tongmon/matter-wake`.
 | `internal/material/` | Material kinds and the data loader. | **no** |
 | `internal/palette/` | Cells to premultiplied RGBA, testable without a GPU. | **no** |
 | `internal/scene/` | Starting worlds. | **no** |
+| `internal/replay/` | Encodes and decodes replays: how a session started and its input for every tick. Holds the replay goldens. | **no** |
 | `internal/sched/` | The fixed goroutine pool. The only logic package with `sync`. | **no** |
 | `internal/fixed/` | Fixed-point numbers (Q8) for simulation values with fractions. | **no** |
 | `internal/rng/` | Seeded random numbers (SplitMix64), stable across Go versions. | **no** |
@@ -119,7 +120,12 @@ Module path: `github.com/tongmon/matter-wake`.
 Choose checks in proportion to the change:
 
 - **Logic changes:** unit tests. For a bug fix, write a failing test first.
-- **Simulation rule changes:** the golden test pins how the sandbox evolves (`internal/scene/testdata/sandbox.golden`). After an intended change, rerun `go test ./internal/scene/ -update` and review the golden diff in the PR. The test uses its own copy of the materials in `testdata/`, so editing `data/` does not move it.
+- **Simulation rule changes:** two golden tests pin how the sandbox evolves. After an intended change, rerun both with `-update` and review the golden diffs in the PR. Each uses its own copy of the materials in `testdata/`, so editing `data/` does not move them.
+  - `internal/scene/testdata/sandbox.golden`, the sandbox left alone: `go test ./internal/scene/ -update`.
+  - `internal/replay/testdata/*.golden`, the sandbox played by each `*.rpl` replay, which also checks after every tick that only the brush changed the cell counts: `go test ./internal/replay/ -update`.
+- **Replays:** to reproduce or show a session, write or record a replay and play it back. A replay sets the world size and seed, ignores the devices, and exits at its end; give it more `ticks` to watch the end state longer. Format: the `internal/replay` package comment.
+  - `go run ./cmd/matter-wake -record out/replays/a.rpl` saves the session's inputs on exit.
+  - `go run ./cmd/matter-wake -replay out/replays/a.rpl -shots 0,120,600 -shots-dir out/shots` captures it.
 - **Performance:** `go test -run '^$' -bench . -count 5 ./internal/world/` before and after the change.
 - **Visual and render changes:** capture PNGs at chosen ticks and inspect them:
   - `go run ./cmd/matter-wake -seed 1 -shots 0,60,300 -shots-dir out/shots`
