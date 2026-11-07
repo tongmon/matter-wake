@@ -46,16 +46,18 @@ func newHeavyScene(tb testing.TB, workers int) (*System, *world.World) {
 	return s, w
 }
 
-// stages holds the time of each stage of each tick.
+// stages holds the time of each stage of each tick, and of the three that
+// are the bodies' own together.
 type stages struct {
-	write, collide, cells, step []time.Duration
+	write, collide, cells, step, bodies []time.Duration
 }
 
 // BenchmarkBodies runs the heavy-load scene and reports, for each stage of
 // a tick, its median, 95th percentile and largest time in µs: writing the
 // bodies' pixels, making the terrain near them collision, the cells' tick
 // with the queue's reinsertion (on 2 workers, the reference CPU's cores,
-// design.md 2절), and Box2D's Step.
+// design.md 2절), and Box2D's Step. "bodies" is the three stages that are
+// the bodies' own, together in each tick: what the 3 ms target covers.
 func BenchmarkBodies(b *testing.B) {
 	var all stages
 	now := newClock(b)
@@ -79,6 +81,7 @@ func BenchmarkBodies(b *testing.B) {
 			all.collide = append(all.collide, t2-t1)
 			all.cells = append(all.cells, t3-t2)
 			all.step = append(all.step, t4-t3)
+			all.bodies = append(all.bodies, t2-t0+t4-t3)
 		}
 		b.StopTimer()
 		s.Close()
@@ -88,7 +91,7 @@ func BenchmarkBodies(b *testing.B) {
 	for _, st := range []struct {
 		name string
 		d    []time.Duration
-	}{{"write", all.write}, {"terrain", all.collide}, {"cells", all.cells}, {"step", all.step}} {
+	}{{"write", all.write}, {"terrain", all.collide}, {"cells", all.cells}, {"step", all.step}, {"bodies", all.bodies}} {
 		slices.Sort(st.d)
 		n := len(st.d)
 		b.ReportMetric(float64(st.d[n/2])/1e3, st.name+"-p50-µs")

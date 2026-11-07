@@ -375,7 +375,10 @@ func BenchmarkStepAsleep(b *testing.B) {
 	w, ids := newTestWorld(b, 1024, 1024, 1)
 	w.Fill(0, 512, 1024, 768, ids.water)
 	w.Fill(0, 768, 1024, 1024, ids.sand)
-	w.Step()
+	// The sand counts its ticks at rest until it is settled.
+	for range SettleTicks + 2 {
+		w.Step()
+	}
 	b.ReportAllocs()
 	b.ResetTimer()
 	for range b.N {
