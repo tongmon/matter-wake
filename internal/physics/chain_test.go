@@ -94,7 +94,7 @@ func TestChainsJoinSmoothly(t *testing.T) {
 	for range 30 {
 		w.Step(dt, subSteps)
 	}
-	w.setVelocity(b, Vec2{5, 0})
+	w.SetVelocity(b, Vec2{5, 0}, 0)
 	for range 120 {
 		w.Step(dt, subSteps)
 		if v, _ := w.Velocity(b); w.Position(b).X < 3 && v.X < 4.9 {

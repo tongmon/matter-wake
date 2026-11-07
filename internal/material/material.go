@@ -54,11 +54,12 @@ var kindNames = [...]string{
 	Solid:  "solid",
 }
 
-// Diggable reports whether a tool may dig materials of the kind: powders
-// and statics. Liquids are gathered by another tool, and empty space holds
-// nothing to dig.
+// Diggable reports whether a tool may dig materials of the kind: powders,
+// statics and the solids of rigid bodies, whose pixels it digs out of
+// their images. Liquids are gathered by another tool, and empty space
+// holds nothing to dig.
 func (k Kind) Diggable() bool {
-	return k == Static || k == Powder
+	return k == Static || k == Powder || k == Solid
 }
 
 // String returns the name used for the kind in data files.
@@ -136,7 +137,8 @@ type Def struct {
 	Dispersion uint8 `json:"dispersion"`
 
 	// Hardness is the grade of tool it takes to dig the material: a tool
-	// digs it only if the tool's power is at least this. Diggable kinds only.
+	// digs it only if the tool's power is at least this. Diggable kinds
+	// only: powders, statics and solids.
 	Hardness uint8 `json:"hardness"`
 	// HP is how much digging one cell takes: the cell is dug out once the
 	// damage dealt to it reaches HP, so 0 digs it at the first touch.
@@ -229,7 +231,7 @@ func validate(d Def) error {
 		return fmt.Errorf("%q: %w", d.Name, err)
 	}
 	if !d.Kind.Diggable() && (d.Hardness != 0 || d.HP != 0) {
-		return fmt.Errorf("%q: only powders and statics may have hardness or hp", d.Name)
+		return fmt.Errorf("%q: only powders, statics and solids may have hardness or hp", d.Name)
 	}
 	if err := validateSolid(d); err != nil {
 		return fmt.Errorf("%q: %w", d.Name, err)

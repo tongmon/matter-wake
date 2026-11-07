@@ -22,6 +22,9 @@ const (
 	// a bump of one cell, one corner cut.
 	tolNum = 3
 	tolDen = 4
+	// A body's outline is simplified the same way to bodyTol cells. 🧪
+	// Noita's, 1.0 (C68).
+	bodyTol = 1
 	// keepOutDepth is how deep, in cells, a settled cell may reach into a
 	// body's shape and still become terrain while the body is there
 	// (keepOut). 🧪 Above Box2D's linear slop (0.05 cells), so a body
@@ -291,8 +294,12 @@ type tracer struct {
 	verts             []vertex
 	keep              []bool
 	pts               []physics.Vec2
-	spans             []span
-	chains            []physics.Chain
+	// body is set to trace a body's image instead: simplified to bodyTol,
+	// with the points of pts kept as lattice points in corners too.
+	body    bool
+	corners []vertex
+	spans   []span
+	chains  []physics.Chain
 }
 
 // solid reports whether cell (i, j) of the chunk, -1..w and -1..h, is one
@@ -366,7 +373,7 @@ func (t *tracer) outline(x0, y0, w, h int) []physics.Chain {
 	t.edges = clear0(t.edges, n)
 	t.pred = clear0(t.pred, n)
 	t.seen = clear0(t.seen, n)
-	t.pts, t.spans = t.pts[:0], t.spans[:0]
+	t.pts, t.corners, t.spans = t.pts[:0], t.corners[:0], t.spans[:0]
 	t.findEdges()
 	t.eachEdge(func(v vertex, d int) {
 		end := vertex{v.x + dirX[d], v.y + dirY[d]}
@@ -526,6 +533,9 @@ func (t *tracer) add(x0, y0 int, sp span) {
 	for k := range n {
 		if t.keep[k] {
 			t.pts = append(t.pts, meters(x0, y0, t.verts[k]))
+			if t.body {
+				t.corners = append(t.corners, t.verts[k])
+			}
 		}
 	}
 	sp.end = len(t.pts)
@@ -552,7 +562,11 @@ func (t *tracer) simplify(a, b int) {
 		}
 	}
 	// farDist is the squared distance times ll; compare it scaled.
-	if farDist*tolDen*tolDen <= tolNum*tolNum*ll {
+	num, den := int64(tolNum), int64(tolDen)
+	if t.body {
+		num, den = bodyTol, 1
+	}
+	if farDist*den*den <= num*num*ll {
 		return
 	}
 	t.keep[far] = true
