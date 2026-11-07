@@ -1,10 +1,12 @@
 package rigid
 
 import (
+	"math"
 	"testing"
 
 	"github.com/tongmon/matter-wake/internal/fixed"
 	"github.com/tongmon/matter-wake/internal/material"
+	"github.com/tongmon/matter-wake/internal/physics"
 	"github.com/tongmon/matter-wake/internal/world"
 )
 
@@ -105,4 +107,30 @@ func cells(w *world.World) []int {
 	w.Counts(c)
 	w.Queued(c)
 	return c
+}
+
+// setPose puts b's center at (x, y) in cells, turned by deg degrees, as
+// though Box2D had moved it there.
+func setPose(b *body, x, y, deg float64) {
+	a := deg * math.Pi / 180
+	b.p = physics.Vec2{X: float32(x / cellsPerMeter), Y: float32(y / cellsPerMeter)}
+	b.q = physics.Rot{C: float32(math.Cos(a)), S: float32(math.Sin(a))}
+}
+
+// imageAt returns where the center of cell (x, y) falls in b's image, in
+// pixels from its top-left corner, in float64.
+func imageAt(b *body, x, y int) (fi, fj float64) {
+	c, s := float64(b.q.C), float64(b.q.S)
+	dx := float64(x) + 0.5 - float64(b.p.X)*cellsPerMeter
+	dy := float64(y) + 0.5 - float64(b.p.Y)*cellsPerMeter
+	return c*dx + s*dy + float64(b.w)/2, c*dy - s*dx + float64(b.h)/2
+}
+
+// edge is how near a pixel's edge a point may be and still round either
+// way between float32 and float64.
+const edge = 1e-3
+
+// onEdge reports whether f lies within edge of a whole number.
+func onEdge(f float64) bool {
+	return math.Abs(f-math.Round(f)) < edge
 }

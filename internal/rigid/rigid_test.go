@@ -1,12 +1,14 @@
 package rigid
 
 import (
+	"maps"
 	"math"
 	"slices"
 	"testing"
 
 	"github.com/tongmon/matter-wake/internal/material"
 	"github.com/tongmon/matter-wake/internal/physics"
+	"github.com/tongmon/matter-wake/internal/rng"
 	"github.com/tongmon/matter-wake/internal/world"
 )
 
@@ -88,50 +90,185 @@ func TestBoxRestsOnStone(t *testing.T) {
 	}
 }
 
-// A turned body maps each pixel's center through its transform and rounds
-// down, as Noita does: at 45° some pixels meet in one cell, and the grid
-// holds fewer cells than the image has pixels. The float32 mapping agrees
-// with float64 except where a center lies on a cell's edge.
-func TestTurnedBodyMapsPixelCenters(t *testing.T) {
-	for _, deg := range []float32{0, 10, 30, 45, 60, 135, 180} {
-		s, w, id := newSystem(t, 100, 100, 1)
-		if err := s.add(id.wood, 40, 40, 17, 11, deg*math.Pi/180); err != nil {
+// A turned body samples its image at the center of every cell: each cell
+// whose center lies inside the body's rectangle holds the pixel the center
+// falls in, and no cell outside it holds one. So the body has no holes at
+// any angle, for odd and even sides, wherever its center lies between
+// cells. The float32 sampling agrees with float64 except where a center
+// lies on a pixel's edge.
+func TestTurnedBodyHasNoHoles(t *testing.T) {
+	for _, size := range [][2]int{{16, 12}, {17, 11}, {40, 8}, {5, 3}} {
+		s, w, id := newSystem(t, 128, 128, 1)
+		if err := s.add(id.wood, 40, 40, size[0], size[1], 0); err != nil {
 			t.Fatal(err)
 		}
 		b := &s.bodies[0]
-		b.p, b.q = s.phys.Transform(b.id)
-		s.write(b, 0)
-		n, _ := owned(w, id.wood, 0)
-		placed := 0
-		cellsHit := map[[2]int32]bool{}
-		for k, on := range b.placed {
-			if !on {
-				t.Fatalf("%v°: pixel %d over air was not placed", deg, k)
-			}
-			placed++
-			cellsHit[[2]int32{b.x[k], b.y[k]}] = true
-			i, j := k%17, k/17
-			u, v := float64(i)+0.5-8.5, float64(j)+0.5-5.5
-			fx := float64(b.p.X)*10 + float64(b.q.C)*u - float64(b.q.S)*v
-			fy := float64(b.p.Y)*10 + float64(b.q.S)*u + float64(b.q.C)*v
-			near := math.Abs(fx-math.Round(fx)) < 1e-3 || math.Abs(fy-math.Round(fy)) < 1e-3
-			if !near && (int32(math.Floor(fx)) != b.x[k] || int32(math.Floor(fy)) != b.y[k]) {
-				t.Fatalf("%v°: pixel %d went to (%d, %d), float64 says (%v, %v)", deg, k, b.x[k], b.y[k], fx, fy)
+		fewest, most := math.MaxInt, 0
+		for step := range 720 {
+			deg := float64(step) / 2
+			setPose(b, 64+float64(step%7)*0.13, 64+float64(step%5)*0.17, deg)
+			s.sync()
+			n, _ := owned(w, id.wood, 0)
+			fewest, most = min(fewest, n), max(most, n)
+			reach := (b.w+b.h)/2 + 2
+			for y := 64 - reach; y <= 64+reach; y++ {
+				for x := 64 - reach; x <= 64+reach; x++ {
+					c, _ := w.At(x, y)
+					body, pixel := c.Body()
+					in := c.Mat == id.wood && body == 0
+					fi, fj := imageAt(b, x, y)
+					inside := fi > edge && fi < float64(b.w)-edge && fj > edge && fj < float64(b.h)-edge
+					outside := fi < -edge || fi > float64(b.w)+edge || fj < -edge || fj > float64(b.h)+edge
+					switch {
+					case inside && !in:
+						t.Fatalf("%dx%d at %v°: (%d, %d) is inside the body at pixel (%.3f, %.3f) but holds %+v", b.w, b.h, deg, x, y, fi, fj, c)
+					case outside && in:
+						t.Fatalf("%dx%d at %v°: (%d, %d) is outside the body at (%.3f, %.3f) but holds pixel %d", b.w, b.h, deg, x, y, fi, fj, pixel)
+					case inside && !onEdge(fi) && !onEdge(fj):
+						if want := int(math.Floor(fj))*b.w + int(math.Floor(fi)); int(pixel) != want || c.Tone != b.tone[want] {
+							t.Fatalf("%dx%d at %v°: (%d, %d) holds pixel %d, want %d", b.w, b.h, deg, x, y, pixel, want)
+						}
+					}
+				}
 			}
 		}
-		if n != len(cellsHit) || placed != 17*11 {
-			t.Fatalf("%v°: %d cells in the grid, %d distinct cells mapped, %d placed", deg, n, len(cellsHit), placed)
+		// The area is all that sets the count, give or take the cells along
+		// the edges.
+		if area := b.w * b.h; fewest < area-(b.w+b.h) || most > area+b.w+b.h {
+			t.Errorf("%dx%d covers %d to %d cells, want about %d", b.w, b.h, fewest, most, area)
 		}
-		switch deg {
-		case 0, 180:
-			if n != 17*11 {
-				t.Errorf("%v°: %d cells, want all %d", deg, n, 17*11)
+		t.Logf("%dx%d (%d pixels) covers %d to %d cells", b.w, b.h, b.w*b.h, fewest, most)
+	}
+}
+
+// write scans each row only across the span the rectangle crosses. Over
+// random bodies and poses, near the axes too, it writes the same cells as
+// sampling every cell of the box around the body with the same float32
+// arithmetic.
+func TestRowSpansMissNoCell(t *testing.T) {
+	s, w, id := newSystem(t, 256, 256, 1)
+	r := rng.New(3)
+	for n := range 2000 {
+		bw, bh := 1+r.IntN(40), 1+r.IntN(40)
+		if err := s.add(id.wood, 10, 10, bw, bh, 0); err != nil {
+			t.Fatal(err)
+		}
+		b := &s.bodies[len(s.bodies)-1]
+		deg := float64(r.IntN(3600)) / 10
+		if n%2 == 0 {
+			// Within a hair of a right angle.
+			deg = float64(r.IntN(4)*90) + float64(r.IntN(201)-100)*1e-6
+		}
+		setPose(b, 128+float64(r.IntN(1000))/1000, 128+float64(r.IntN(1000))/1000, deg)
+		slot := uint16(len(s.bodies) - 1)
+		s.write(b, slot)
+		want := sampleEveryCell(b)
+		got := map[cellAt]uint16{}
+		for y := range 256 {
+			for x := range 256 {
+				if c, _ := w.At(x, y); c.Mat == id.wood {
+					if owner, pixel := c.Body(); owner == slot {
+						got[cellAt{int32(x), int32(y)}] = pixel
+					}
+				}
 			}
-		case 45:
-			// Noita's 17×11 box covers 152 cells at 45° (C134).
-			if n < 140 || n > 165 {
-				t.Errorf("45°: %d cells, want about 150", n)
+		}
+		if !maps.Equal(got, want) {
+			t.Fatalf("%dx%d at %v°: wrote %d cells, sampling every cell finds %d", bw, bh, deg, len(got), len(want))
+		}
+		for at := range want {
+			if !b.box.overlaps(rect{int(at.x), int(at.y), int(at.x) + 1, int(at.y) + 1}) {
+				t.Fatalf("%dx%d at %v°: (%d, %d) is outside the box %v", bw, bh, deg, at.x, at.y, b.box)
 			}
+		}
+		s.erase(b, slot)
+	}
+}
+
+// sampleEveryCell maps every cell of the box around b back into its image,
+// as write does, and returns the pixel each cell inside it samples.
+func sampleEveryCell(b *body) map[cellAt]uint16 {
+	px, py := float32(b.p.X*cellsPerMeter), float32(b.p.Y*cellsPerMeter)
+	ox, oy := int(math.Floor(float64(px))), int(math.Floor(float64(py)))
+	fx, fy := px-float32(ox), py-float32(oy)
+	co, si := b.q.C, b.q.S
+	hw, hh := float32(b.w)/2, float32(b.h)/2
+	reach := b.w + b.h
+	cells := map[cellAt]uint16{}
+	for r := -reach; r <= reach; r++ {
+		dy := float32(r) + 0.5 - fy
+		sv, cv := float32(si*dy), float32(co*dy)
+		for k := -reach; k <= reach; k++ {
+			dx := float32(k) + 0.5 - fx
+			i := int(math.Floor(float64(float32(co*dx) + sv + hw)))
+			j := int(math.Floor(float64(cv - float32(si*dx) + hh)))
+			if i >= 0 && i < b.w && j >= 0 && j < b.h {
+				cells[cellAt{int32(ox + k), int32(oy + r)}] = uint16(j*b.w + i)
+			}
+		}
+	}
+	return cells
+}
+
+// A body too small for any cell's center, one pixel turned 45° about a
+// cell's corner, has no cells in the grid, but the terrain around it is
+// still made collision.
+func TestBodyWithoutCellsStillCollides(t *testing.T) {
+	s, w, id := newSystem(t, 100, 100, 1)
+	w.Fill(0, 52, 100, 100, id.stone)
+	if err := s.add(id.wood, 49, 49, 1, 1, 0); err != nil {
+		t.Fatal(err)
+	}
+	b := &s.bodies[0]
+	setPose(b, 50, 50, 45)
+	s.sync()
+	if n, _ := owned(w, id.wood, 0); n != 0 {
+		t.Fatalf("the body holds %d cells, want none", n)
+	}
+	if err := s.Collide(); err != nil {
+		t.Fatal(err)
+	}
+	if !b.near.overlaps(rect{49, 49, 51, 51}) || !slices.Contains(s.wanted, 0) {
+		t.Fatalf("the body near %v wants chunks %v, want its own", b.near, s.wanted)
+	}
+}
+
+// Sand poured on a turned body that keeps rocking slightly stays on its
+// surface: with no holes, no grain gets more than a cell inside its edge.
+func TestSandStaysOutOfATurnedBody(t *testing.T) {
+	for _, deg := range []float64{30, 45} {
+		s, w, id := newSystem(t, 160, 160, 1)
+		w.Fill(0, 150, 160, 160, id.stone)
+		if err := s.add(id.wood, 68, 92, 24, 16, 0); err != nil {
+			t.Fatal(err)
+		}
+		b := &s.bodies[0]
+		for tick := range 600 {
+			phase := 2 * math.Pi * float64(tick)
+			setPose(b, 80+0.3*math.Sin(phase/70), 100, deg+1.5*math.Sin(phase/90))
+			s.sync()
+			if tick < 200 {
+				for x := 70; x < 90; x += 2 {
+					if c, _ := w.At(x, 2); c.Mat == material.Air {
+						w.Set(x, 2, id.sand)
+					}
+				}
+			}
+			w.Step()
+		}
+		deep := 0
+		for y := range 160 {
+			for x := range 160 {
+				if c, _ := w.At(x, y); c.Mat != id.sand {
+					continue
+				}
+				if fi, fj := imageAt(b, x, y); fi > 1 && fi < float64(b.w)-1 && fj > 1 && fj < float64(b.h)-1 {
+					deep++
+				}
+			}
+		}
+		if deep > 0 {
+			t.Errorf("%v°: %d grains of sand are more than a cell inside the body", deg, deep)
 		}
 	}
 }

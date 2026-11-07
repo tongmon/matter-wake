@@ -89,9 +89,9 @@ func (c *coverage) add(o coverage) {
 // cells between the world and the inventory, the world's own tick neither
 // makes nor destroys them, and a body pushes cells into the queue. Solids
 // are counted in the bodies' images instead, since a turned body covers
-// fewer cells than it has pixels; they grow only by what the body tool
-// drops. In the terrain the counts cover the blocks in memory, which come
-// and go.
+// more or fewer cells than it has pixels; they grow only by what the body
+// tool drops. In the terrain the counts cover the blocks in memory, which
+// come and go.
 func trace(t *testing.T, r *Replay, tab *material.Table, workers int) (string, coverage) {
 	t.Helper()
 	g := newGame(t, r.Config(tab, workers))

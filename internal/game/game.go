@@ -16,7 +16,7 @@
 // cells to put back, so for every other material the cells in the world
 // plus those in the queue plus the inventory stay the same. The solids'
 // pixels are counted in the bodies' images, since a turned body covers
-// fewer cells than it has pixels (BodyPixels).
+// more or fewer cells than it has pixels (BodyPixels).
 //
 // A session plays the sandbox, a small room kept whole in memory; the
 // collapse room, as small, for measuring; or the terrain, the big world of

@@ -1,6 +1,7 @@
 package rigid
 
 import (
+	"math"
 	"slices"
 	"testing"
 	"time"
@@ -44,6 +45,33 @@ func newHeavyScene(tb testing.TB, workers int) (*System, *world.World) {
 		drop(tb, s, id.wood, 8+col*15+r.IntN(4), 4+row*13+r.IntN(4), bw, bh)
 	}
 	return s, w
+}
+
+// BenchmarkWriteTurned erases and writes 64 bodies of 16×12 pixels, turned
+// from 0° to 177°, moving them a third of a cell each time: the write
+// stage alone, without a scene that changes with how bodies are written.
+func BenchmarkWriteTurned(b *testing.B) {
+	s, _, id := newSystem(b, 512, 256, 1)
+	for k := range 64 {
+		if err := s.add(id.wood, 8+k%16*30, 20+k/16*50, 16, 12, float32(k)*math.Pi/64); err != nil {
+			b.Fatal(err)
+		}
+	}
+	for i := range s.bodies {
+		s.bodies[i].p, s.bodies[i].q = s.phys.Transform(s.bodies[i].id)
+	}
+	s.sync()
+	b.ResetTimer()
+	for n := range b.N {
+		d := float32(0.03)
+		if n%2 == 1 {
+			d = -d
+		}
+		for i := range s.bodies {
+			s.bodies[i].p.X += d
+		}
+		s.sync()
+	}
 }
 
 // stages holds the time of each stage of each tick, and of the three that
