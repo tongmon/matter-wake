@@ -246,7 +246,10 @@ func (s *System) add(m material.ID, x, y, w, h int, angle float32) error {
 
 // pieceBuoyancy returns the buoyancy (C41) of a body of material d, made
 // whole or broken off another. 🔶 Every body takes its material's, pieces
-// too: whether Noita's pieces feel buoyancy is not known yet (C135).
+// too. In Noita buoyancy belongs to the entity that holds a body, so
+// bodies of a material alone and new pieces feel none (C135); ours are
+// all bodies of a material, and whether wood keeps its 0.7 is the
+// developer's call.
 func pieceBuoyancy(d material.Def) float32 {
 	return q8(d.Buoyancy)
 }

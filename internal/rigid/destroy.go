@@ -12,16 +12,15 @@ import (
 
 // minPiece is the fewest pixels a piece of a broken body needs to be a
 // body of its own. 🔶 Noita makes bodies of pieces of 2 pixels or more and
-// leaves single pixels out (C77, C78); where they go is not known yet
-// (C135). Here the pieces left out go to the inventory of whoever broke
-// the body, with what was dug.
+// deletes single pixels (C77, C78, C135). Here the pieces left out go to
+// the inventory of whoever broke the body, with what was dug, so no cell
+// is lost.
 const minPiece = 2
 
-// piece is a 4-connected piece of a body's image: how many pixels it has,
-// the first of them in row order, and the pixels around it, [x0, x1) ×
-// [y0, y1).
+// piece is a 4-connected piece of a body's image: how many pixels it has
+// and the pixels around it, [x0, x1) × [y0, y1).
 type piece struct {
-	size, first    int
+	size           int
 	x0, y0, x1, y1 int
 }
 
@@ -187,7 +186,7 @@ func (s *System) find(b *body) {
 			continue
 		}
 		id := int32(len(s.pieces))
-		p := piece{first: k, x0: b.w, y0: b.h}
+		p := piece{x0: b.w, y0: b.h}
 		s.label[k] = id
 		s.queue = append(s.queue[:0], int32(k))
 		for len(s.queue) > 0 {
