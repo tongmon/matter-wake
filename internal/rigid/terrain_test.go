@@ -572,3 +572,48 @@ func TestTurnedBoxRestsOnSettledSand(t *testing.T) {
 		}
 	}
 }
+
+// A body that moves without changing a cell, all its pixels kept out by
+// resting sand, still gives back the sand it reached into: the chunk is
+// judged again though its cells did not change (Codex review).
+func TestSandComesBackWhenABodyLeavesUnseen(t *testing.T) {
+	s, w, id := newSystem(t, 128, 128, 1)
+	if err := s.add(id.wood, 40, 40, 4, 4, 30*math.Pi/180); err != nil {
+		t.Fatal(err)
+	}
+	b := &s.bodies[0]
+	s.Write()
+	collide(t, s)
+	for y := 30; y < 60; y++ {
+		for x := 30; x < 60; x++ {
+			w.Put(x, y, world.Cell{Mat: id.sand, Rest: world.SettleTicks})
+		}
+	}
+	w.Flush()
+	collide(t, s)
+	var kept []cellAt
+	for y := 30; y < 60; y++ {
+		for x := 30; x < 60; x++ {
+			if classAt(s, x, y) == world.Open {
+				kept = append(kept, cellAt{int32(x), int32(y)})
+			}
+		}
+	}
+	if len(kept) == 0 {
+		t.Fatal("no sand is kept out of the body")
+	}
+	v := w.Version()
+	setPose(b, float64(b.p.X)*cellsPerMeter+6, float64(b.p.Y)*cellsPerMeter, 30)
+	s.sync()
+	if w.Version() != v || len(b.cells) != 0 {
+		t.Fatalf("the body changed cells moving through resting sand (%d cells)", len(b.cells))
+	}
+	collide(t, s)
+	for _, at := range kept {
+		if cellDepth(b, int(at.x), int(at.y)) <= 0 {
+			if cl := classAt(s, int(at.x), int(at.y)); cl != world.Settled {
+				t.Fatalf("sand at %v is still kept out after the body left it", at)
+			}
+		}
+	}
+}

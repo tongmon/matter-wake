@@ -41,6 +41,10 @@ type chunk struct {
 	built   bool
 	version uint64
 	cls     []world.Class
+	// keptOut is set when cls leaves out settled cells a body reached
+	// into (keepOut). A body can move without changing a cell, so such a
+	// chunk is judged again when a body near it moves.
+	keptOut bool
 }
 
 // Collide makes sure the terrain each body may touch in the coming Step is
@@ -139,7 +143,7 @@ func (s *System) version(i int) uint64 {
 func (s *System) refresh(i int) error {
 	ch := &s.terrain[i]
 	v := s.version(i)
-	if ch.built && ch.version == v {
+	if ch.built && ch.version == v && (!ch.keptOut || !s.movedNear(i)) {
 		return nil
 	}
 	c := s.chunkCells(i)
@@ -148,7 +152,7 @@ func (s *System) refresh(i int) error {
 	t := &s.trace
 	t.cls = slices.Grow(t.cls[:0], n)[:n]
 	s.w.Classify(c.x0-1, c.y0-1, c.x1+1, c.y1+1, t.cls)
-	s.keepOut(i, c, t.cls)
+	ch.keptOut = s.keepOut(i, c, t.cls)
 	ch.version = v
 	if ch.built && slices.Equal(ch.cls, t.cls) {
 		return nil
@@ -182,11 +186,12 @@ func (s *System) refresh(i int) error {
 // were terrain before stay terrain, so a body never loses what it rests
 // on, and turn into terrain once no body reaches into them. Each chunk
 // that sees a cell judges it by the class its owner kept, so the chunks
-// agree on it.
-func (s *System) keepOut(i int, c rect, cls []world.Class) {
+// agree on it. It reports whether it opened any.
+func (s *System) keepOut(i int, c rect, cls []world.Class) bool {
 	if s.stamp[i] != s.ticks {
-		return
+		return false
 	}
+	opened := false
 	ring := rect{c.x0 - 1, c.y0 - 1, c.x1 + 1, c.y1 + 1}
 	w := ring.x1 - ring.x0
 	for k := s.nearHead[i]; k >= 0; k = s.nearNext[k] {
@@ -197,10 +202,26 @@ func (s *System) keepOut(i int, c rect, cls []world.Class) {
 				at := &cls[(y-ring.y0)*w+x-ring.x0]
 				if *at == world.Settled && !s.wasTerrain(x, y) && b.reaches(x, y) {
 					*at = world.Open
+					opened = true
 				}
 			}
 		}
 	}
+	return opened
+}
+
+// movedNear reports whether a body erased in this tick's Write covered
+// cells keepOut looks at for chunk i: within a cell of its cells and the
+// cells around them.
+func (s *System) movedNear(i int) bool {
+	c := s.chunkCells(i)
+	c = rect{c.x0 - 2, c.y0 - 2, c.x1 + 2, c.y1 + 2}
+	for _, r := range s.freed {
+		if r.overlaps(c) {
+			return true
+		}
+	}
+	return false
 }
 
 // wasTerrain reports whether cell (x, y) was terrain when the chunk that
