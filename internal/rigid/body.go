@@ -48,13 +48,10 @@ type body struct {
 	// (left + cx + i, top + cy + j).
 	left, top float32
 	cx, cy    int
-	// has marks the pixels the image still holds, row by row, and n counts
-	// them. tone and dmg hold each pixel's tone and the damage it has
-	// taken (world.Cell.Damage), which move with it.
-	has  []bool
-	n    int
-	tone []uint8
-	dmg  []uint16
+	// px holds the image's pixels, row by row, and n counts those it still
+	// holds.
+	px []pixel
+	n  int
 	// dirty is set when pixels left the image since the last Break, which
 	// splits the body and shapes it anew; redraw has the next Write write
 	// it again though it did not move. dead marks a body Break removes.
@@ -106,6 +103,16 @@ type body struct {
 	dragN, dragX, dragY, dragR2 float32
 }
 
+// pixel is a pixel of a body's image: the damage it has taken
+// (world.Cell.Damage) and its tone, which move with it, and whether the
+// image still holds it. One small value, so writing a cell reads one
+// place.
+type pixel struct {
+	dmg  uint16
+	tone uint8
+	ok   bool
+}
+
 // cellAt is a cell's position in the world.
 type cellAt struct{ x, y int32 }
 
@@ -117,14 +124,13 @@ func newBody(id physics.Body, key uint32, m material.ID, w, h int, seed uint64) 
 	b := body{
 		id: id, key: key, mat: m, w: w, h: h,
 		left: -float32(w) / 2, top: -float32(h) / 2,
-		has: make([]bool, n), n: n, tone: make([]uint8, n), dmg: make([]uint16, n),
+		px: make([]pixel, n), n: n,
 		// A turned rectangle holds at most its area, half its perimeter
 		// and one cell centers.
 		cells: make([]cellAt, 0, n+w+h+1),
 	}
-	for k := range b.tone {
-		b.has[k] = true
-		b.tone[k] = uint8(rng.Hash3(seed^toneSalt, uint64(key), uint64(k), 0) >> 56)
+	for k := range b.px {
+		b.px[k] = pixel{tone: uint8(rng.Hash3(seed^toneSalt, uint64(key), uint64(k), 0) >> 56), ok: true}
 	}
 	return b
 }
@@ -198,6 +204,9 @@ func (s *System) write(b *body, slot uint16) {
 	b.haveV, b.blocked = false, 0
 	b.dragN, b.dragX, b.dragY, b.dragR2 = 0, 0, 0, 0
 	b.cells = b.cells[:0]
+	// Read once: claim's writes through b could otherwise make Go read
+	// them again for every cell.
+	left, top, cx, cy, iw, ih, img := b.left, b.top, b.cx, b.cy, b.w, b.h, b.px
 	for r := r0; r <= r1; r++ {
 		dy := float32(r) + 0.5 - fy
 		sv, cv := float32(si*dy), float32(co*dy)
@@ -213,15 +222,15 @@ func (s *System) write(b *body, slot uint16) {
 			// The pixel of the first image the center falls in, then of
 			// this one. Pieces of one body share the first, so a cell
 			// maps to the same pixel through any of them.
-			i := int(math.Floor(float64(float32(co*dx)+sv-b.left))) - b.cx
-			j := int(math.Floor(float64(cv-float32(si*dx)-b.top))) - b.cy
+			i := int(math.Floor(float64(float32(co*dx)+sv-left))) - cx
+			j := int(math.Floor(float64(cv-float32(si*dx)-top))) - cy
 			// A cell whose center falls outside the image, or on a pixel
 			// that is gone, stays out.
-			if i < 0 || i >= b.w || j < 0 || j >= b.h || !b.has[j*b.w+i] {
+			if uint(i) >= uint(iw) || uint(j) >= uint(ih) || !img[j*iw+i].ok {
 				continue
 			}
 			x, y := ox+k, oy+r
-			if s.claim(b, slot, j*b.w+i, x, y, dx-gx, dy-gy) {
+			if s.claim(b, slot, j*iw+i, x, y, dx-gx, dy-gy) {
 				b.cells = append(b.cells, cellAt{int32(x), int32(y)})
 			}
 		}
@@ -294,9 +303,8 @@ func (s *System) claim(b *body, slot uint16, k, x, y int, rx, ry float32) bool {
 		b.dragR2 += float32(rx*rx) + float32(ry*ry)
 		s.w.Displace(x, y)
 	}
-	cell := world.BodyCell(b.mat, b.tone[k], slot, uint16(k))
-	cell.Damage = b.dmg[k]
-	s.w.Put(x, y, cell)
+	px := b.px[k]
+	s.w.Put(x, y, world.BodyCell(b.mat, px.tone, px.dmg, slot, uint16(k)))
 	return true
 }
 

@@ -45,23 +45,23 @@ func (s *System) Wear(x, y int, amount uint32) (material.ID, bool) {
 	b := &s.bodies[slot]
 	// A pixel dug out earlier in the tick may still show in its other
 	// cell until the body is written again.
-	if int(k) >= len(b.has) || !b.has[k] {
+	if int(k) >= len(b.px) || !b.px[k].ok {
 		return 0, false
 	}
 	key := uint32(slot)<<16 | uint32(k)
 	if slices.Contains(s.worn, key) {
 		return 0, false
 	}
-	damage, gone := world.Worn(s.mats.Def(b.mat).HP, b.dmg[k], amount)
+	damage, gone := world.Worn(s.mats.Def(b.mat).HP, b.px[k].dmg, amount)
 	if !gone {
 		s.worn = append(s.worn, key)
-		b.dmg[k] = damage
+		b.px[k].dmg = damage
 		c.Damage = damage
 		s.w.Put(x, y, c)
 		s.w.Flush()
 		return 0, false
 	}
-	b.has[k], b.dmg[k] = false, 0
+	b.px[k] = pixel{}
 	b.n--
 	b.dirty, s.broken = true, true
 	s.w.Put(x, y, world.Cell{})
@@ -154,8 +154,8 @@ func (s *System) find(b *body) {
 		s.label[k] = -1
 	}
 	s.pieces = s.pieces[:0]
-	for k, ok := range b.has {
-		if !ok || s.label[k] >= 0 {
+	for k, px := range b.px {
+		if !px.ok || s.label[k] >= 0 {
 			continue
 		}
 		id := int32(len(s.pieces))
@@ -172,7 +172,7 @@ func (s *System) find(b *body) {
 				if nb[0] < 0 || nb[1] < 0 || nb[0] >= b.w || nb[1] >= b.h {
 					continue
 				}
-				if m := nb[1]*b.w + nb[0]; b.has[m] && s.label[m] < 0 {
+				if m := nb[1]*b.w + nb[0]; b.px[m].ok && s.label[m] < 0 {
 					s.label[m] = id
 					s.queue = append(s.queue, int32(m))
 				}
@@ -188,7 +188,7 @@ func (s *System) drop(b *body, i int, debris []int) {
 	for j := p.y0; j < p.y1; j++ {
 		for x := p.x0; x < p.x1; x++ {
 			if k := j*b.w + x; s.label[k] == int32(i) {
-				b.has[k], b.dmg[k] = false, 0
+				b.px[k] = pixel{}
 			}
 		}
 	}
@@ -211,7 +211,7 @@ func (s *System) detach(slot, i int, p physics.Vec2, q physics.Rot, v physics.Ve
 		buoyancy: pieceBuoyancy(s.mats.Def(par.mat)),
 	}
 	n := nb.w * nb.h
-	nb.has, nb.tone, nb.dmg = make([]bool, n), make([]uint8, n), make([]uint16, n)
+	nb.px = make([]pixel, n)
 	for j := pc.y0; j < pc.y1; j++ {
 		for x := pc.x0; x < pc.x1; x++ {
 			k := j*par.w + x
@@ -219,9 +219,9 @@ func (s *System) detach(slot, i int, p physics.Vec2, q physics.Rot, v physics.Ve
 				continue
 			}
 			m := (j-pc.y0)*nb.w + x - pc.x0
-			nb.has[m], nb.tone[m], nb.dmg[m] = true, par.tone[k], par.dmg[k]
+			nb.px[m] = par.px[k]
 			nb.n++
-			par.has[k], par.dmg[k] = false, 0
+			par.px[k] = pixel{}
 		}
 	}
 	par.n -= nb.n
@@ -258,7 +258,7 @@ func (s *System) clean(b *body, slot uint16, p physics.Vec2, q physics.Rot) int 
 	for j := range b.h {
 		for i := range b.w {
 			k := j*b.w + i
-			if !b.has[k] {
+			if !b.px[k].ok {
 				continue
 			}
 			u := b.left + float32(b.cx+i) + 0.5
@@ -277,7 +277,7 @@ func (s *System) clean(b *body, slot uint16, p physics.Vec2, q physics.Rot) int 
 				}
 			}
 			if !ok {
-				b.has[k], b.dmg[k] = false, 0
+				b.px[k] = pixel{}
 				removed++
 			}
 		}
@@ -292,15 +292,12 @@ func (s *System) crop(b *body, keep int) {
 	if w == b.w && h == b.h {
 		return
 	}
-	n := w * h
-	has, tone, dmg := make([]bool, n), make([]uint8, n), make([]uint16, n)
+	px := make([]pixel, w*h)
 	for j := range h {
 		from := (pc.y0+j)*b.w + pc.x0
-		copy(has[j*w:(j+1)*w], b.has[from:from+w])
-		copy(tone[j*w:(j+1)*w], b.tone[from:from+w])
-		copy(dmg[j*w:(j+1)*w], b.dmg[from:from+w])
+		copy(px[j*w:(j+1)*w], b.px[from:from+w])
 	}
-	b.has, b.tone, b.dmg = has, tone, dmg
+	b.px = px
 	b.w, b.h = w, h
 	b.cx, b.cy = b.cx+pc.x0, b.cy+pc.y0
 }
@@ -311,13 +308,13 @@ func (s *System) crop(b *body, keep int) {
 func (s *System) reshape(b *body) error {
 	d := s.mats.Def(b.mat)
 	surface := physics.Surface{Density: float32(d.Density) * densityScale, Friction: q8(d.Friction), Restitution: q8(d.Restitution)}
-	s.shape.shape(b.has, b.w, b.h)
+	s.shape.shape(b.px, b.w, b.h)
 	made, err := s.setShapes(b, surface)
 	if err != nil {
 		return err
 	}
 	if made == 0 {
-		s.shape.rectangles(b.has, b.w, b.h)
+		s.shape.rectangles(b.px, b.w, b.h)
 		if made, err = s.setShapes(b, surface); err != nil {
 			return err
 		}
@@ -379,9 +376,7 @@ func (s *System) relink(b *body, from, to uint16) {
 			continue
 		}
 		if owner, k := c.Body(); owner == from {
-			cell := world.BodyCell(c.Mat, c.Tone, to, k)
-			cell.Damage = c.Damage
-			s.w.Put(x, y, cell)
+			s.w.Put(x, y, world.BodyCell(c.Mat, c.Tone, c.Damage, to, k))
 		}
 	}
 }

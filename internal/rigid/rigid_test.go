@@ -24,7 +24,7 @@ func TestDropWritesTheBody(t *testing.T) {
 			c, _ := w.At(40+i, 20+j)
 			body, pixel := c.Body()
 			k := j*16 + i
-			if c.Mat != id.wood || body != 0 || int(pixel) != k || c.Tone != b.tone[k] {
+			if c.Mat != id.wood || body != 0 || int(pixel) != k || c.Tone != b.px[k].tone {
 				t.Fatalf("(%d, %d) is %+v (body %d, pixel %d), want pixel %d of body 0", 40+i, 20+j, c, body, pixel, k)
 			}
 		}
@@ -125,7 +125,7 @@ func TestTurnedBodyHasNoHoles(t *testing.T) {
 					case outside && in:
 						t.Fatalf("%dx%d at %v°: (%d, %d) is outside the body at (%.3f, %.3f) but holds pixel %d", b.w, b.h, deg, x, y, fi, fj, pixel)
 					case inside && !onEdge(fi) && !onEdge(fj):
-						if want := int(math.Floor(fj))*b.w + int(math.Floor(fi)); int(pixel) != want || c.Tone != b.tone[want] {
+						if want := int(math.Floor(fj))*b.w + int(math.Floor(fi)); int(pixel) != want || c.Tone != b.px[want].tone {
 							t.Fatalf("%dx%d at %v°: (%d, %d) holds pixel %d, want %d", b.w, b.h, deg, x, y, pixel, want)
 						}
 					}

@@ -61,7 +61,7 @@ func TestBodyCellsStayPut(t *testing.T) {
 	w, ids := newTestWorld(t, 32, 16, 1)
 	w.Fill(0, 15, 32, 16, ids.stone)
 	for x := 10; x < 20; x++ {
-		w.Put(x, 8, BodyCell(ids.wood, 7, 513, uint16(x)))
+		w.Put(x, 8, BodyCell(ids.wood, 7, 0, 513, uint16(x)))
 	}
 	w.Flush()
 	w.Fill(12, 0, 16, 4, ids.sand)
@@ -149,7 +149,7 @@ func TestReinsertSearchesUp(t *testing.T) {
 			for k, name := range tt.column {
 				id := tab.MustLookup(name)
 				if tab.Def(id).Kind == material.Solid {
-					w.Put(x, y-k, BodyCell(id, 0, 0, 0))
+					w.Put(x, y-k, BodyCell(id, 0, 0, 0, 0))
 				} else {
 					w.Put(x, y-k, Cell{Mat: id})
 				}
@@ -199,7 +199,7 @@ func TestReinsertLooks129Rows(t *testing.T) {
 func TestRetryBudget(t *testing.T) {
 	w, ids := newTestWorld(t, 600, 4, 1)
 	for x := range 501 {
-		w.Put(x, 2, BodyCell(ids.wood, 0, 0, uint16(x)))
+		w.Put(x, 2, BodyCell(ids.wood, 0, 0, 0, uint16(x)))
 		w.fresh = append(w.fresh, queued{c: Cell{Mat: ids.water}, x: int32(x), y: 2})
 	}
 	w.Step()
@@ -271,7 +271,7 @@ func TestClassify(t *testing.T) {
 	w.Fill(0, 7, 16, 8, ids.stone)
 	w.Set(2, 6, ids.sand)
 	w.Set(5, 6, ids.water)
-	w.Put(8, 6, BodyCell(ids.wood, 0, 0, 0))
+	w.Put(8, 6, BodyCell(ids.wood, 0, 0, 0, 0))
 	for range SettleTicks - 1 {
 		w.Step()
 	}
