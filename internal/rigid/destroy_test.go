@@ -454,3 +454,80 @@ func TestBreakingRunsTheSame(t *testing.T) {
 		t.Fatalf("1 worker %016x %v, 4 workers %016x %v", sum1, at1, sum4, at4)
 	}
 }
+
+// Sand that settles in a notch dug into a body is terrain: it reaches into
+// the rectangle of the body's image but not into a pixel the body still
+// has, so nothing pushes the body out of it, and a body dropped onto it
+// rests on it (Codex review).
+func TestSandInANotchIsTerrain(t *testing.T) {
+	s, w, id := newSystem(t, 128, 96, 1)
+	w.Fill(0, 90, 128, 96, id.stone)
+	place(t, s, id.wood, 40, 80, 30, 10, 0)
+	var notch [][2]int
+	for y := 80; y < 86; y++ {
+		for x := 50; x < 60; x++ {
+			notch = append(notch, [2]int{x, y})
+		}
+	}
+	breakOff(t, s, notch...)
+	s.Write()
+	collide(t, s)
+	w.Fill(50, 83, 60, 86, id.sand)
+	for range world.SettleTicks + 5 {
+		w.Step()
+	}
+	collide(t, s)
+	for _, at := range [][2]int{{51, 85}, {55, 84}, {58, 83}} {
+		if c := classAt(s, at[0], at[1]); c != world.Settled {
+			t.Fatalf("settled sand at %v in the notch is %v to Box2D, want terrain", at, c)
+		}
+	}
+	// Sand in the cells the body still covers stays out.
+	if !s.bodies[0].reaches(45, 85) || s.bodies[0].reaches(55, 85) {
+		t.Fatal("reaches does not follow the pixels the body has")
+	}
+}
+
+// A turned body's pixel may show in two cells; wearing it through one
+// shows the damage in both, though the body does not move and is not
+// written again (Codex review).
+func TestWornPixelShowsInEveryCell(t *testing.T) {
+	s, w, id := newSystem(t, 128, 96, 1)
+	place(t, s, id.wood, 40, 40, 20, 12, 0.6)
+	where := map[uint16][][2]int{}
+	for y := range 96 {
+		for x := range 128 {
+			if c, _ := w.At(x, y); c.Mat == id.wood {
+				_, k := c.Body()
+				where[k] = append(where[k], [2]int{x, y})
+			}
+		}
+	}
+	shown := 0
+	for k, at := range where {
+		if len(at) < 2 {
+			continue
+		}
+		shown++
+		if _, ok := s.Wear(at[0][0], at[0][1], 2000); ok {
+			t.Fatalf("2000 of 5000 hp wore pixel %d through", k)
+		}
+		for _, a := range at {
+			if c, _ := w.At(a[0], a[1]); c.Damage == 0 {
+				t.Fatalf("pixel %d worn in cell %v shows no damage in cell %v", k, at[0], a)
+			}
+		}
+	}
+	if shown == 0 {
+		t.Fatal("no pixel of the turned body shows in two cells")
+	}
+	// Nothing moved, so the next Write leaves the cells as they are.
+	s.Write()
+	for k, at := range where {
+		for _, a := range at {
+			if c, _ := w.At(a[0], a[1]); (c.Damage != 0) != (len(at) > 1) {
+				t.Fatalf("after a Write pixel %d shows damage %d in cell %v", k, c.Damage, a)
+			}
+		}
+	}
+}

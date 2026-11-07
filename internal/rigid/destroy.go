@@ -56,9 +56,7 @@ func (s *System) Wear(x, y int, amount uint32) (material.ID, bool) {
 	if !gone {
 		s.worn = append(s.worn, key)
 		b.px[k].dmg = damage
-		c.Damage = damage
-		s.w.Put(x, y, c)
-		s.w.Flush()
+		s.showDamage(b, slot, k)
 		return 0, false
 	}
 	b.px[k] = pixel{}
@@ -67,6 +65,36 @@ func (s *System) Wear(x, y int, amount uint32) (material.ID, bool) {
 	s.w.Put(x, y, world.Cell{})
 	s.w.Flush()
 	return b.mat, true
+}
+
+// showDamage puts the damage of pixel k of b, at slot, into every cell
+// that shows the pixel. A turned body's pixel may show in two cells, and a
+// body that does not move is not written again. The cells that show it
+// have their centers inside the pixel, where b was last written: within
+// a cell of the cell its center is in.
+func (s *System) showDamage(b *body, slot, k uint16) {
+	if !b.written {
+		return
+	}
+	i, j := int(k)%b.w, int(k)/b.w
+	u := b.left + float32(b.cx+i) + 0.5
+	v := b.top + float32(b.cy+j) + 0.5
+	px, py := float32(b.wp.X*cellsPerMeter), float32(b.wp.Y*cellsPerMeter)
+	cx := int(math.Floor(float64(px + float32(b.wq.C*u) - float32(b.wq.S*v))))
+	cy := int(math.Floor(float64(py + float32(b.wq.S*u) + float32(b.wq.C*v))))
+	for y := cy - 1; y <= cy+1; y++ {
+		for x := cx - 1; x <= cx+1; x++ {
+			c, ok := s.w.At(x, y)
+			if !ok || s.kinds[c.Mat] != material.Solid {
+				continue
+			}
+			if owner, pixel := c.Body(); owner == slot && pixel == k {
+				c.Damage = b.px[k].dmg
+				s.w.Put(x, y, c)
+			}
+		}
+	}
+	s.w.Flush()
 }
 
 // Break splits every body that lost pixels since the last Break, in key
@@ -323,8 +351,63 @@ func (s *System) reshape(b *body) error {
 		}
 	}
 	b.mass, b.inertia, b.lc = s.phys.Mass(b.id), s.phys.Inertia(b.id), s.phys.LocalCenter(b.id)
+	s.covered(b)
 	b.redraw = true
 	return nil
+}
+
+// covered marks in b.cover the pixels b's shapes, in s.shape, cover: the
+// pixels b has, and the pixels gone that a shape overlaps. Simplifying the
+// outline can let a shape reach up to bodyTol past the pixels; the
+// terrain stays out of what the shapes cover (reaches).
+func (s *System) covered(b *body) {
+	n := b.w * b.h
+	b.cover = slices.Grow(b.cover[:0], n)[:n]
+	for k := range b.px {
+		b.cover[k] = b.px[k].ok
+	}
+	start := 0
+	for _, end := range s.shape.ends {
+		p := s.shape.pts[start:end]
+		start = end
+		x0, y0, x1, y1 := p[0].x, p[0].y, p[0].x, p[0].y
+		for _, q := range p {
+			x0, y0, x1, y1 = min(x0, q.x), min(y0, q.y), max(x1, q.x), max(y1, q.y)
+		}
+		for j := max(int(math.Floor(y0)), 0); j < min(int(math.Ceil(y1)), b.h); j++ {
+			for i := max(int(math.Floor(x0)), 0); i < min(int(math.Ceil(x1)), b.w); i++ {
+				if k := j*b.w + i; !b.cover[k] && overlapsPixel(p, i, j) {
+					b.cover[k] = true
+				}
+			}
+		}
+	}
+}
+
+// overlapsPixel reports whether convex polygon p, in pixels, overlaps
+// pixel (i, j) by some area: no side of p has all the pixel's corners on
+// or outside it. p's bounding box overlaps the pixel's already.
+func overlapsPixel(p []point, i, j int) bool {
+	turn := 0.0
+	for k := range p {
+		a, b := p[k], p[(k+1)%len(p)]
+		turn += float64(a.x*b.y) - float64(b.x*a.y)
+	}
+	corners := [4]point{{float64(i), float64(j)}, {float64(i + 1), float64(j)}, {float64(i + 1), float64(j + 1)}, {float64(i), float64(j + 1)}}
+	for k := range p {
+		a, b := p[k], p[(k+1)%len(p)]
+		inside := false
+		for _, c := range corners {
+			if side := float64((b.x-a.x)*(c.y-a.y)) - float64((b.y-a.y)*(c.x-a.x)); side*turn > 0 {
+				inside = true
+				break
+			}
+		}
+		if !inside {
+			return false
+		}
+	}
+	return true
 }
 
 // setShapes gives b's Box2D body the polygons in s.shape, which are in

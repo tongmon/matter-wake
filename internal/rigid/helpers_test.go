@@ -51,17 +51,27 @@ func newSystem(tb testing.TB, width, height, workers int) (*System, *world.World
 // newSystemBuoyancy is newSystem with wood of buoyancy b.
 func newSystemBuoyancy(tb testing.TB, width, height, workers int, b float64) (*System, *world.World, ids) {
 	tb.Helper()
+	s, w, id := openSystem(tb, width, height, workers, b)
+	tb.Cleanup(w.Close)
+	tb.Cleanup(s.Close)
+	return s, w, id
+}
+
+// openSystem is newSystemBuoyancy for a caller that closes the System and
+// the world itself, such as a benchmark that makes one per iteration:
+// Box2D holds 128 worlds at once.
+func openSystem(tb testing.TB, width, height, workers int, b float64) (*System, *world.World, ids) {
+	tb.Helper()
 	tab := testTable(tb, b)
 	w, err := world.New(world.Config{Width: width, Height: height, Seed: 1, Workers: workers, Materials: tab})
 	if err != nil {
 		tb.Fatal(err)
 	}
-	tb.Cleanup(w.Close)
 	s, err := New(w, tab)
 	if err != nil {
+		w.Close()
 		tb.Fatal(err)
 	}
-	tb.Cleanup(s.Close)
 	return s, w, ids{tab.MustLookup("stone"), tab.MustLookup("sand"), tab.MustLookup("water"), tab.MustLookup("wood")}
 }
 
