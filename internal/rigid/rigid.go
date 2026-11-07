@@ -70,8 +70,27 @@ type System struct {
 	mats  *material.Table
 	kinds []material.Kind
 	// bodies holds the bodies by slot, the index their cells link to. Keys
-	// grow with the slots, so this is also key order.
-	bodies []body
+	// grow with the slots, so this is also key order: a body Break
+	// removes leaves its slot to the bodies after it. nextKey is the key
+	// of the next body made.
+	bodies  []body
+	nextKey uint32
+	// worn lists the pixels Wear wore since the last Break without using
+	// them up, as slot<<16 | pixel, so a pixel two cells show wears once a
+	// tick. broken is set when a pixel left an image since then.
+	worn   []uint32
+	broken bool
+	// gone lists the cells the bodies Break removed covered, for the next
+	// Write to count as freed.
+	gone []rect
+	// The scratch space of Break: the piece of each pixel of the body it
+	// splits, the pixels to visit, the pieces found, their shapes and the
+	// polygons for Box2D.
+	label  []int32
+	queue  []int32
+	pieces []piece
+	shape  shaper
+	polys  physics.Polygons
 	// terrain holds the terrain collision of each chunk of the world, row
 	// by row; cols is how many chunks a row has.
 	terrain []chunk
@@ -161,7 +180,7 @@ func (s *System) Bodies() int {
 func (s *System) Pixels(n []int) {
 	for i := range s.bodies {
 		b := &s.bodies[i]
-		n[b.mat] += len(b.tone)
+		n[b.mat] += b.n
 	}
 }
 
@@ -216,10 +235,20 @@ func (s *System) add(m material.ID, x, y, w, h int, angle float32) error {
 		return fmt.Errorf("rigid: %w", err)
 	}
 	slot := len(s.bodies)
-	s.bodies = append(s.bodies, newBody(id, uint32(slot), m, w, h, s.w.Seed()))
+	s.bodies = append(s.bodies, newBody(id, s.nextKey, m, w, h, s.w.Seed()))
+	s.nextKey++
 	b := &s.bodies[slot]
-	b.mass, b.inertia, b.buoyancy = s.phys.Mass(id), s.phys.Inertia(id), q8(d.Buoyancy)
+	// A box's center of mass is its center, the origin: lc stays zero,
+	// exactly, where Box2D's sum over the box's triangles might round.
+	b.mass, b.inertia, b.buoyancy = s.phys.Mass(id), s.phys.Inertia(id), pieceBuoyancy(d)
 	return nil
+}
+
+// pieceBuoyancy returns the buoyancy (C41) of a body of material d, made
+// whole or broken off another. 🔶 Every body takes its material's, pieces
+// too: whether Noita's pieces feel buoyancy is not known yet (C135).
+func pieceBuoyancy(d material.Def) float32 {
+	return q8(d.Buoyancy)
 }
 
 // q8 converts a material's fixed-point value to Box2D's float.
@@ -245,10 +274,11 @@ func (s *System) Write() {
 // cells near it: they may be its cells again. So a cell covered by bodies
 // that move away comes back, even while its body sleeps.
 func (s *System) sync() {
-	s.freed = s.freed[:0]
+	s.freed = append(s.freed[:0], s.gone...)
+	s.gone = s.gone[:0]
 	for i := range s.bodies {
 		b := &s.bodies[i]
-		b.moved = !b.written || b.p != b.wp || b.q != b.wq
+		b.moved = !b.written || b.redraw || b.p != b.wp || b.q != b.wq
 		if b.moved {
 			s.erase(b, uint16(i))
 			if b.written {

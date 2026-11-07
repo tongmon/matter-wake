@@ -29,16 +29,36 @@ const (
 )
 
 // body is a rigid body: its Box2D handle, its image of w × h pixels of one
-// material, and the cells it was last written to.
+// material, some of which may be gone, and the cells it was last written
+// to.
+//
+// The image lies in the body's frame, Box2D's, where the body was first
+// made: a rectangle centered on the origin. A piece broken off later has
+// the frame of the body it broke from and an image cropped to the piece,
+// so a cell maps to the same pixel through either.
 type body struct {
 	id  physics.Body
 	key uint32
 	mat material.ID
 	w   int
 	h   int
-	// tone holds each pixel's tone, row by row; its length is the number
-	// of pixels.
+	// left and top are where, in the frame, the first body's image began,
+	// in cells from the origin; cx and cy are where this image begins in
+	// that one, in pixels. Pixel (i, j) covers the frame's cells from
+	// (left + cx + i, top + cy + j).
+	left, top float32
+	cx, cy    int
+	// has marks the pixels the image still holds, row by row, and n counts
+	// them. tone and dmg hold each pixel's tone and the damage it has
+	// taken (world.Cell.Damage), which move with it.
+	has  []bool
+	n    int
 	tone []uint8
+	dmg  []uint16
+	// dirty is set when pixels left the image since the last Break, which
+	// splits the body and shapes it anew; redraw has the next Write write
+	// it again though it did not move. dead marks a body Break removes.
+	dirty, redraw, dead bool
 	// cells lists the cells the body was last written to. A cell the body
 	// sampled but did not write, because it kept what was there, is not
 	// listed.
@@ -74,9 +94,11 @@ type body struct {
 	spin  float32
 	haveV bool
 	// mass is the body's mass in kilograms, inertia its rotational
-	// inertia about its center of mass in kg m², and buoyancy its
+	// inertia about its center of mass in kg m², lc its center of mass in
+	// its frame, in meters, all from its shapes; buoyancy is its
 	// material's.
 	mass, inertia, buoyancy float32
+	lc                      physics.Vec2
 	// The liquid cells this tick's write pushed away: how many (dragN),
 	// the sums of their offsets from the center of mass in cells (dragX,
 	// dragY) and of their squared distances from it (dragR2). The drag
@@ -87,21 +109,40 @@ type body struct {
 // cellAt is a cell's position in the world.
 type cellAt struct{ x, y int32 }
 
-// newBody returns a body of material m, w × h pixels, for Box2D's body id.
-// Its pixels' tones come from (seed, key, pixel), so they stay with the
-// body wherever it goes.
+// newBody returns a body of material m, w × h pixels, all there, centered
+// on the origin of its frame, for Box2D's body id. Its pixels' tones come
+// from (seed, key, pixel), so they stay with the body wherever it goes.
 func newBody(id physics.Body, key uint32, m material.ID, w, h int, seed uint64) body {
 	n := w * h
 	b := body{
-		id: id, key: key, mat: m, w: w, h: h, tone: make([]uint8, n),
+		id: id, key: key, mat: m, w: w, h: h,
+		left: -float32(w) / 2, top: -float32(h) / 2,
+		has: make([]bool, n), n: n, tone: make([]uint8, n), dmg: make([]uint16, n),
 		// A turned rectangle holds at most its area, half its perimeter
 		// and one cell centers.
 		cells: make([]cellAt, 0, n+w+h+1),
 	}
 	for k := range b.tone {
+		b.has[k] = true
 		b.tone[k] = uint8(rng.Hash3(seed^toneSalt, uint64(key), uint64(k), 0) >> 56)
 	}
 	return b
+}
+
+// middle returns where the middle of b's image lies from its origin, in
+// cells, with b turned by (co, si). For a body as it was made it is the
+// origin.
+func (b *body) middle(co, si float32) (float32, float32) {
+	mx := b.left + float32(b.cx) + float32(b.w)/2
+	my := b.top + float32(b.cy) + float32(b.h)/2
+	return float32(co*mx) - float32(si*my), float32(si*mx) + float32(co*my)
+}
+
+// center returns where b's center of mass lies from its origin, in cells,
+// with b turned by (co, si).
+func (b *body) center(co, si float32) (float32, float32) {
+	lx, ly := b.lc.X*cellsPerMeter, b.lc.Y*cellsPerMeter
+	return float32(co*lx) - float32(si*ly), float32(si*lx) + float32(co*ly)
 }
 
 // erase empties the cells b, at slot, was written to and still holds. A
@@ -125,27 +166,34 @@ const sampleEdge = 1.0 / 64
 
 // write writes b, at slot, where its transform puts it: every cell whose
 // center falls inside the body's image, mapped back through the transform,
-// takes the pixel it falls in. So a turned body has no holes and nothing
-// outside its rectangle; a pixel may fill two cells or none. Each row of
-// cells is scanned only across the span the rectangle crosses. The
-// multiplications are converted one by one, so Go cannot fuse them with an
-// addition and round differently on another CPU (docs/pitfalls.md).
+// takes the pixel it falls in, unless that pixel is gone. So a turned body
+// has no holes and nothing outside its rectangle; a pixel may fill two
+// cells or none. Each row of cells is scanned only across the span the
+// rectangle crosses. The multiplications are converted one by one, so Go
+// cannot fuse them with an addition and round differently on another CPU
+// (docs/pitfalls.md).
 func (s *System) write(b *body, slot uint16) {
-	// The center, split into a whole cell and the rest: offsets from the
+	// The origin, split into a whole cell and the rest: offsets from the
 	// whole cell are small and exact, wherever the body is.
 	px, py := float32(b.p.X*cellsPerMeter), float32(b.p.Y*cellsPerMeter)
 	ox, oy := int(math.Floor(float64(px))), int(math.Floor(float64(py)))
 	fx, fy := px-float32(ox), py-float32(oy)
 	co, si := b.q.C, b.q.S
 	hw, hh := float32(b.w)/2, float32(b.h)/2
+	// The middle of the image in the frame and from the origin, and the
+	// center of mass from the origin: cells' offsets from it give their
+	// speed and the drag of the liquid they push away.
+	mx, my := b.left+float32(b.cx)+hw, b.top+float32(b.cy)+hh
+	wx, wy := b.middle(co, si)
+	gx, gy := b.center(co, si)
 	// The half width and height of the box around the turned rectangle,
 	// and the cells it covers.
 	ex := float32(abs32(co)*hw) + float32(abs32(si)*hh)
 	ey := float32(abs32(si)*hw) + float32(abs32(co)*hh)
-	r0, r1 := int(math.Floor(float64(fy-ey))), int(math.Floor(float64(fy+ey)))
+	r0, r1 := int(math.Floor(float64(fy+wy-ey))), int(math.Floor(float64(fy+wy+ey)))
 	b.box = rect{
-		ox + int(math.Floor(float64(fx-ex))), oy + r0,
-		ox + int(math.Floor(float64(fx+ex))) + 1, oy + r1 + 1,
+		ox + int(math.Floor(float64(fx+wx-ex))), oy + r0,
+		ox + int(math.Floor(float64(fx+wx+ex))) + 1, oy + r1 + 1,
 	}
 	b.haveV, b.blocked = false, 0
 	b.dragN, b.dragX, b.dragY, b.dragR2 = 0, 0, 0, 0
@@ -153,24 +201,27 @@ func (s *System) write(b *body, slot uint16) {
 	for r := r0; r <= r1; r++ {
 		dy := float32(r) + 0.5 - fy
 		sv, cv := float32(si*dy), float32(co*dy)
-		lo, hi, ok := within(co, sv, hw+sampleEdge, -ex-1, ex+1)
+		lo, hi, ok := within(co, sv-mx, hw+sampleEdge, wx-ex-1, wx+ex+1)
 		if !ok {
 			continue
 		}
-		if lo, hi, ok = within(-si, cv, hh+sampleEdge, lo, hi); !ok {
+		if lo, hi, ok = within(-si, cv-my, hh+sampleEdge, lo, hi); !ok {
 			continue
 		}
 		for k := int(math.Ceil(float64(lo + fx - 0.5))); k <= int(math.Floor(float64(hi+fx-0.5))); k++ {
 			dx := float32(k) + 0.5 - fx
-			i := int(math.Floor(float64(float32(co*dx) + sv + hw)))
-			j := int(math.Floor(float64(cv - float32(si*dx) + hh)))
-			// A cell whose center falls outside the image stays out; an
-			// image with pixels missing would leave those out here too.
-			if i < 0 || i >= b.w || j < 0 || j >= b.h {
+			// The pixel of the first image the center falls in, then of
+			// this one. Pieces of one body share the first, so a cell
+			// maps to the same pixel through any of them.
+			i := int(math.Floor(float64(float32(co*dx)+sv-b.left))) - b.cx
+			j := int(math.Floor(float64(cv-float32(si*dx)-b.top))) - b.cy
+			// A cell whose center falls outside the image, or on a pixel
+			// that is gone, stays out.
+			if i < 0 || i >= b.w || j < 0 || j >= b.h || !b.has[j*b.w+i] {
 				continue
 			}
 			x, y := ox+k, oy+r
-			if s.claim(b, slot, j*b.w+i, x, y, dx, dy) {
+			if s.claim(b, slot, j*b.w+i, x, y, dx-gx, dy-gy) {
 				b.cells = append(b.cells, cellAt{int32(x), int32(y)})
 			}
 		}
@@ -179,7 +230,7 @@ func (s *System) write(b *body, slot uint16) {
 		b.shiftX = float32(b.p.X-b.wp.X) * cellsPerMeter
 		b.shiftY = float32(b.p.Y-b.wp.Y) * cellsPerMeter
 	}
-	b.wp, b.wq, b.written, b.force = b.p, b.q, true, false
+	b.wp, b.wq, b.written, b.force, b.redraw = b.p, b.q, true, false, false
 	s.w.Flush()
 }
 
@@ -243,7 +294,9 @@ func (s *System) claim(b *body, slot uint16, k, x, y int, rx, ry float32) bool {
 		b.dragR2 += float32(rx*rx) + float32(ry*ry)
 		s.w.Displace(x, y)
 	}
-	s.w.Put(x, y, world.BodyCell(b.mat, b.tone[k], slot, uint16(k)))
+	cell := world.BodyCell(b.mat, b.tone[k], slot, uint16(k))
+	cell.Damage = b.dmg[k]
+	s.w.Put(x, y, cell)
 	return true
 }
 
@@ -268,7 +321,7 @@ func (s *System) givesWay(b *body, k int, c world.Cell, rx, ry float32) bool {
 }
 
 // pixelSpeed2 returns the square of the speed, in (m/s)², of the point of
-// b at (rx, ry) cells from its center, which is its center of mass.
+// b at (rx, ry) cells from its center of mass.
 func (s *System) pixelSpeed2(b *body, rx, ry float32) float32 {
 	s.velocity(b)
 	mx, my := rx/cellsPerMeter, ry/cellsPerMeter
@@ -277,16 +330,19 @@ func (s *System) pixelSpeed2(b *body, rx, ry float32) float32 {
 	return float32(vx*vx) + float32(vy*vy)
 }
 
-// reaches reports whether cell (x, y) and b's shape, where b was last
-// written, overlap by more than keepOutDepth cells: along each of the
-// cell's axes and the body's, their extents overlap by that much. The
-// multiplications are converted one by one, as in write.
+// reaches reports whether cell (x, y) and the rectangle of b's image,
+// where b was last written, overlap by more than keepOutDepth cells: along
+// each of the cell's axes and the body's, their extents overlap by that
+// much. Pixels gone from the image still count: the rectangle holds the
+// body's shapes. The multiplications are converted one by one, as in
+// write.
 func (b *body) reaches(x, y int) bool {
 	px, py := float32(b.wp.X*cellsPerMeter), float32(b.wp.Y*cellsPerMeter)
 	ox, oy := int(math.Floor(float64(px))), int(math.Floor(float64(py)))
-	dx := float32(x-ox) + 0.5 - (px - float32(ox))
-	dy := float32(y-oy) + 0.5 - (py - float32(oy))
 	co, si := b.wq.C, b.wq.S
+	wx, wy := b.middle(co, si)
+	dx := float32(x-ox) + 0.5 - (px - float32(ox)) - wx
+	dy := float32(y-oy) + 0.5 - (py - float32(oy)) - wy
 	ac, as := abs32(co), abs32(si)
 	hw, hh := float32(b.w)/2, float32(b.h)/2
 	const d = keepOutDepth - 0.5 // the cell's half side counts once per axis
@@ -347,7 +403,8 @@ func (s *System) overLiquid(b *body) bool {
 	if !b.written {
 		return false
 	}
-	x := int(math.Floor(float64(float32(b.p.X * cellsPerMeter))))
+	gx, _ := b.center(b.q.C, b.q.S)
+	x := int(math.Floor(float64(float32(b.p.X*cellsPerMeter) + gx)))
 	c, ok := s.w.At(x, b.box.y1)
 	return ok && s.kinds[c.Mat] == material.Liquid
 }

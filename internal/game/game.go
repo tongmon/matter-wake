@@ -16,7 +16,11 @@
 // cells to put back, so for every other material the cells in the world
 // plus those in the queue plus the inventory stay the same. The solids'
 // pixels are counted in the bodies' images, since a turned body covers
-// more or fewer cells than it has pixels (BodyPixels).
+// more or fewer cells than it has pixels (BodyPixels). The tool digs a
+// body's pixels out of its image into the inventory, and a body dug apart
+// breaks into bodies of its pieces; pieces too small to be bodies go into
+// the inventory too. So a solid's pixels plus the inventory are what the
+// body tool dropped (Dropped).
 //
 // A session plays the sandbox, a small room kept whole in memory; the
 // collapse room, as small, for measuring; or the terrain, the big world of
@@ -191,6 +195,8 @@ type Game struct {
 	bodies       *rigid.System
 	body         material.ID
 	bodyW, bodyH int
+	// dropped counts the bodies the body tool dropped.
+	dropped int
 }
 
 // New starts a session in cfg.Scene with an empty inventory. In the
@@ -444,6 +450,13 @@ func (g *Game) Bodies() int {
 	return g.bodies.Bodies()
 }
 
+// Dropped returns how many bodies the body tool has dropped: it makes
+// their pixels from nothing. Breaking a body makes more bodies of the
+// same pixels.
+func (g *Game) Dropped() int {
+	return g.dropped
+}
+
 // BodyPixels adds to n[id], for every material id, how many pixels the
 // bodies' images hold of it.
 func (g *Game) BodyPixels(n []int) {
@@ -488,10 +501,11 @@ func (g *Game) Inventory(id material.ID) int {
 // first loads and unloads blocks for the camera; an error there, from the
 // store, ends the session.
 //
-// The tools act first. Then the bodies' pixels are written where Box2D's
-// last Step left them and the terrain near them is made collision; the
-// world's tick runs the cells and puts back the cells the bodies pushed
-// out; and Box2D steps (internal/rigid).
+// The tools act first. Then the bodies the tool dug into split into
+// their pieces, their pixels are written where Box2D's last Step left them
+// and the terrain near them is made collision; the world's tick runs the
+// cells and puts back the cells the bodies pushed out; and Box2D steps
+// (internal/rigid).
 func (g *Game) Step(in Input) error {
 	if g.terrain != nil {
 		if err := g.stream(in.CameraX, in.CameraY); err != nil {
@@ -514,9 +528,18 @@ func (g *Game) Step(in Input) error {
 		g.world.Step()
 		return nil
 	}
+	// The bodies the tool dug pixels out of split; the pieces too small to
+	// be bodies go to the inventory with what was dug.
+	if err := g.bodies.Break(g.inventory); err != nil {
+		return fmt.Errorf("game: %w", err)
+	}
 	if in.Drop && g.bodyW > 0 {
-		if _, err := g.bodies.Drop(g.body, in.CursorX-g.bodyW/2, in.CursorY-g.bodyH/2, g.bodyW, g.bodyH); err != nil {
+		ok, err := g.bodies.Drop(g.body, in.CursorX-g.bodyW/2, in.CursorY-g.bodyH/2, g.bodyW, g.bodyH)
+		if err != nil {
 			return fmt.Errorf("game: %w", err)
+		}
+		if ok {
+			g.dropped++
 		}
 	}
 	g.bodies.Write()
@@ -532,7 +555,8 @@ func (g *Game) Step(in Input) error {
 
 // dig deals the tool's damage to every cell under the brush centred on
 // (cx, cy) that it can dig, and moves the cells it uses up into the
-// inventory. The damage stays in the cells (world.World.Wear).
+// inventory. The damage stays in the cells (world.World.Wear), or for a
+// body's cell in the pixel it shows (rigid.System.Wear).
 func (g *Game) dig(cx, cy int) {
 	r := g.tool.Radius
 	for y := cy - r; y <= cy+r; y++ {
@@ -543,10 +567,19 @@ func (g *Game) dig(cx, cy int) {
 				continue
 			}
 			def := g.mats.Def(c.Mat)
-			if !def.Kind.Diggable() || def.Hardness > g.tool.Power {
-				continue
-			}
-			if g.world.Wear(x, y, g.tool.Rate) {
+			switch {
+			case !def.Kind.Diggable() || def.Hardness > g.tool.Power:
+			case def.Kind == material.Solid:
+				// A body's pixel: it leaves the body's image, and the
+				// body splits before it is written again. Only the rooms
+				// have bodies.
+				if g.bodies == nil {
+					continue
+				}
+				if m, ok := g.bodies.Wear(x, y, g.tool.Rate); ok {
+					g.inventory[m]++
+				}
+			case g.world.Wear(x, y, g.tool.Rate):
 				g.world.Set(x, y, material.Air)
 				g.inventory[c.Mat]++
 			}

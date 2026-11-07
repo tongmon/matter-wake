@@ -3,9 +3,10 @@ matter-wake-replay 6
 # water have fallen, it drops wooden boxes onto the sand heap, into the
 # water on the right ledge (they sink: there is no buoyancy yet), onto the
 # floor, and one onto another. Then it digs the sand out from under the
-# first box, which falls into the hole, and tries to drop a box into the
-# stone floor, which the tool refuses. The water a box pushes away waits in
-# the queue until the box moves on.
+# first box, which falls into the hole, the brush digging some of the
+# box's bottom too, and tries to drop a box into the stone floor, which
+# the tool refuses. The water a box pushes away waits in the queue until
+# the box moves on.
 seed 1
 size 480 270
 scene sandbox
@@ -16,7 +17,7 @@ tool 10 2000 4
 body wood 16 12
 mode play
 slots sand water stone
-materials 84fb98ac55b2d24b
+materials cbe9996c5ef09a49
 ticks 900
 
 # Onto the sand heap on the left ledge.

@@ -1,0 +1,52 @@
+matter-wake-replay 6
+# The sandbox at its default size, digging wooden planks apart. Once the
+# sand and the water have fallen, it drops three 60 x 6 planks: onto the
+# floor, onto the sand heap on the left ledge, where it rests tilted, and
+# into the water on the right ledge, where it sinks onto the ledge. Then
+# it digs through the middle of each, which breaks it in two bodies: the
+# pieces on the sand heap slide off it. It digs a corner off a piece on
+# the floor, then the rest of that piece and of one beside it into small
+# bodies, and one of those away whole, which removes its body.
+seed 1
+size 480 270
+scene sandbox
+view 480 270
+stream 64 4 512 12 60
+budget 250000
+tool 10 2000 4
+body wood 60 6
+mode play
+slots sand water stone
+materials cbe9996c5ef09a49
+ticks 900
+
+# Onto the floor, onto the sand heap, into the water.
+150 230 200 B 0 0 0
+151 230 200 - 0 0 0
+160 120 60 B 0 0 0
+161 120 60 - 0 0 0
+170 350 120 B 0 0 0
+171 350 120 - 0 0 0
+# Through the plank on the floor.
+300 230 262 D 0 0 0
+306 230 262 - 0 0 0
+# A corner off its left piece.
+330 202 262 D 0 0 0
+334 202 262 - 0 0 0
+# Through the plank in the water.
+360 350 185 D 0 0 0
+366 350 185 - 0 0 0
+# Through the plank on the sand heap.
+400 120 88 D 0 0 0
+406 120 88 - 0 0 0
+# The rest of the floor plank's left piece, from its left end. A piece
+# from the sand heap has slid down beside it, and the brush cuts that up
+# too, into small bodies of a few pixels.
+600 209 262 D 0 0 0
+606 217 262 D 0 0 0
+612 225 262 D 0 0 0
+618 225 262 - 0 0 0
+# Under the floor, so the brush reaches only the bottom row: it digs a
+# small body away whole.
+700 226 268 D 0 0 0
+704 226 268 - 0 0 0

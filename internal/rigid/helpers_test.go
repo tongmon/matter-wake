@@ -33,7 +33,7 @@ func testTable(tb testing.TB, b float64) *material.Table {
 			Name: "water", Kind: material.Liquid, Density: 20, FallAccel: q(0.375), SinkChance: 50,
 			FlowSpeed: q(0.9), FlowDamping: q(0.8), Dispersion: 4,
 		},
-		{Name: "wood", Kind: material.Solid, Density: 6, Friction: q(0.9), Restitution: q(0.2), Buoyancy: q(b)},
+		{Name: "wood", Kind: material.Solid, Density: 6, Hardness: 8, HP: 5000, Friction: q(0.9), Restitution: q(0.2), Buoyancy: q(b)},
 	})
 	if err != nil {
 		tb.Fatal(err)
