@@ -9,15 +9,15 @@ import (
 )
 
 // image parses rows of '#' (a pixel) and '.' (none) into an image.
-func image(rows ...string) (has []bool, w, h int) {
+func image(rows ...string) (px []pixel, w, h int) {
 	w, h = len(rows[0]), len(rows)
-	has = make([]bool, w*h)
+	px = make([]pixel, w*h)
 	for j, row := range rows {
 		for i, c := range row {
-			has[j*w+i] = c == '#'
+			px[j*w+i].ok = c == '#'
 		}
 	}
-	return has, w, h
+	return px, w, h
 }
 
 // polygon returns the corners of polygon k of sh.
@@ -108,8 +108,8 @@ func checkPolygons(t *testing.T, sh *shaper, what string) {
 func shapeOf(t *testing.T, rows ...string) *shaper {
 	t.Helper()
 	var sh shaper
-	has, w, h := image(rows...)
-	sh.shape(has, w, h)
+	px, w, h := image(rows...)
+	sh.shape(px, w, h)
 	checkPolygons(t, &sh, strings.Join(rows, "/"))
 	return &sh
 }
@@ -195,14 +195,14 @@ func TestShapesOfRandomImages(t *testing.T) {
 	var sh shaper
 	for round := range 300 {
 		w, h := 1+r.IntN(24), 1+r.IntN(24)
-		has := make([]bool, w*h)
+		px := make([]pixel, w*h)
 		fill := 30 + r.IntN(65)
-		for k := range has {
-			has[k] = r.IntN(100) < fill
+		for k := range px {
+			px[k].ok = r.IntN(100) < fill
 		}
-		sh.shape(has, w, h)
+		sh.shape(px, w, h)
 		checkPolygons(t, &sh, "random image")
-		at := func(i, j int) bool { return i >= 0 && j >= 0 && i < w && j < h && has[j*w+i] }
+		at := func(i, j int) bool { return i >= 0 && j >= 0 && i < w && j < h && px[j*w+i].ok }
 		for j := -1; j <= h; j++ {
 			for i := -1; i <= w; i++ {
 				all, none := true, true
@@ -239,22 +239,22 @@ func TestRectanglesCoverThePixels(t *testing.T) {
 	var sh shaper
 	for range 100 {
 		w, h := 1+r.IntN(20), 1+r.IntN(20)
-		has := make([]bool, w*h)
+		px := make([]pixel, w*h)
 		n := 0
-		for k := range has {
-			has[k] = r.IntN(2) == 0
-			if has[k] {
+		for k := range px {
+			px[k].ok = r.IntN(2) == 0
+			if px[k].ok {
 				n++
 			}
 		}
-		sh.rectangles(has, w, h)
+		sh.rectangles(px, w, h)
 		checkPolygons(t, &sh, "rectangles")
 		if a := totalArea(&sh); a != float64(n) {
 			t.Fatalf("the rectangles of %d pixels have area %v", n, a)
 		}
 		for j := range h {
 			for i := range w {
-				if got, want := covers(&sh, float64(i)+0.5, float64(j)+0.5), has[j*w+i]; (got == 1) != want || got > 1 {
+				if got, want := covers(&sh, float64(i)+0.5, float64(j)+0.5), px[j*w+i].ok; (got == 1) != want || got > 1 {
 					t.Fatalf("pixel (%d, %d) %v is in %d rectangles", i, j, want, got)
 				}
 			}

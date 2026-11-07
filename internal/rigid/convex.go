@@ -88,11 +88,11 @@ type shaper struct {
 	used    []bool
 }
 
-// shape fills sh with the convex polygons of the image of w × h pixels
-// whose pixels has marks.
-func (sh *shaper) shape(has []bool, w, h int) {
+// shape fills sh with the convex polygons of the pixels the image px of
+// w × h pixels holds.
+func (sh *shaper) shape(px []pixel, w, h int) {
 	sh.pts, sh.ends = sh.pts[:0], sh.ends[:0]
-	sh.outline(has, w, h)
+	sh.outline(px, w, h)
 	sh.events()
 	sh.prev = sh.prev[:0]
 	for s := 0; s+1 < len(sh.ys); s++ {
@@ -106,7 +106,7 @@ func (sh *shaper) shape(has []bool, w, h int) {
 
 // outline traces the image's outlines and lists their edges that are not
 // level in sh.edges, in the order of their tops.
-func (sh *shaper) outline(has []bool, w, h int) {
+func (sh *shaper) outline(px []pixel, w, h int) {
 	t := &sh.tr
 	t.body = true
 	n := (w + 2) * (h + 2)
@@ -114,7 +114,7 @@ func (sh *shaper) outline(has []bool, w, h int) {
 	for k := range t.cls {
 		i, j := k%(w+2)-1, k/(w+2)-1
 		t.cls[k] = world.Open
-		if i >= 0 && j >= 0 && i < w && j < h && has[j*w+i] {
+		if i >= 0 && j >= 0 && i < w && j < h && px[j*w+i].ok {
 			t.cls[k] = world.Fixed
 		}
 	}
@@ -292,11 +292,11 @@ func (sh *shaper) emit(p *part) {
 // exactly, for when Box2D can make nothing of its shapes (C71): each runs
 // along a row as far as there are pixels and down as far as the rows below
 // have the same run.
-func (sh *shaper) rectangles(has []bool, w, h int) {
+func (sh *shaper) rectangles(px []pixel, w, h int) {
 	sh.pts, sh.ends = sh.pts[:0], sh.ends[:0]
-	sh.used = slices.Grow(sh.used[:0], len(has))[:len(has)]
+	sh.used = slices.Grow(sh.used[:0], len(px))[:len(px)]
 	clear(sh.used)
-	free := func(i, j int) bool { return has[j*w+i] && !sh.used[j*w+i] }
+	free := func(i, j int) bool { return px[j*w+i].ok && !sh.used[j*w+i] }
 	for j := range h {
 		for i := 0; i < w; i++ {
 			if !free(i, j) {

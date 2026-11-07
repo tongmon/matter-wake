@@ -6,11 +6,12 @@ import (
 )
 
 // BodyCell returns the cell that is pixel pixel of body body, of material m
-// (a solid) and tone tone. The body and the pixel are kept where a moving
-// cell keeps its motion (Cell), which a body pixel never has: the bodies
-// move it, the cell rules never do.
-func BodyCell(m material.ID, tone uint8, body, pixel uint16) Cell {
-	return Cell{Mat: m, Tone: tone, Vy: fixed.Q8(body), Ax: fixed.Q8(pixel)}
+// (a solid), tone tone and damage damage (Wear), which the pixel keeps as
+// it moves. The body and the pixel are kept where a moving cell keeps its
+// motion (Cell), which a body pixel never has: the bodies move it, the
+// cell rules never do.
+func BodyCell(m material.ID, tone uint8, damage, body, pixel uint16) Cell {
+	return Cell{Mat: m, Tone: tone, Vy: fixed.Q8(body), Ax: fixed.Q8(pixel), Damage: damage}
 }
 
 // Body returns the body and the pixel of its image that c is, for a cell
