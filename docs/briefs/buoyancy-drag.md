@@ -38,16 +38,17 @@
 
 | 관측 규칙 | 우리 코드 (파일:줄) | 같음 / 다름 / 없음 | 다름이면 |
 |---|---|---|---|
-| 부력 힘 −b·m·(v + g·배율), 토크 없음 | `internal/rigid/body.go:369` `buoyancy` | 같음 | 중력배율은 늘 1(우리 몸체에 배율이 없음). float32 계산 |
-| 부력은 깨우지 않음, 잠든 몸체는 받지 않음 | `internal/rigid/body.go:313` `push`, `internal/physics/physics.go:346` `Push` | 같음 | Box2D v3는 깨우지 않는 힘을 잠든 몸체에서 버림 |
-| 부력은 한 점의 칸만 봄 | `internal/rigid/body.go:340` `overLiquid` | 다름(빈칸 설계) | 개체 원점 + 8픽셀 대신, 질량 중심의 열에서 몸체 범위 바로 아래 칸(아래 OPEN) |
+| 부력 힘 −b·m·(v + g·배율), 토크 없음 | `internal/rigid/body.go:409` `buoyancy` | 같음 | 중력배율은 늘 1(우리 몸체에 배율이 없음). float32 계산 |
+| 부력은 깨우지 않음, 잠든 몸체는 받지 않음 | `internal/rigid/body.go:315` `push`, `internal/physics/physics.go:352` `Push` | 같음 | Box2D v3는 깨우지 않는 힘을 잠든 몸체에서 버림 |
+| 부력은 한 점의 칸만 봄 | `internal/rigid/body.go:346` `overLiquid` | 다름(빈칸 설계) | 개체 원점 + 8픽셀 대신, 질량 중심의 열에서 몸체 범위 바로 아래 칸(아래 OPEN) |
 | 액체는 모래 플래그가 없는 것만 | 같은 곳 | 같음 | 우리 가루는 따로 `powder` 종류라 `liquid` 종류만 봄 |
 | 계수는 컴포넌트 값, 소품 기본 0.7 | `data/materials.json` wood `buoyancy`, `internal/material/material.go` `Buoyancy` | 다름(의도) | 우리는 개체가 없어 고체 재질마다 둠(개발자 결정 2026-11-08). 나무 0.7 🧪 |
-| 저항은 다시 쓸 때 밀어내는 액체 칸마다 | `internal/rigid/body.go:237` `claim`의 Liquid | 같음 | 칸마다 힘을 C에 넘기지 않고, 칸 수·오프셋 합·제곱 거리 합을 모아 Step 전에 한 번 더함. 식이 r에 선형이라 실수 계산으로는 같음 |
-| 저항 식과 K | `internal/rigid/body.go:356` `liquidDrag` | 같음 | float32. 곱셈 순서(속력 × K × 질량)를 지킴 |
-| 접촉점 P는 칸의 정수 좌표(모서리) | `internal/rigid/body.go:237` | 다름(의도) | 칸 중심을 씀. 쉬는 모래 판정(`givesWay`)의 점 속도와 같은 점. 반 칸 차이 |
-| 질량 중심 | `internal/rigid/rigid.go:221` | 같음 | 우리 몸체는 상자라 질량 중심이 중심(변환 위치) |
-| 저항은 잠든 몸체를 깨움 | `internal/rigid/body.go:313` `push`(wake = 저항이 있을 때) | 같음 | 물속에서 멈춘 몸체도 잠드는 것을 확인(아래 측정) |
+| 저항은 다시 쓸 때 밀어내는 액체 칸마다 | `internal/rigid/body.go:239` `claim`의 Liquid | 같음 | 칸마다 힘을 C에 넘기지 않고, 칸 수·오프셋 합·제곱 거리 합을 모아 Step 전에 한 번 더함. 식이 r에 선형이라 실수 계산으로는 같음 |
+| 저항 식과 K | `internal/rigid/body.go:371` `liquidDrag` | 같음 | float32. 곱셈 순서(속력 × K × 질량)를 지킴 |
+| 저항은 그 순간의 속도로 매겨 힘으로 더함 | `internal/rigid/body.go:387` `settleDrag` | 다름(의도) | 같은 식을 틱 끝의 속도로 매김(뒤쪽 오일러). 우리 Box2D는 힘을 한 틱의 sub-step 4번 내내 같게 주어, 넓은 몸체가 빠르게 들어오면 속도가 뒤집혀 튀어 올랐음(Codex 리뷰). 가라앉는 속도에서는 거의 같음 |
+| 접촉점 P는 칸의 정수 좌표(모서리) | `internal/rigid/body.go:239` | 다름(의도) | 칸 중심을 씀. 쉬는 모래 판정(`givesWay`)의 점 속도와 같은 점. 반 칸 차이 |
+| 질량 중심 | `internal/rigid/rigid.go:221` | 같음 | 우리 몸체는 상자라 질량 중심이 중심(변환 위치). 관성도 Box2D에서 읽음 |
+| 저항은 잠든 몸체를 깨움 | `internal/rigid/body.go:315` `push`(wake = 저항이 있을 때) | 같음 | 물속에서 멈춘 몸체도 잠드는 것을 확인(아래 측정) |
 | 관문(bridge stamp) | 없음 | 다름(의도) | 관측한 모든 장면에서 통과라 두지 않음 |
 | 모래·지형·다른 몸체와의 저항 | 없음 | 같음(없음) | Noita도 이 분기는 액체만 확인. 나머지는 OPEN |
 
@@ -57,10 +58,12 @@
 
 | 계수 | 물에 닿고 60틱 | 120틱 | 215틱 | 400틱 | Noita 240프레임(C31) |
 |---|---|---|---|---|---|
-| 0 | 2.80 m/s | 2.58 | 2.79 | 2.62 | 2.81 m/s |
-| 0.7 | 1.66 m/s | 1.56 | 1.68 | 1.57 | 1.67 m/s, 계속 가라앉음 |
-| 1 | 0.18 m/s | 0.07 | 0 (3칸 아래에 멈춤) | 0 | 물속에서 멈춰 머묾 |
-| 2 | −0.94 m/s | 0.20 | 0.07 | −0.78 (수면 근처) | 수면 근처에서 오르내림 |
+| 0 | 3.01 m/s | 2.99 | 2.96 | 2.71 | 2.81 m/s |
+| 0.7 | 1.76 m/s | 1.71 | 1.64 | 1.73 | 1.67 m/s, 계속 가라앉음 |
+| 1 | 0.52 m/s | 0.18 | 0.04 | 0 (중심이 15칸 아래에 멈춤) | 물속에서 멈춰 머묾 |
+| 2 | 0.81 m/s | 0.73 | −1.20 | −0.81 (수면 근처) | 수면 근처에서 오르내림 |
+
+빠른 진입(Codex 리뷰로 찾음): 저항을 처음 속도로 매겨 한 틱 내내 주던 첫 구현에서는, 24 m/s로 물에 들어간 64×8 조각이 6.3 m/s로, 120×6 판자가 146 m/s로 위로 튀었습니다. 틱 끝의 속도로 매긴 뒤(위 표)에는 16×12, 64×8, 120×6 모두 위로 움직이지 않습니다.
 
 ## 실제 수치
 
@@ -92,6 +95,7 @@
   - 부력을 보는 점: 질량 중심의 열에서 몸체 범위 바로 아래 칸(자체 설계, 🔶)
   - 접촉점은 칸 중심(자체 설계). 쉬는 모래 판정의 점 속도와 같은 점
   - 칸마다 C 호출 대신 칸 수와 오프셋 합으로 모아 몸체마다 한 번(자체 설계, 비용)
+  - 저항을 틱 끝의 속도로 매김(뒤쪽 오일러, 자체 설계, Codex 리뷰). 같은 식이지만 힘이 몸체의 속도를 뒤집지 못함
 - 쓰지 않음:
   - bridge stamp 관문(관측에서 늘 통과)
   - 액체 입자로 바꾸기, 장식 입자(입자가 아직 없음)
@@ -107,6 +111,7 @@ TPT에는 강체가 없습니다(references/tpt.md:29, 50). 아래는 모두 우
 | 개체 없는 몸체(파괴 조각)의 부력 | OPEN(DESTRUCTION_BRIDGE:41) | 없음 | 지금은 모든 몸체가 재질 계수를 씀. 파괴 작업에서 다시 봄 | — | 파괴 작업 때 판단 |
 | 저항의 접촉점 | Noita는 칸 정수 좌표(모서리) | 없음 | 칸 중심(쉬는 모래 판정과 같은 점) | `TestLiquidDragMatchesNoita`(식), 재현 표 | 아니오 |
 | 저항이 몸체를 계속 깨우는지 | Noita는 깨움(관측). 물속에서 멈춘 몸체가 잠드는지는 관측 없음 | 없음 | Noita처럼 깨움. 멈춘 몸체는 더 이상 다시 써지지 않아 저항이 없으므로 잠듦을 확인 | 임시 테스트: 계수 0.7·1에서 두 상자 모두 3~5초 안에 잠들고 끝까지 잠듦 | 아니오 |
+| 빠르게 들어오는 넓은 몸체 | Noita의 고속 힘 상한은 OPEN(C42:959-960). 한 스텝에 힘을 그대로 주면 같은 뒤집힘이 생길 수 있음 | 없음 | 저항을 틱 끝의 속도로 매김(선·각속도 3×3 방정식, 행렬은 칸 수와 오프셋 합으로 만듦) | `TestFastPlankIsNotThrownBack`, `TestDragOnlySlows` | 아니오 |
 | 제자리에서 도는 몸체 | Noita 식은 질량 중심이 멈추면 저항 0 | 없음 | 그대로. 물속에서 제자리로 돌기만 하면 회전이 줄지 않음 | `TestLiquidDragMatchesNoita` | 아니오(직접 플레이로 볼 점) |
 
 ## 검증 계획
@@ -116,8 +121,9 @@ TPT에는 강체가 없습니다(references/tpt.md:29, 50). 아래는 모두 우
   - `TestLiquidDragMatchesNoita`: C42 프레임 43 수치(점과 질량 중심은 contact-drag-analysis.json의 첫 기록), 여러 칸의 합, 제자리 회전은 0
   - `TestWoodSinksSlowlyInWater`: 16×12 나무가 계수 0.7에서 0보다 느리게 계속 가라앉고, 1에서 물속에 멈춤
   - `TestSpinSlowsInWater`: 돌며 가라앉는 몸체가 물에서 회전을 잃음(공기에서는 유지)
-  - `TestPushAndMass`, `TestPushWakesOnlyWhenTold`: 힘·토크·질량, 깨우기, 할당 0회
+  - `TestDragOnlySlows`, `TestFastPlankIsNotThrownBack`: 느린 저항은 Noita 식과 5% 안, 빠르고 넓은 진입은 속도를 뒤집지 않음
+  - `TestPushAndMass`, `TestPushWakesOnlyWhenTold`: 힘·토크·질량·관성, 깨우기, 할당 0회
   - worker 수와 무관: `TestBodiesRunTheSame`(물에 떨어지는 몸체 포함), 리플레이 골든 1·4 worker
 - 측정값과 기준: `go test -run '^$' -bench Bodies -count 3 ./internal/rigid/`를 main과 번갈아. 몸체 몫이 3 ms 🧪 안인지
 - 비교 화면: `go run ./cmd/matter-wake -replay internal/replay/testdata/bodies.rpl -shots 270,330,600 -shots-dir out/shots`
-- 직접 플레이로 볼 점: 나무 상자가 가라앉는 속도(16×12 상자 약 2.4 m/s), 물에 들어갈 때의 모습, 돌던 상자의 회전이 물에서 줄어드는 모습, 제자리에서만 도는 상자는 줄지 않음
+- 직접 플레이로 볼 점: 나무 상자가 가라앉는 속도(16×12 상자 약 2.45 m/s), 물에 들어갈 때의 모습, 돌던 상자의 회전이 물에서 줄어드는 모습, 제자리에서만 도는 상자는 줄지 않음

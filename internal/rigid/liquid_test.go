@@ -29,7 +29,9 @@ func TestLiquidDragMatchesNoita(t *testing.T) {
 	v, w, m := physics.Vec2{X: 1.5, Y: 5.600000187754631}, float32(0.75), float32(3.0719998282589662)
 	rx := float32(31.74999887594767 - 28.899999016247637)
 	ry := float32(-28.100000885892506 - -29.11000088918826)
-	f, torque := liquidDrag(v, w, m, 1, rx, ry, float32(rx*rx)+float32(ry*ry))
+	c := float32(speed(v)*liquidK) * m
+	one := contacts{1, rx, ry, float32(rx*rx) + float32(ry*ry)}
+	f, torque := liquidDrag(c, v, w, one)
 	near := func(got float32, want float64) bool {
 		return math.Abs(float64(got)-want) <= 1e-5*math.Max(1, math.Abs(want))
 	}
@@ -37,16 +39,72 @@ func TestLiquidDragMatchesNoita(t *testing.T) {
 		t.Fatalf("drag of one cell is %v and torque %v, want (-0.6612, -6.8901) and -18.969", f, torque)
 	}
 	// Two cells, each on its own and summed.
-	f1, t1 := liquidDrag(v, w, m, 1, rx, ry, float32(rx*rx)+float32(ry*ry))
-	f2, t2 := liquidDrag(v, w, m, 1, -0.4, 0.3, 0.25)
-	f12, t12 := liquidDrag(v, w, m, 2, rx-0.4, ry+0.3, float32(rx*rx)+float32(ry*ry)+0.25)
+	f1, t1 := liquidDrag(c, v, w, one)
+	f2, t2 := liquidDrag(c, v, w, contacts{1, -0.4, 0.3, 0.25})
+	f12, t12 := liquidDrag(c, v, w, contacts{2, rx - 0.4, ry + 0.3, one.r2 + 0.25})
 	if !near(f12.X, float64(f1.X+f2.X)) || !near(f12.Y, float64(f1.Y+f2.Y)) || !near(t12, float64(t1+t2)) {
 		t.Fatalf("two cells drag %v %v together, %v %v and %v %v apart", f12, t12, f1, t1, f2, t2)
 	}
 	// A body that only spins feels no drag: the speed of its center of
 	// mass scales the force (C42).
-	if f, torque := liquidDrag(physics.Vec2{}, 5, m, 3, 1, -2, 7); f != (physics.Vec2{}) || torque != 0 {
+	still := physics.Vec2{}
+	if f, torque := liquidDrag(float32(speed(still)*liquidK)*m, still, 5, contacts{3, 1, -2, 7}); f != (physics.Vec2{}) || torque != 0 {
 		t.Fatalf("a body spinning in place feels %v and torque %v", f, torque)
+	}
+}
+
+// Over a tick, the drag is Noita's at the velocity the body ends the tick
+// with: for a few slow contacts that is Noita's at the start, within a
+// fraction of it; for many fast ones it slows the body almost to a stop
+// but never past it, as Noita's held through the tick would (Codex
+// review).
+func TestDragOnlySlows(t *testing.T) {
+	m, inertia := float32(3.072), float32(3.072*(6.4*6.4+0.8*0.8)/12)
+	slow := physics.Vec2{X: 0.2, Y: 1.6}
+	k := contacts{4, 0.5, 0.3, 1.5}
+	c := float32(speed(slow)*liquidK) * m
+	f0, t0 := liquidDrag(c, slow, 0.1, k)
+	f1, t1 := settleDrag(c, m, inertia, slow, 0.1, k)
+	if math.Abs(float64(f1.Y-f0.Y)) > 0.05*math.Abs(float64(f0.Y)) || math.Abs(float64(t1-t0)) > 0.05*math.Abs(float64(t0))+1e-6 {
+		t.Fatalf("slow drag over a tick is %v %v, Noita's %v %v", f1, t1, f0, t0)
+	}
+	// 192 cells of a 64-wide body at 24 m/s.
+	fast := physics.Vec2{X: 0, Y: 24}
+	k = contacts{192, 0, 0.05, 192 * 3.4}
+	c = float32(speed(fast)*liquidK) * m
+	f, torque := settleDrag(c, m, inertia, fast, 0, k)
+	after := fast.Y + f.Y/m*tickSeconds
+	spin := torque / inertia * tickSeconds
+	if after < 0 || after > 0.5*fast.Y || math.Abs(float64(spin)) > 1 {
+		t.Fatalf("drag over a tick takes a body at %v m/s to %v m/s spinning %v rad/s, want slowed but not reversed", fast.Y, after, spin)
+	}
+}
+
+// A wide plank falling fast into water is slowed by it, not thrown back
+// up (it was, at 146 m/s; Codex review).
+func TestFastPlankIsNotThrownBack(t *testing.T) {
+	s, w, id := newSystem(t, 256, 420, 1)
+	w.Fill(0, 410, 256, 420, id.stone)
+	w.Fill(0, 250, 256, 410, id.water)
+	drop(t, s, id.wood, 68, 10, 120, 6)
+	b := &s.bodies[0]
+	entered, up, fastest := false, 0.0, 0.0
+	for range 400 {
+		tick(t, s, w)
+		p, _ := s.phys.Transform(b.id)
+		v, _ := s.phys.Velocity(b.id)
+		if !entered && float64(p.Y)*cellsPerMeter+3 >= 250 {
+			entered, fastest = true, float64(v.Y)
+		}
+		if entered {
+			up = max(up, -float64(v.Y))
+		}
+	}
+	if !entered || fastest < 20 {
+		t.Fatalf("the plank reached the water at %v m/s, want over 20", fastest)
+	}
+	if up > 1 {
+		t.Fatalf("a plank that hit the water at %.1f m/s came back up at %.1f m/s", fastest, up)
 	}
 }
 

@@ -338,6 +338,12 @@ func (w *World) Mass(b Body) float32 {
 	return float32(C.b2Body_GetMass(w.body(b)))
 }
 
+// Inertia returns the body's rotational inertia about its center of mass,
+// in kilogram square meters.
+func (w *World) Inertia(b Body) float32 {
+	return float32(C.b2Body_GetRotationalInertia(w.body(b)))
+}
+
 // Push adds a force at the body's center of mass, in newtons, and a torque,
 // in newton meters, to what the next Step applies to it; Step clears them
 // after. A sleeping body ignores them unless wake is set, which wakes it

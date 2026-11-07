@@ -164,7 +164,7 @@ func TestStaticChainsRefuseBadInput(t *testing.T) {
 
 // Push accelerates a body by force over its mass and spins it by torque
 // over its inertia, for one Step: Box2D clears them after it. Mass is the
-// density times the area.
+// density times the area, and Inertia a box's about its center.
 func TestPushAndMass(t *testing.T) {
 	w, err := NewWorld(Config{})
 	if err != nil {
@@ -180,6 +180,9 @@ func TestPushAndMass(t *testing.T) {
 		t.Fatalf("a 2 m × 1 m box of density 2 weighs %v, want 4", m)
 	}
 	inertia := m * (2*2 + 1*1) / 12
+	if got := w.Inertia(b); math.Abs(float64(got-inertia)) > 1e-5 {
+		t.Fatalf("the box's inertia is %v, want %v", got, inertia)
+	}
 	if err := w.Push(b, Vec2{8, -4}, 3, false); err != nil {
 		t.Fatal(err)
 	}

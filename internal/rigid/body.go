@@ -73,8 +73,10 @@ type body struct {
 	v     physics.Vec2
 	spin  float32
 	haveV bool
-	// mass is the body's mass in kilograms and buoyancy its material's.
-	mass, buoyancy float32
+	// mass is the body's mass in kilograms, inertia its rotational
+	// inertia about its center of mass in kg m², and buoyancy its
+	// material's.
+	mass, inertia, buoyancy float32
 	// The liquid cells this tick's write pushed away: how many (dragN),
 	// the sums of their offsets from the center of mass in cells (dragX,
 	// dragY) and of their squared distances from it (dragR2). The drag
@@ -321,10 +323,14 @@ func (s *System) push(b *body) error {
 	var torque float32
 	if drag {
 		const m2 = cellsPerMeter * cellsPerMeter
-		f, torque = liquidDrag(b.v, b.spin, b.mass, b.dragN, b.dragX/cellsPerMeter, b.dragY/cellsPerMeter, b.dragR2/m2)
+		c := float32(speed(b.v)*liquidK) * b.mass
+		f, torque = settleDrag(c, b.mass, b.inertia, b.v, b.spin,
+			contacts{b.dragN, b.dragX / cellsPerMeter, b.dragY / cellsPerMeter, b.dragR2 / m2})
 		b.dragN, b.dragX, b.dragY, b.dragR2 = 0, 0, 0, 0
 	}
 	if lift {
+		// buoyancy rounds its products, so they do not fuse with these
+		// additions on a CPU with FMA (docs/pitfalls.md).
 		up := buoyancy(b.buoyancy, b.mass, b.v)
 		f = physics.Vec2{X: f.X + up.X, Y: f.Y + up.Y}
 	}
@@ -346,29 +352,63 @@ func (s *System) overLiquid(b *body) bool {
 	return ok && s.kinds[c.Mat] == material.Liquid
 }
 
-// liquidDrag returns the force and torque that liquid cells put on a body
-// of mass m, moving at v and spinning at w, as it writes itself over them
-// (C42). Each cell at r from the center of mass, in meters, pushes against
-// the velocity of that point, v + w × r, scaled by the speed of the center
-// of mass: F = (v + w × r) |v| K m, with the torque r × F. That is linear
-// in r, so n cells whose offsets sum to (sx, sy) and whose squared lengths
-// sum to r2 give the total.
-func liquidDrag(v physics.Vec2, w, m, n, sx, sy, r2 float32) (physics.Vec2, float32) {
-	speed := float32(math.Sqrt(float64(float32(v.X*v.X) + float32(v.Y*v.Y))))
-	c := float32(speed*liquidK) * m
+// contacts sums the liquid cells a body pushed away: how many there were
+// (n), their offsets from its center of mass in meters (sx, sy) and their
+// squared distances from it (r2).
+type contacts struct{ n, sx, sy, r2 float32 }
+
+// speed returns |v|.
+func speed(v physics.Vec2) float32 {
+	return float32(math.Sqrt(float64(float32(v.X*v.X) + float32(v.Y*v.Y))))
+}
+
+// liquidDrag returns the force and torque the liquid cells k put on a body
+// moving at v and spinning at w (C42). Each cell at r from the center of
+// mass pushes against the velocity of that point, v + w × r, times c, with
+// the torque r × F. Noita's c is |v| K m, from the body's speed and mass.
+// That is linear in r, so the sums in k give the total. Products are
+// rounded on return, so a caller's additions cannot fuse with them.
+func liquidDrag(c float32, v physics.Vec2, w float32, k contacts) (physics.Vec2, float32) {
 	f := physics.Vec2{
-		X: c * (float32(n*v.X) - float32(w*sy)),
-		Y: c * (float32(n*v.Y) + float32(w*sx)),
+		X: float32(c * (float32(k.n*v.X) - float32(w*k.sy))),
+		Y: float32(c * (float32(k.n*v.Y) + float32(w*k.sx))),
 	}
-	return f, c * (float32(v.Y*sx) - float32(v.X*sy) + float32(w*r2))
+	return f, float32(c * (float32(v.Y*k.sx) - float32(v.X*k.sy) + float32(w*k.r2)))
+}
+
+// settleDrag returns the drag of the liquid cells k on a body of mass m and
+// rotational inertia inertia, moving at v and spinning at w, as a force
+// and torque for the coming tick: Noita's (liquidDrag, with c from the
+// speed now) at the velocity the body ends the tick with, not at the one it
+// starts with (backward Euler). Box2D holds a force through the whole tick,
+// and a wide body entering water fast would get more than all its speed
+// taken away, leaving faster than it came (Codex review). This way the drag
+// only slows it; at the speeds bodies sink at, the two hardly differ.
+func settleDrag(c, m, inertia float32, v physics.Vec2, w float32, k contacts) (physics.Vec2, float32) {
+	// (M - dt c A) u' = M u, where the drag is c A u with
+	// A = [[n, 0, -sy], [0, n, sx], [-sy, sx, r2]] and u = (vx, vy, w).
+	dk := -float64(c) * float64(tickSeconds)
+	mm, ii := float64(m), float64(inertia)
+	n, sx, sy, r2 := float64(k.n), float64(k.sx), float64(k.sy), float64(k.r2)
+	vx, vy := float64(v.X), float64(v.Y)
+	a := mm + float64(dk*n)
+	den := ii + float64(dk*r2) - float64(float64(dk*dk)*(float64(sx*sx)+float64(sy*sy)))/a
+	num := float64(ii*float64(w)) + float64(float64(dk*mm)*(float64(sy*vx)-float64(sx*vy)))/a
+	w1 := num / den
+	v1 := physics.Vec2{
+		X: float32((float64(mm*vx) + float64(float64(dk*sy)*w1)) / a),
+		Y: float32((float64(mm*vy) - float64(float64(dk*sx)*w1)) / a),
+	}
+	return liquidDrag(c, v1, float32(w1), k)
 }
 
 // buoyancy returns the force liquid under a body of buoyancy b and mass m,
 // moving at v, holds it up with (C41): -b m (v + g). At b = 1 it cancels
-// gravity and brakes the body to a stop. It adds no torque.
+// gravity and brakes the body to a stop. It adds no torque. Products are
+// rounded on return, so a caller's additions cannot fuse with them.
 func buoyancy(b, m float32, v physics.Vec2) physics.Vec2 {
 	k := -b * m
-	return physics.Vec2{X: k * v.X, Y: k * (v.Y + gravity)}
+	return physics.Vec2{X: float32(k * v.X), Y: float32(k * (v.Y + gravity))}
 }
 
 // rect is a half-open rectangle of cells, [x0, x1) × [y0, y1).
