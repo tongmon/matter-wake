@@ -382,3 +382,193 @@ func sameWay(v, p, q physics.Vec2) bool {
 	px, py, qx, qy := float64(p.X-v.X), float64(p.Y-v.Y), float64(q.X-v.X), float64(q.Y-v.Y)
 	return math.Abs(px*qy-py*qx) < 1e-6 && px*qx+py*qy > 0
 }
+
+// Sand that settles against a turned body, in cells its shape reaches
+// into, is not terrain while the body is there: Box2D would push the body
+// out of it. Sand that was terrain before stays terrain when a body
+// reaches into it, so a body never loses what it rests on. Once the body
+// is gone, the sand is terrain again.
+func TestSettledSandInABodyIsNotTerrain(t *testing.T) {
+	s, w, id := newSystem(t, 128, 128, 1)
+	if err := s.add(id.wood, 30, 30, 16, 12, 30*math.Pi/180); err != nil {
+		t.Fatal(err)
+	}
+	b := &s.bodies[0]
+	s.Write()
+	collide(t, s)
+	// Settled sand in every free cell around the body.
+	var in, out []cellAt
+	for y := b.box.y0 - 2; y < b.box.y1+2; y++ {
+		for x := b.box.x0 - 2; x < b.box.x1+2; x++ {
+			if c, _ := w.At(x, y); c.Mat != material.Air {
+				continue
+			}
+			w.Put(x, y, world.Cell{Mat: id.sand, Rest: world.SettleTicks})
+			switch d := cellDepth(b, x, y); {
+			case d > 0.11:
+				in = append(in, cellAt{int32(x), int32(y)})
+			case d < 0.09:
+				out = append(out, cellAt{int32(x), int32(y)})
+			}
+		}
+	}
+	w.Flush()
+	collide(t, s)
+	if len(in) == 0 {
+		t.Fatal("no sand reaches into the body")
+	}
+	for _, at := range in {
+		if cl := classAt(s, int(at.x), int(at.y)); cl != world.Open {
+			t.Fatalf("sand at %v, inside the body, is terrain (%v)", at, cl)
+		}
+	}
+	for _, at := range out {
+		if cl := classAt(s, int(at.x), int(at.y)); cl != world.Settled {
+			t.Fatalf("sand at %v, outside the body, is not terrain (%v)", at, cl)
+		}
+	}
+	// Turned a little further, the body reaches into sand that is terrain
+	// now; that sand stays terrain.
+	setPose(b, float64(b.p.X)*cellsPerMeter, float64(b.p.Y)*cellsPerMeter, 36)
+	s.sync()
+	collide(t, s)
+	kept := 0
+	for _, at := range out {
+		if cellDepth(b, int(at.x), int(at.y)) > 0.11 {
+			kept++
+			if cl := classAt(s, int(at.x), int(at.y)); cl != world.Settled {
+				t.Fatalf("terrain sand at %v stopped being terrain when the body reached into it", at)
+			}
+		}
+	}
+	if kept == 0 {
+		t.Fatal("turning the body reached into no terrain sand")
+	}
+	// Moved away, the body leaves all the sand terrain.
+	setPose(b, 63, 36, 30)
+	s.sync()
+	collide(t, s)
+	for _, at := range append(in, out...) {
+		if c, _ := w.At(int(at.x), int(at.y)); c.Mat == id.sand {
+			if cl := classAt(s, int(at.x), int(at.y)); cl != world.Settled {
+				t.Fatalf("sand at %v is not terrain after the body left", at)
+			}
+		}
+	}
+}
+
+// Every chunk that sees a cell, its owner and the chunks beside it whose
+// outlines end there, takes the same class for it, sand kept out of a
+// body included: else a seam could lose or gain an edge.
+func TestChunksAgreeOnSandInBodies(t *testing.T) {
+	s, w, id := newSystem(t, 128, 128, 1)
+	if err := s.add(id.wood, 56, 52, 16, 12, 40*math.Pi/180); err != nil {
+		t.Fatal(err)
+	}
+	b := &s.bodies[0]
+	s.Write()
+	collide(t, s)
+	for y := b.box.y0 - 2; y < b.box.y1+2; y++ {
+		for x := b.box.x0 - 2; x < b.box.x1+2; x++ {
+			if c, _ := w.At(x, y); c.Mat == material.Air {
+				w.Put(x, y, world.Cell{Mat: id.sand, Rest: world.SettleTicks})
+			}
+		}
+	}
+	w.Flush()
+	collide(t, s)
+	compared := 0
+	for i := range s.terrain {
+		ch := &s.terrain[i]
+		if !ch.built {
+			continue
+		}
+		c := s.chunkCells(i)
+		for y := max(c.y0-1, 0); y < min(c.y1+1, w.Height()); y++ {
+			for x := max(c.x0-1, 0); x < min(c.x1+1, w.Width()); x++ {
+				owner := (y/world.ChunkSize)*s.cols + x/world.ChunkSize
+				if owner == i || !s.terrain[owner].built {
+					continue
+				}
+				compared++
+				if got, want := ch.cls[(y-c.y0+1)*(c.x1-c.x0+2)+x-c.x0+1], classAt(s, x, y); got != want {
+					t.Fatalf("chunk %d takes (%d, %d) as %v, its owner %d as %v", i, x, y, got, owner, want)
+				}
+			}
+		}
+	}
+	if compared == 0 {
+		t.Fatal("no chunk saw another's cells")
+	}
+}
+
+// Boxes stacked turned, with sand poured over them, stay apart: sand
+// settling against them does not push one into another a little more each
+// time it settles (it did, 12 cells deep).
+func TestStackUnderSandStaysApart(t *testing.T) {
+	s, w, id := newSystem(t, 192, 160, 1)
+	w.Fill(0, 150, 192, 160, id.stone)
+	for _, at := range [][2]int{{77, 100}, {91, 70}, {72, 40}} {
+		drop(t, s, id.wood, at[0], at[1], 16, 12)
+	}
+	deepest := 0.0
+	for tk := range 2000 {
+		if tk >= 240 && tk < 1600 {
+			for y := 2; y < 5; y++ {
+				for x := 70; x < 120; x++ {
+					if c, _ := w.At(x, y); c.Mat == material.Air {
+						w.Set(x, y, id.sand)
+					}
+				}
+			}
+		}
+		tick(t, s, w)
+		if tk < 300 {
+			continue // the landing, before any sand
+		}
+		for i := range s.bodies {
+			for j := i + 1; j < len(s.bodies); j++ {
+				deepest = max(deepest, bodyOverlap(s, &s.bodies[i], &s.bodies[j]))
+			}
+		}
+	}
+	if deepest > 1 {
+		t.Fatalf("two bodies overlap %.2f cells under the sand", deepest)
+	}
+}
+
+// A turned box dropped on a bed of settled sand comes to rest on it and
+// stays there: the sand it lands on was terrain before it came, so the
+// box does not sink through it.
+func TestTurnedBoxRestsOnSettledSand(t *testing.T) {
+	for _, deg := range []float32{0, 30, 45} {
+		s, w, id := newSystem(t, 160, 160, 1)
+		w.Fill(0, 150, 160, 160, id.stone)
+		w.Fill(0, 110, 160, 150, id.sand)
+		for range world.SettleTicks + 2 {
+			tick(t, s, w)
+		}
+		if err := s.add(id.wood, 72, 30, 16, 12, deg*math.Pi/180); err != nil {
+			t.Fatal(err)
+		}
+		bottom := func() float64 {
+			b := &s.bodies[0]
+			p, q := s.phys.Transform(b.id)
+			c, sn := math.Abs(float64(q.C)), math.Abs(float64(q.S))
+			return float64(p.Y)*cellsPerMeter + c*float64(b.h)/2 + sn*float64(b.w)/2
+		}
+		for range 300 {
+			tick(t, s, w)
+		}
+		rest := bottom()
+		for range 300 {
+			tick(t, s, w)
+		}
+		// A fast landing pushes some settled sand away (C134 5.1c), so the
+		// box may end a few cells below the bed's top, but no further, and
+		// not lower later.
+		if end := bottom(); rest > 116 || end > rest+0.1 {
+			t.Fatalf("%v°: the box rests with its bottom at %.2f, then %.2f; the sand's top is at 110", deg, rest, end)
+		}
+	}
+}

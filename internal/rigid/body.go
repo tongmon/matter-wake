@@ -264,6 +264,26 @@ func (s *System) pixelSpeed2(b *body, rx, ry float32) float32 {
 	return float32(vx*vx) + float32(vy*vy)
 }
 
+// reaches reports whether cell (x, y) and b's shape, where b was last
+// written, overlap by more than keepOutDepth cells: along each of the
+// cell's axes and the body's, their extents overlap by that much. The
+// multiplications are converted one by one, as in write.
+func (b *body) reaches(x, y int) bool {
+	px, py := float32(b.wp.X*cellsPerMeter), float32(b.wp.Y*cellsPerMeter)
+	ox, oy := int(math.Floor(float64(px))), int(math.Floor(float64(py)))
+	dx := float32(x-ox) + 0.5 - (px - float32(ox))
+	dy := float32(y-oy) + 0.5 - (py - float32(oy))
+	co, si := b.wq.C, b.wq.S
+	ac, as := abs32(co), abs32(si)
+	hw, hh := float32(b.w)/2, float32(b.h)/2
+	const d = keepOutDepth - 0.5 // the cell's half side counts once per axis
+	cell := (ac + as) / 2
+	return abs32(dx) < float32(ac*hw)+float32(as*hh)-d &&
+		abs32(dy) < float32(as*hw)+float32(ac*hh)-d &&
+		abs32(float32(co*dx)+float32(si*dy)) < hw+cell-keepOutDepth &&
+		abs32(float32(co*dy)-float32(si*dx)) < hh+cell-keepOutDepth
+}
+
 // rect is a half-open rectangle of cells, [x0, x1) × [y0, y1).
 type rect struct{ x0, y0, x1, y1 int }
 

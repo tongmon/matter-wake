@@ -22,6 +22,11 @@ const (
 	// a bump of one cell, one corner cut.
 	tolNum = 3
 	tolDen = 4
+	// keepOutDepth is how deep, in cells, a settled cell may reach into a
+	// body's shape and still become terrain while the body is there
+	// (keepOut). 🧪 Above Box2D's linear slop (0.05 cells), so a body
+	// resting on settled powder does not reach that deep into it.
+	keepOutDepth = 0.1
 )
 
 // chunk is the terrain collision of one chunk of the world: a static body
@@ -45,8 +50,9 @@ type chunk struct {
 func (s *System) Collide() error {
 	s.ticks++
 	s.wanted = s.wanted[:0]
+	s.nearBody, s.nearNext = s.nearBody[:0], s.nearNext[:0]
 	for i := range s.bodies {
-		s.want(&s.bodies[i])
+		s.want(&s.bodies[i], int32(i))
 	}
 	slices.Sort(s.wanted)
 	s.rebuilt = s.rebuilt[:0]
@@ -70,10 +76,10 @@ func (s *System) Collide() error {
 	return nil
 }
 
-// want lists the chunks b may touch in the coming Step: those it covers,
-// and those it would cover moved as far again as in the last tick,
-// widened by nearCells.
-func (s *System) want(b *body) {
+// want lists the chunks b, at slot, may touch in the coming Step: those
+// it covers, and those it would cover moved as far again as in the last
+// tick, widened by nearCells. It lists b among the bodies near each.
+func (s *System) want(b *body, slot int32) {
 	if !b.written {
 		return
 	}
@@ -96,7 +102,11 @@ func (s *System) want(b *body) {
 			if s.stamp[i] != s.ticks {
 				s.stamp[i] = s.ticks
 				s.wanted = append(s.wanted, i)
+				s.nearHead[i] = -1
 			}
+			s.nearBody = append(s.nearBody, slot)
+			s.nearNext = append(s.nearNext, s.nearHead[i])
+			s.nearHead[i] = int32(len(s.nearBody) - 1)
 		}
 	}
 }
@@ -123,7 +133,9 @@ func (s *System) version(i int) uint64 {
 }
 
 // refresh rebuilds the collision of chunk i if the classes of its cells
-// and those around it changed since it was built.
+// and those around it changed since it was built. Settled cells that a
+// body near the chunk reaches into count as open, unless they were
+// terrain already (keepOut).
 func (s *System) refresh(i int) error {
 	ch := &s.terrain[i]
 	v := s.version(i)
@@ -136,6 +148,7 @@ func (s *System) refresh(i int) error {
 	t := &s.trace
 	t.cls = slices.Grow(t.cls[:0], n)[:n]
 	s.w.Classify(c.x0-1, c.y0-1, c.x1+1, c.y1+1, t.cls)
+	s.keepOut(i, c, t.cls)
 	ch.version = v
 	if ch.built && slices.Equal(ch.cls, t.cls) {
 		return nil
@@ -157,6 +170,49 @@ func (s *System) refresh(i int) error {
 	}
 	ch.body = b
 	return nil
+}
+
+// keepOut opens, in cls, the classes of chunk i's cells c and the cells
+// around them, each settled cell that a body near the chunk reaches into
+// by more than keepOutDepth and that was not terrain when the chunk that
+// owns it was last built. Box2D pushes a body out of terrain made inside
+// it, into whatever is beside it; sand settling against a turned body,
+// whose cells always reach into its shape, pushed it a little further
+// each time, until stacked bodies sank into each other. Settled cells that
+// were terrain before stay terrain, so a body never loses what it rests
+// on, and turn into terrain once no body reaches into them. Each chunk
+// that sees a cell judges it by the class its owner kept, so the chunks
+// agree on it.
+func (s *System) keepOut(i int, c rect, cls []world.Class) {
+	if s.stamp[i] != s.ticks {
+		return
+	}
+	ring := rect{c.x0 - 1, c.y0 - 1, c.x1 + 1, c.y1 + 1}
+	w := ring.x1 - ring.x0
+	for k := s.nearHead[i]; k >= 0; k = s.nearNext[k] {
+		b := &s.bodies[s.nearBody[k]]
+		r := rect{max(ring.x0, b.box.x0-1), max(ring.y0, b.box.y0-1), min(ring.x1, b.box.x1+1), min(ring.y1, b.box.y1+1)}
+		for y := r.y0; y < r.y1; y++ {
+			for x := r.x0; x < r.x1; x++ {
+				at := &cls[(y-ring.y0)*w+x-ring.x0]
+				if *at == world.Settled && !s.wasTerrain(x, y) && b.reaches(x, y) {
+					*at = world.Open
+				}
+			}
+		}
+	}
+}
+
+// wasTerrain reports whether cell (x, y) was terrain when the chunk that
+// owns it was last built.
+func (s *System) wasTerrain(x, y int) bool {
+	i := (y/world.ChunkSize)*s.cols + x/world.ChunkSize
+	ch := &s.terrain[i]
+	if !ch.built {
+		return false
+	}
+	c := s.chunkCells(i)
+	return ch.cls[(y-c.y0+1)*(c.x1-c.x0+2)+x-c.x0+1] != world.Open
 }
 
 // The four directions an edge of the cell lattice runs in, in clockwise
