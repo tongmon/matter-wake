@@ -16,7 +16,9 @@
 //     cells of later bodies stay.
 //  2. Collide: the terrain near each body is made collision for Box2D, one
 //     static body of edge chains per 64×64 chunk, rebuilt when the chunk's
-//     cells change what bodies collide with (world.Classify).
+//     cells change what bodies collide with (world.Classify). Settled
+//     powder that newly reaches into a body's shape is left out while the
+//     body is there, so Box2D does not push the body out of it.
 //  3. The world's tick runs the cells, then puts back the queued ones.
 //  4. Step advances Box2D by one tick.
 //
@@ -72,10 +74,16 @@ type System struct {
 	terrain []chunk
 	cols    int
 	// wanted lists the chunks near a body this tick, and stamp, by chunk,
-	// the last tick (counted by ticks) that listed it.
-	wanted []int
-	stamp  []uint32
-	ticks  uint32
+	// the last tick (counted by ticks) that listed it. nearHead holds, by
+	// chunk, the first of the bodies near it in nearBody, a list linked by
+	// nearNext and ended by -1; it is valid while the chunk's stamp is
+	// this tick's.
+	wanted   []int
+	stamp    []uint32
+	ticks    uint32
+	nearHead []int32
+	nearBody []int32
+	nearNext []int32
 	// rebuilt lists the chunks whose collision was rebuilt this tick, to
 	// wake the bodies near them.
 	rebuilt []int
@@ -100,6 +108,10 @@ func New(w *world.World, mats *material.Table) (*System, error) {
 	rows := (w.Height() + world.ChunkSize - 1) / world.ChunkSize
 	s.terrain = make([]chunk, cols*rows)
 	s.stamp = make([]uint32, cols*rows)
+	s.nearHead = make([]int32, cols*rows)
+	for i := range s.nearHead {
+		s.nearHead[i] = -1
+	}
 	s.cols = cols
 	if err := s.wall(); err != nil {
 		phys.Close()

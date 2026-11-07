@@ -2,6 +2,8 @@
 
 작성: 2026-11-07 · 관련 작업: `feat/body-grid-coupling`
 
+갱신: 2026-11-08 · `fix/settled-sand-in-bodies`: 몸체 모양에 파고드는 새 정착 칸은 그 몸체가 있는 동안 지형에서 뺍니다(개발자 결정, "H 적용해줘"). 기운 채 쌓인 상자에 모래를 부으면 상자끼리 파고들었기 때문입니다. 아래 "지형 분류" 대조와 빈칸 표에 더했습니다.
+
 갱신: 2026-11-07 · `fix/body-pixel-holes`: 몸체 픽셀을 픽셀 중심의 앞쪽 사상(Noita) 대신 칸 중심의 역사상으로 씁니다(개발자 결정, "역사상으로"). 앞쪽 사상이 기운 몸체에 남기는 구멍으로 모래가 스며들었기 때문입니다. 아래 대조표와 빈칸을 그에 맞게 고쳤습니다.
 
 ## 범위
@@ -90,6 +92,7 @@
 | 재삽입 스케줄러(예산, retry 먼저, 밀려난 셀) | `internal/world/reinsert.go:59` `reinsertQueued`, `:79` `retryCells` | 같음 | 난수는 전역 LCG 대신 (시드, 틱) 스트림 |
 | 만료 삭제, 100,000 상한 | 없음 | 다름 | 셀 보존을 위해 두지 않음. 몸체가 밀어낸 셀에는 만료가 없음(BODY_GRID_COUPLING:194-206에서 끝까지 남음) |
 | 지형 분류 0/1/2 | `internal/world/collision.go:25` `Classify` | 같음 | 부착(+22)·sticks_to_ceiling·never_box2d가 없어 분류 1은 Static, 2는 쉰 틱 ≥ 20인 가루 |
+| 분류 2는 늘 지형 | `internal/rigid/terrain.go` `keepOut`, `internal/rigid/body.go` `reaches` | 다름(의도) | 근처 몸체 모양에 0.1칸(🧪) 넘게 파고드는 정착 칸은, 그 칸을 가진 청크를 지난번 만들 때 지형이 아니었으면 열림으로 셈. 몸체 안에 지형이 생겨 몸체가 밀려나고 쌓인 상자끼리 파고들던 것을 막음(개발자 결정 2026-11-08) |
 | 쉬는 카운터 | `internal/world/motion.go:98` `updatePowder`, `:208` `swap` | 다름 | 쉬는 상태로 갱신을 마칠 때 1씩 늘고 20(🧪)에서 멈춤. 움직이면 0(Noita는 옮겨질 때 1 줄임). 51이 아니라 20까지인 것은 셀 휴면이 아직 없어서 |
 | 64×64 영역 재생성 | `internal/rigid/terrain.go:127` `refresh` | 같음 | |
 | 얇은 polygon | `internal/rigid/terrain.go:286` `outline` | 다름 | Box2D v3 chain(한쪽 면 선분, 유령 점으로 이음)과 Douglas–Peucker 단순화(🧪 0.75칸) |
@@ -142,6 +145,7 @@
   - 지형 형상: 얇은 polygon 대신 chain, 단순화 허용값 🧪(자체 설계)
   - 재생성 시점: 10/20틱 gate 대신 매 틱 Step 전 비교(자체 설계, 결정성)
   - 카운터: 20에서 멈춤, 움직이면 0(자체 설계)
+  - 분류 2: 몸체 모양에 파고드는 새 정착 칸은 그 몸체가 있는 동안 지형이 아님(개발자 결정 2026-11-08)
 - 쓰지 않음:
   - 입자 영역(카메라 의존), 만료 삭제와 100,000 상한(셀 보존), 우선도(아직 필요 없음)
   - Step의 12 ms 넘으면 몸체를 static으로 바꾸는 경로(RIGID_BODY_STEP_PROFILE:116-129): 측정 뒤 필요할 때
@@ -167,6 +171,7 @@ TPT에는 강체가 없습니다(references/tpt.md:29, 50). 아래는 모두 우
 | 지형 형상의 단순화 허용값 | 한 칸 파임이 사라지는 사례 하나뿐(TERRAIN_COLLISION:91-98) | 없음 | Douglas–Peucker 0.75칸 🧪(선분까지의 거리). 45° 계단은 바깥 모서리를 잇는 직선, 한 칸 돌기는 모서리 하나가 잘린 채 남음. 열린 chain은 양 끝의 격자 변을 남겨 유령 점이 이웃 청크의 변과 맞음 | `TestContourSimplifiesStairs`, `TestOutlineCoversEveryEdge` | 아니오 |
 | 청크 경계에서 형상 잇기 | 옆 영역은 따로 재생성된다는 것만(TERRAIN_COLLISION:71-72) | 없음 | 경계에서 끝나는 열린 chain, 유령 점은 옆 청크의 다음 꼭짓점. 고체끼리 맞닿은 청크 경계에는 선분이 없음 | `TestTerrainChainsMeetAtChunkBorders`, 상자가 경계를 미끄러져 넘는 테스트 | 아니오 |
 | 지형 마찰 | OPEN(TERRAIN_COLLISION:59, 242) | 없음 | 모든 지형 선분에 마찰 0.6 🧪(Box2D 기본값) | 직접 플레이 | 아니오 |
+| 몸체 안에 생기는 지형 | Noita도 분류 2를 몸체와 상관없이 만듦(TERRAIN_COLLISION:27-46). 그 지형이 몸체를 미는지, 몸체끼리 파고드는지는 관측이 없음(검색 "몸체 겹", "끼어", "튕겨", "관통", "overlap", "몸체끼리", "정착 모래 몸체"). Noita는 지형 갱신 시점(10/20틱 gate)과 Box2D 2.x가 달라 같은 일이 생기는지 모름 | 없음 | 근처 몸체 모양에 0.1칸 넘게 파고드는 정착 칸은, 그 칸을 가진 청크의 지난번 분류가 지형이 아니었으면 열림. 이미 지형이던 칸은 유지해 받침을 잃지 않음. 청크 둘레의 칸은 그 칸을 가진 청크의 분류로 판단 | `TestStackUnderSandStaysApart`(12.3칸 → 1칸 미만), `TestSettledSandInABodyIsNotTerrain`, `TestChunksAgreeOnSandInBodies`, `TestTurnedBoxRestsOnSettledSand` | 아니오(우리 설계가 측정을 통과) |
 | 지형을 다시 만들 때 잠든 몸체 | Noita에서 지형 몸체를 바꿀 때 근처 몸체를 깨우는지는 자료에 없음 | 없음 | Box2D v3.2는 정적 몸체를 지워도 그 위의 잠든 몸체를 깨우지 않음. 다시 만든 청크에 닿을 수 있는 몸체를 깨움 🔶 | `TestTerrainRebuildsOnlyOnChange` | 아니오 |
 | 재생성 시점 | worker가 돌 때 10/20틱 gate, 지연 최대 62프레임 관측(TERRAIN_COLLISION:126-150) | 없음 | 매 틱 몸체 쓰기 뒤 Step 전에, 몸체 근처 청크의 버전이 바뀌었으면 분류를 다시 계산해 바뀐 청크만 재생성(결정적, 🔶) | `BenchmarkBodies`의 terrain 단계 | 아니오 |
 | 몸체 근처의 범위 | 현재·예측 AABB만 STATIC | 없음 | 칸 단위 AABB와 한 틱 뒤 예측을 합치고 4칸(🧪) 넓힌 범위에 걸친 청크 | 같음 | 아니오 |

@@ -134,3 +134,53 @@ const edge = 1e-3
 func onEdge(f float64) bool {
 	return math.Abs(f-math.Round(f)) < edge
 }
+
+// collide runs Collide and fails the test on an error.
+func collide(tb testing.TB, s *System) {
+	tb.Helper()
+	if err := s.Collide(); err != nil {
+		tb.Fatal(err)
+	}
+}
+
+// classAt returns the class the chunk that owns cell (x, y) last built
+// its collision from for it.
+func classAt(s *System, x, y int) world.Class {
+	i := (y/world.ChunkSize)*s.cols + x/world.ChunkSize
+	c := s.chunkCells(i)
+	return s.terrain[i].cls[(y-c.y0+1)*(c.x1-c.x0+2)+x-c.x0+1]
+}
+
+// cellDepth returns how deep cell (x, y) and b's shape, where b was last
+// written, overlap in cells, in float64; 0 or less when they do not.
+func cellDepth(b *body, x, y int) float64 {
+	c, s := float64(b.wq.C), float64(b.wq.S)
+	dx := float64(x) + 0.5 - float64(b.wp.X)*cellsPerMeter
+	dy := float64(y) + 0.5 - float64(b.wp.Y)*cellsPerMeter
+	hw, hh := float64(b.w)/2, float64(b.h)/2
+	r := (math.Abs(c) + math.Abs(s)) / 2
+	return min(
+		0.5+math.Abs(c)*hw+math.Abs(s)*hh-math.Abs(dx),
+		0.5+math.Abs(s)*hw+math.Abs(c)*hh-math.Abs(dy),
+		r+hw-math.Abs(c*dx+s*dy),
+		r+hh-math.Abs(c*dy-s*dx),
+	)
+}
+
+// bodyOverlap returns how deep the shapes of a and b overlap in cells,
+// where Box2D has them now; 0 when they do not.
+func bodyOverlap(s *System, a, b *body) float64 {
+	shape := func(b *body) (x, y, c, sn, hw, hh float64) {
+		p, q := s.phys.Transform(b.id)
+		return float64(p.X) * cellsPerMeter, float64(p.Y) * cellsPerMeter, float64(q.C), float64(q.S), float64(b.w) / 2, float64(b.h) / 2
+	}
+	ax, ay, ac, as, ahw, ahh := shape(a)
+	bx, by, bc, bs, bhw, bhh := shape(b)
+	depth := math.Inf(1)
+	for _, n := range [][2]float64{{ac, as}, {-as, ac}, {bc, bs}, {-bs, bc}} {
+		ra := ahw*math.Abs(ac*n[0]+as*n[1]) + ahh*math.Abs(-as*n[0]+ac*n[1])
+		rb := bhw*math.Abs(bc*n[0]+bs*n[1]) + bhh*math.Abs(-bs*n[0]+bc*n[1])
+		depth = min(depth, ra+rb-math.Abs((bx-ax)*n[0]+(by-ay)*n[1]))
+	}
+	return max(depth, 0)
+}
