@@ -1,4 +1,4 @@
-matter-wake-replay 5
+matter-wake-replay 6
 # Digs and places the same material again and again: sand out of the heap
 # and back on top of it, stone out of the left ledge and into a block in
 # the air and back, sand with the two buttons in quick turns, and stone
@@ -12,9 +12,10 @@ view 480 270
 stream 64 4 512 12 60
 budget 250000
 tool 10 2000 4
+body wood 16 12
 mode play
 slots sand water stone
-materials ee74dacd409567c3
+materials 84fb98ac55b2d24b
 ticks 900
 
 # Let the sand and the water fall.

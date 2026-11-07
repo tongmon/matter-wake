@@ -155,8 +155,10 @@ func BenchmarkStepBigWorldAsleep(b *testing.B) {
 		}
 	}
 	w.Fill(10*BlockSize, 12*BlockSize, 13*BlockSize, 13*BlockSize, tab.MustLookup("sand"))
-	w.Step()
-	w.Step()
+	// The sand counts its ticks at rest until it is settled.
+	for range SettleTicks + 2 {
+		w.Step()
+	}
 	if w.Awake() != 0 {
 		b.Fatalf("%d chunks are awake", w.Awake())
 	}

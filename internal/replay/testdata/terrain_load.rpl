@@ -1,4 +1,4 @@
-matter-wake-replay 5
+matter-wake-replay 6
 # The load scene of design.md 2절: in a 4096x4096 world of the terrain, the
 # camera waits a second at the spawn, then jumps into the caves at tick 60,
 # and every block it needs there loads at once and wakes. It stays five seconds while the sand
@@ -12,9 +12,10 @@ view 480 270
 stream 64 4 512 12 60
 budget 250000
 tool 10 2000 4
+body wood 16 12
 mode play
 slots sand water stone
-materials ee74dacd409567c3
+materials 84fb98ac55b2d24b
 ticks 361
 
 0 0 0 - 0 1808 955

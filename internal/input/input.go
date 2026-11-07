@@ -29,7 +29,8 @@ type Camera struct {
 
 // Read samples the devices once for the coming tick. WASD or the arrow
 // keys move the camera, kept within the world, and the cursor is turned
-// from the screen into world cells under the moved camera.
+// from the screen into world cells under the moved camera. B drops one
+// body per press.
 func Read(cam Camera) game.Input {
 	dx, dy := 0, 0
 	if pressed(ebiten.KeyA, ebiten.KeyArrowLeft) {
@@ -58,6 +59,7 @@ func Read(cam Camera) game.Input {
 		CursorY: camY + y,
 		Place:   ebiten.IsMouseButtonPressed(ebiten.MouseButtonLeft),
 		Dig:     ebiten.IsMouseButtonPressed(ebiten.MouseButtonRight),
+		Drop:    inpututil.IsKeyJustPressed(ebiten.KeyB),
 	}
 	for i, k := range slotKeys {
 		if inpututil.IsKeyJustPressed(k) {

@@ -17,6 +17,11 @@
       "fallAccel": 0.375, "sinkChance": 50,
       "flowSpeed": 0.9, "flowDamping": 0.8, "dispersion": 4,
       "color": "#3a7bd5c8", "toneSpread": 20
+    },
+    {
+      "name": "wood", "kind": "solid", "density": 6,
+      "friction": 0.9, "restitution": 0.2,
+      "color": "#8a5a32", "toneSpread": 40
     }
   ]
 }

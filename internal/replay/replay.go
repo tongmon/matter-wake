@@ -7,7 +7,7 @@
 // The format is line-based text, so replays diff well and can be written
 // by hand:
 //
-//	matter-wake-replay 5
+//	matter-wake-replay 6
 //	seed 1
 //	size 480 270
 //	scene sandbox
@@ -15,6 +15,7 @@
 //	stream 64 4 512 12 60
 //	budget 300000
 //	tool 10 2000 4
+//	body wood 16 12
 //	mode play
 //	slots sand water stone
 //	materials 3f2a9c0d1e4b5a67
@@ -28,18 +29,21 @@
 // collapse or terrain, game.Scene), the size of the camera's view in cells, the
 // stream (the grid, the lead and its cap, the target and the ticks between
 // checks, as in game.Stream), the budget (how many cells a tick may scan, 0
-// for no limit, as in game.Config.Budget), the tool (its power, its damage per tick and its brush
-// radius, as in game.Tool), the mode (play, or creative for
+// for no limit, as in game.Config.Budget), the tool (its power, its damage
+// per tick and its brush radius, as in game.Tool), the body tool (the
+// solid its bodies are made of and their width and height in pixels, or
+// none, as in game.BodyTool), the mode (play, or creative for
 // game.Config.Creative), the materials the slots hold in key order, the
 // fingerprint of the material table (material.Table.Fingerprint) and the
 // number of ticks.
 //
 // Each later line is a tick and the input from that tick on, written only
 // where the input changes: the cursor's x and y in cells, the buttons (P
-// to place, D to dig, PD for both, - for none), the slot to select, 0 to
-// keep the current one, and the camera's x and y: the top-left cell of the
-// view. Ticks before the first line have no input. Blank lines and lines
-// starting with # are ignored.
+// to place, D to dig, B to drop a body, in that order, as many as are
+// pressed, or - for none), the slot to select, 0 to keep the current one,
+// and the camera's x and y: the top-left cell of the view. Ticks before
+// the first line have no input. Blank lines and lines starting with # are
+// ignored.
 //
 // The package reads and writes streams; the app layer opens the files.
 package replay
@@ -60,7 +64,7 @@ import (
 
 // Version is the format version this build reads and writes. A change to
 // the format raises it, and older files are refused rather than misread.
-const Version = 5
+const Version = 6
 
 // magic is the first word of every replay.
 const magic = "matter-wake-replay"
@@ -84,6 +88,8 @@ type Replay struct {
 	// wait, and so what the world does.
 	Budget int
 	Tool   game.Tool
+	// Body is what the body tool drops.
+	Body game.BodyTool
 	// Creative is game.Config.Creative: placing takes nothing from the
 	// inventory.
 	Creative bool
@@ -100,7 +106,7 @@ type Replay struct {
 // New returns an empty recording of a session started with cfg.
 func New(cfg *game.Config) *Replay {
 	return &Replay{
-		Seed: cfg.Seed, Width: cfg.Width, Height: cfg.Height, Tool: cfg.Tool, Creative: cfg.Creative,
+		Seed: cfg.Seed, Width: cfg.Width, Height: cfg.Height, Tool: cfg.Tool, Body: cfg.Body, Creative: cfg.Creative,
 		Scene: cfg.Scene, ViewWidth: cfg.ViewWidth, ViewHeight: cfg.ViewHeight, Stream: cfg.Stream,
 		Budget: cfg.Budget, Slots: slices.Clone(cfg.Slots), Materials: cfg.Materials.Fingerprint(),
 	}
@@ -113,7 +119,7 @@ func (r *Replay) Config(mats *material.Table, workers int) *game.Config {
 	return &game.Config{
 		Width: r.Width, Height: r.Height, Seed: r.Seed, Workers: workers, Materials: mats,
 		Scene: r.Scene, ViewWidth: r.ViewWidth, ViewHeight: r.ViewHeight, Stream: r.Stream,
-		Budget: r.Budget, Slots: slices.Clone(r.Slots), Tool: r.Tool, Creative: r.Creative,
+		Budget: r.Budget, Slots: slices.Clone(r.Slots), Tool: r.Tool, Body: r.Body, Creative: r.Creative,
 	}
 }
 
@@ -128,8 +134,8 @@ func Write(w io.Writer, r *Replay) error {
 	_, _ = fmt.Fprintf(bw, "%s %d\nseed %d\nsize %d %d\nscene %s\nview %d %d\nstream %d %d %d %d %d\nbudget %d\n",
 		magic, Version, r.Seed, r.Width, r.Height, sceneWord(r.Scene), r.ViewWidth, r.ViewHeight,
 		s.Grid, s.Lead, s.LeadMax, s.Target, s.Check, r.Budget)
-	_, _ = fmt.Fprintf(bw, "tool %d %d %d\nmode %s\nslots %s\nmaterials %s\nticks %d\n",
-		r.Tool.Power, r.Tool.Rate, r.Tool.Radius, mode(r.Creative), strings.Join(r.Slots, " "), r.Materials, len(r.Inputs))
+	_, _ = fmt.Fprintf(bw, "tool %d %d %d\nbody %s\nmode %s\nslots %s\nmaterials %s\nticks %d\n",
+		r.Tool.Power, r.Tool.Rate, r.Tool.Radius, bodyWords(r.Body), mode(r.Creative), strings.Join(r.Slots, " "), r.Materials, len(r.Inputs))
 	var prev game.Input
 	for i, in := range r.Inputs {
 		if in != prev {
@@ -158,6 +164,8 @@ func (r *Replay) validate() error {
 		return fmt.Errorf("replay: budget %d is negative", r.Budget)
 	case r.Tool.Rate == 0 || r.Tool.Radius < 0:
 		return fmt.Errorf("replay: tool %+v needs a rate of 1 or more and a radius of 0 or more", r.Tool)
+	case r.Body.Material != "" && (!isWord(r.Body.Material) || r.Body.Material == bodyNone || r.Body.Width < 1 || r.Body.Height < 1):
+		return fmt.Errorf("replay: body tool %+v needs a material of one word other than %q and a positive size", r.Body, bodyNone)
 	case len(r.Slots) == 0:
 		return errors.New("replay: no material slots")
 	case !isWord(r.Materials):
@@ -215,16 +223,51 @@ func mode(creative bool) string {
 	return modePlay
 }
 
-func buttons(in game.Input) string {
-	switch {
-	case in.Place && in.Dig:
-		return "PD"
-	case in.Place:
-		return "P"
-	case in.Dig:
-		return "D"
+// bodyNone is the body line's word for no body tool.
+const bodyNone = "none"
+
+func bodyWords(t game.BodyTool) string {
+	if t.Material == "" {
+		return bodyNone
 	}
-	return "-"
+	return fmt.Sprintf("%s %d %d", t.Material, t.Width, t.Height)
+}
+
+// The buttons of an input line, in the order they are written.
+var buttonLetters = [...]byte{'P', 'D', 'B'}
+
+func buttons(in game.Input) string {
+	var b []byte
+	for i, on := range [...]bool{in.Place, in.Dig, in.Drop} {
+		if on {
+			b = append(b, buttonLetters[i])
+		}
+	}
+	if len(b) == 0 {
+		return "-"
+	}
+	return string(b)
+}
+
+// parseButtons sets the buttons of in from s: letters of buttonLetters in
+// their order, each at most once, or - for none.
+func parseButtons(s string, in *game.Input) error {
+	if s == "-" {
+		return nil
+	}
+	pressed := [...]*bool{&in.Place, &in.Dig, &in.Drop}
+	next := 0
+	for k := range len(s) {
+		for next < len(buttonLetters) && buttonLetters[next] != s[k] {
+			next++
+		}
+		if next == len(buttonLetters) {
+			return fmt.Errorf("buttons %q: want P, D and B in that order, each at most once, or -", s)
+		}
+		*pressed[next] = true
+		next++
+	}
+	return nil
 }
 
 // Read decodes a replay written by Write or by hand.
@@ -327,6 +370,12 @@ func (p *parser) header(r *Replay) (int, error) {
 	if r.Tool, err = parseTool(f); err != nil {
 		return 0, p.errorf("%v", err)
 	}
+	if f, err = p.field("body", "body <material> <width> <height> | body none", 0); err != nil {
+		return 0, err
+	}
+	if r.Body, err = parseBody(f); err != nil {
+		return 0, p.errorf("%v", err)
+	}
 	if f, err = p.field("mode", "mode play|creative", 1); err != nil {
 		return 0, err
 	}
@@ -421,6 +470,22 @@ func parseTool(f []string) (game.Tool, error) {
 	return game.Tool{Power: uint8(power), Rate: uint32(rate), Radius: radius}, nil
 }
 
+// parseBody parses the fields of the body line.
+func parseBody(f []string) (game.BodyTool, error) {
+	if len(f) == 1 && f[0] == bodyNone {
+		return game.BodyTool{}, nil
+	}
+	if len(f) == 3 {
+		w, werr := strconv.Atoi(f[1])
+		h, herr := strconv.Atoi(f[2])
+		if werr == nil && herr == nil && w >= 1 && h >= 1 {
+			return game.BodyTool{Material: f[0], Width: w, Height: h}, nil
+		}
+	}
+	return game.BodyTool{}, fmt.Errorf("body %s: want a material and a positive width and height, or %s",
+		strings.Join(f, " "), bodyNone)
+}
+
 // inputs reads the input lines into dst, which holds one input per tick.
 func (p *parser) inputs(dst []game.Input) error {
 	// cur is the input in effect from tick from on; last is the last tick read.
@@ -460,16 +525,8 @@ func parseInput(f []string) (game.Input, error) {
 		return in, fmt.Errorf("cursor %s %s is not two numbers", f[0], f[1])
 	}
 	in.CursorX, in.CursorY = x, y
-	switch f[2] {
-	case "PD":
-		in.Place, in.Dig = true, true
-	case "P":
-		in.Place = true
-	case "D":
-		in.Dig = true
-	case "-":
-	default:
-		return in, fmt.Errorf("buttons %q: want P, D, PD or -", f[2])
+	if err := parseButtons(f[2], &in); err != nil {
+		return in, err
 	}
 	slot, err := strconv.Atoi(f[3])
 	if err != nil || slot < 0 {

@@ -21,7 +21,8 @@ const testMaterials = `{"materials": [
 	 "hardness": 4, "hp": 300},
 	{"name": "water", "kind": "liquid", "density": 20, "fallAccel": 0.375, "sinkChance": 50,
 	 "flowSpeed": 0.9, "flowDamping": 0.8, "dispersion": 4},
-	{"name": "bedrock", "kind": "static", "density": 255, "hardness": 11, "hp": 1}
+	{"name": "bedrock", "kind": "static", "density": 255, "hardness": 11, "hp": 1},
+	{"name": "wood", "kind": "solid", "density": 6, "friction": 0.9, "restitution": 0.2}
 ]}`
 
 // testTool digs stone (hardness 10, hp 1000) in four ticks and sand in one.
@@ -443,6 +444,9 @@ func TestNewRejectsBadConfig(t *testing.T) {
 		{"no slots", Config{Tool: testTool}},
 		{"tool deals no damage", Config{Slots: []string{"sand"}, Tool: Tool{Power: 10}}},
 		{"negative radius", Config{Slots: []string{"sand"}, Tool: Tool{Power: 10, Rate: 1, Radius: -1}}},
+		{"unknown body", Config{Slots: []string{"sand"}, Tool: testTool, Body: BodyTool{Material: "oak", Width: 4, Height: 4}}},
+		{"body of sand", Config{Slots: []string{"sand"}, Tool: testTool, Body: BodyTool{Material: "sand", Width: 4, Height: 4}}},
+		{"body of no size", Config{Slots: []string{"sand"}, Tool: testTool, Body: BodyTool{Material: "wood", Height: 4}}},
 	}
 	for _, tt := range tests {
 		tt.cfg.Width, tt.cfg.Height, tt.cfg.Materials = 64, 64, tab
@@ -450,5 +454,57 @@ func TestNewRejectsBadConfig(t *testing.T) {
 			g.Close()
 			t.Errorf("%s: New accepted %+v", tt.name, tt.cfg)
 		}
+	}
+}
+
+// The body tool drops a body centred on the cursor in the rooms. The body
+// falls to the floor, and its pixels stay what the tool dropped.
+func TestBodyToolDropsBodies(t *testing.T) {
+	tab := testTable(t)
+	g, err := New(&Config{
+		Width: 128, Height: 96, Seed: 1, Workers: 2, Materials: tab,
+		Slots: []string{"sand"}, Tool: testTool, Body: BodyTool{Material: "wood", Width: 8, Height: 6},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(g.Close)
+	step(t, g, Input{CursorX: 64, CursorY: 10, Drop: true})
+	step(t, g, Input{CursorX: 64, CursorY: 10, Drop: true}) // the first is still there
+	if g.Bodies() != 1 {
+		t.Fatalf("%d bodies, want 1", g.Bodies())
+	}
+	if c, _ := g.World().At(60, 7); c.Mat != tab.MustLookup("wood") {
+		t.Fatalf("the body's top-left pixel is not at (60, 7): %+v", c)
+	}
+	for range 120 {
+		step(t, g, Input{})
+	}
+	n := make([]int, tab.Len())
+	g.BodyPixels(n)
+	if n[tab.MustLookup("wood")] != 48 {
+		t.Fatalf("the bodies hold %d pixels of wood, want 48", n[tab.MustLookup("wood")])
+	}
+	floorY := g.World().Height() - max(g.World().Width()/120, 2)
+	if c, _ := g.World().At(64, floorY-1); c.Mat != tab.MustLookup("wood") {
+		t.Fatalf("no body on the floor at (64, %d): %+v", floorY-1, c)
+	}
+}
+
+// The terrain has no bodies yet: the body tool does nothing there.
+func TestTerrainHasNoBodies(t *testing.T) {
+	g, err := New(&Config{
+		Width: 1024, Height: 2048, Seed: 1, Workers: 2, Materials: testTable(t), Scene: SceneTerrain,
+		ViewWidth: 64, ViewHeight: 64, Stream: Stream{Grid: 64, Lead: 4, LeadMax: 512, Target: 12, Check: 60},
+		Slots: []string{"sand"}, Tool: testTool, Body: BodyTool{Material: "wood", Width: 8, Height: 6},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(g.Close)
+	x, y := g.Spawn()
+	step(t, g, Input{CameraX: x, CameraY: y, CursorX: x + 32, CursorY: y + 2, Drop: true})
+	if g.Bodies() != 0 {
+		t.Fatalf("the terrain holds %d bodies", g.Bodies())
 	}
 }

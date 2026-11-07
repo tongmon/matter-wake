@@ -67,6 +67,10 @@ var slots = []string{"sand", "water", "stone"}
 // radius 4.
 var tool = game.Tool{Power: 10, Rate: 2000, Radius: 4}
 
+// body is what the body tool drops in the rooms: wooden boxes of 16 × 12
+// pixels, 1.6 × 1.2 m (🧪, a development tool, design.md 2절).
+var body = game.BodyTool{Material: "wood", Width: 16, Height: 12}
+
 // stream requests and unloads blocks with Noita's numbers: a 64-cell
 // grid, the area ahead four times as far as the camera's area moved, at
 // most 512 cells, a target of 12 blocks, and a check every second at 60
@@ -190,7 +194,7 @@ func sessionConfig(cfg *Config, mats *material.Table, playback *replay.Replay) *
 		sess := &game.Config{
 			Width: cfg.Width, Height: cfg.Height, Seed: cfg.Seed, Workers: cfg.Workers,
 			Scene: cfg.Scene, ViewWidth: cfg.Width, ViewHeight: cfg.Height, Stream: stream, Budget: budget,
-			Materials: mats, Slots: slots, Tool: tool, Creative: cfg.Creative,
+			Materials: mats, Slots: slots, Tool: tool, Body: body, Creative: cfg.Creative,
 		}
 		if cfg.Scene == game.SceneTerrain {
 			sess.ViewWidth, sess.ViewHeight = min(viewWidth, cfg.Width), min(viewHeight, cfg.Height)

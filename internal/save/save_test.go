@@ -50,6 +50,7 @@ func randomBlock(seed uint64, n int) *world.Block {
 		b[i] = world.Cell{
 			Mat: material.ID(s.IntN(n)), Tone: uint8(s.Uint32()), Falling: s.Bool(), Last: s.Uint32(),
 			Vy: fixed.Q8(int16(s.Uint32())), Ax: fixed.Q8(int16(s.Uint32())), Damage: uint16(s.Uint32()),
+			Rest: uint8(s.IntN(world.SettleTicks + 1)),
 		}
 	}
 	return b
@@ -148,6 +149,43 @@ func rechecksum(b []byte) []byte {
 	body := b[:len(b)-4]
 	binary.LittleEndian.PutUint32(b[len(body):], crc32.ChecksumIEEE(body))
 	return b
+}
+
+// A block of version 1, from before the rest counter, reads back with
+// every other field as it was and Rest 0.
+func TestBlockReadsVersion1(t *testing.T) {
+	mats := table(t, "stone", "sand", "water")
+	want := randomBlock(3, mats.Len())
+	var buf bytes.Buffer
+	if err := encodeBlock(&buf, want, mats, 1); err != nil {
+		t.Fatal(err)
+	}
+	got, err := DecodeBlock(&buf, mats)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := range want {
+		w := want[i]
+		w.Rest = 0
+		if got[i] != w {
+			t.Fatalf("cell %d is %+v after the round trip, want %+v", i, got[i], w)
+		}
+	}
+}
+
+// A stored Rest above SettleTicks is damage the checksum did not catch.
+func TestRestStopsAtSettled(t *testing.T) {
+	rest := fields[len(fields)-1]
+	if rest.name != "rest" {
+		t.Fatalf("the last field is %q", rest.name)
+	}
+	var c world.Cell
+	if err := rest.get([]byte{world.SettleTicks}, &c); err != nil || c.Rest != world.SettleTicks {
+		t.Fatalf("rest %d read as %d, %v", world.SettleTicks, c.Rest, err)
+	}
+	if err := rest.get([]byte{world.SettleTicks + 1}, &c); err == nil {
+		t.Fatal("a rest above SettleTicks read without an error")
+	}
 }
 
 // A stored Falling must be 0 or 1; anything else is damage the checksum

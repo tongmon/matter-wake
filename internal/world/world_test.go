@@ -217,6 +217,11 @@ func TestRestingLayersSleep(t *testing.T) {
 	if w.Awake() == 0 {
 		t.Fatal("the first tick after the fill ran no chunk")
 	}
+	// The sand counts its ticks at rest until it is settled; the tick
+	// after the last count finds nothing to change.
+	for range SettleTicks {
+		w.Step()
+	}
 	w.Step()
 	if n := w.Awake(); n != 0 {
 		t.Fatalf("%d of %d chunks are awake in layers that cannot move", n, w.Chunks())

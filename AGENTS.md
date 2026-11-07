@@ -62,7 +62,7 @@ The source of **The Powder Toy** (release v100.1.400) lives outside the repo at 
   - Cell logic uses integers only, so results are identical across CPUs and operating systems.
   - A tick updates rows of 64×64 chunks from the bottom up, each row in two parallel phases (even columns, then odd). No cell update may reach more than `world.MaxReach` cells sideways outside its chunk, nor write upward; that is what makes a phase safe to run in parallel. Rising matter (gas) will need its own pass.
   - The chunks a tick starts with scan at most `world.Config.Budget` cells; the nearest runs even if it alone is bigger. Over it, the chunks farthest from the focus (`World.SetFocus`, the middle of the view) wait with their change rectangles for a later tick, and a chunk comes closer for every tick it waits. Under the budget the tick is exactly what it would be without one. The budget changes results, so a replay records it, and a save keeps each chunk's state (`World.ChunkStates`): over the budget, scanning more than before changes which chunks wait.
-  - A chunk scans only its change rectangle; a chunk with an empty one sleeps. Every change to a cell must be marked: `World.mark` during a tick, `World.touch` between ticks. An update that leaves its cell as it was and draws no random number may decide that from only the cell, the two beside it and the three below it; the marks cover exactly those. A new rule that looks further before doing nothing, or a new way to change cells, must widen the marks to match. `TestSleepMatchesScanningEverything` checks that sleeping changes nothing.
+  - A chunk scans only its change rectangle; a chunk with an empty one sleeps. Every change to a cell must be marked: `World.mark` during a tick, `World.touch` between ticks, and `World.Flush` after `World.Put` and `World.Displace`, which rigid bodies use to write their pixels between ticks. An update that leaves its cell as it was and draws no random number may decide that from only the cell, the two beside it and the three below it; the marks cover exactly those. A new rule that looks further before doing nothing, or a new way to change cells, must widen the marks to match. `TestSleepMatchesScanningEverything` checks that sleeping changes nothing.
 - **Determinism:**
   - Pass seeded RNG (`internal/rng`) explicitly. Per-chunk streams are keyed by (seed, tick, chunk), never by goroutine.
   - No wall-clock time, map-iteration-order dependence, or scheduling dependence inside the simulation.
@@ -85,14 +85,15 @@ Module path: `github.com/tongmon/matter-wake`.
 | `internal/render/` | Draws a session: uploads cell colors, overlay. | yes |
 | `internal/input/` | Maps devices to `game.Input`. | yes |
 | `internal/game/` | A play session: the world plus the player's tools, stepped by `Input`; in the big world it keeps the blocks around the camera in memory. | **no** |
-| `internal/world/` | The cell grid, kept in 512×512 blocks that can be loaded and unloaded, and its tick. | **no** |
+| `internal/world/` | The cell grid, kept in 512×512 blocks that can be loaded and unloaded, and its tick, including the queue of cells to put back that bodies push out. | **no** |
 | `internal/material/` | Material kinds and the data loader. | **no** |
 | `internal/palette/` | Cells to premultiplied RGBA, testable without a GPU. | **no** |
 | `internal/scene/` | Starting worlds: the sandbox, the collapse room for measuring, and the seeded terrain the big world makes its blocks from. | **no** |
 | `internal/save/` | Encodes a world for saving: each block of cells, field by field, and the world header. | **no** |
 | `internal/replay/` | Encodes and decodes replays: how a session started and its input for every tick. Holds the replay goldens. | **no** |
 | `internal/sched/` | The fixed goroutine pool. The only logic package with `sync`. | **no** |
-| `internal/physics/` | Rigid bodies: Box2D v3.2 compiled through cgo, the only cgo package. Worlds, boxes, Step, transforms. Holds the determinism golden. | **no** |
+| `internal/physics/` | Rigid bodies: Box2D v3.2 compiled through cgo, the only cgo package. Worlds, boxes, terrain chains, Step, transforms, velocities. Holds the determinism golden. | **no** |
+| `internal/rigid/` | Rigid bodies in the grid: writes and erases their pixels as cells, pushes the cells in the way into the world's queue, and makes the terrain near them collision. Pure Go; calls `internal/physics`. | **no** |
 | `internal/fixed/` | Fixed-point numbers (Q8) for simulation values with fractions. | **no** |
 | `internal/rng/` | Seeded random numbers (SplitMix64), stable across Go versions. | **no** |
 | `data/` | Materials and other tunables (JSON). | |

@@ -251,7 +251,7 @@ func TestResume(t *testing.T) {
 		{"slot 0", func(c *Config) { c.Resume.Slot = 0 }, "slot"},
 		{"slot past the last", func(c *Config) { c.Resume.Slot = 4 }, "slot"},
 		{"short inventory", func(c *Config) { c.Resume.Inventory = held[:2] }, "inventory"},
-		{"negative count", func(c *Config) { c.Resume.Inventory = []int{0, -1, 0, 0, 0} }, "holds -1"},
+		{"negative count", func(c *Config) { c.Resume.Inventory = []int{0, -1, 0, 0, 0, 0} }, "holds -1"},
 		{"check after the tick", func(c *Config) {
 			c.Resume.Tick = 10
 			c.Resume.Stream = &StreamState{Requested: true, LastCheck: 11, Interval: 60}

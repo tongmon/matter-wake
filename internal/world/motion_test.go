@@ -446,10 +446,10 @@ func TestDisplacedCellIsNotUpdatedTwice(t *testing.T) {
 	w.at(63, 0).Vy, w.at(63, 0).Falling = maxFall, true
 	w.Step()
 	if c, _ := w.At(63, 3); c.Mat != sand {
-		t.Fatalf("the sand did not sink into the water at (63, 3); the setup no longer pushes the water out:%s", render(w, testIDs{stone, sand, water}))
+		t.Fatalf("the sand did not sink into the water at (63, 3); the setup no longer pushes the water out:%s", render(w, testIDs{stone: stone, sand: sand, water: water}))
 	}
 	if c, _ := w.At(64, 2); c.Mat != water {
-		t.Fatalf("the water pushed to (64, 2) moved again in the same tick:%s", render(w, testIDs{stone, sand, water}))
+		t.Fatalf("the water pushed to (64, 2) moved again in the same tick:%s", render(w, testIDs{stone: stone, sand: sand, water: water}))
 	}
 }
 

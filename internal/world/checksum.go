@@ -49,7 +49,7 @@ func hashCell(h uint64, c Cell) uint64 {
 		falling = 1
 	}
 	h = mix(h, uint64(c.Mat)|uint64(c.Tone)<<16|falling<<24|uint64(uint16(c.Vy))<<32|uint64(uint16(c.Ax))<<48)
-	return mix(h, uint64(c.Last)|uint64(c.Damage)<<32)
+	return mix(h, uint64(c.Last)|uint64(c.Damage)<<32|uint64(c.Rest)<<48)
 }
 
 // mix mixes the word v into h. For any v it maps each h to a different

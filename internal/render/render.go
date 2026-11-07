@@ -125,9 +125,10 @@ func (r *Renderer) forget(cx0, cy0, cx1, cy1, cols int) {
 }
 
 // DrawOverlay draws the brush outline at the cursor, a status line with
-// the camera, the blocks in memory and how many chunks the last tick ran,
-// and what the inventory holds of each slot's material. The cursor and
-// the camera are in world cells.
+// the camera, the blocks in memory, how many chunks the last tick ran, the
+// bodies and the cells waiting to be put back, and what the inventory
+// holds of each slot's material. The cursor and the camera are in world
+// cells.
 func (r *Renderer) DrawOverlay(dst *ebiten.Image, g *game.Game, in game.Input) {
 	radius := float32(g.Tool().Radius) + 0.5
 	sx, sy := float32(in.CursorX-in.CameraX)+0.5, float32(in.CursorY-in.CameraY)+0.5
@@ -140,9 +141,10 @@ func (r *Renderer) DrawOverlay(dst *ebiten.Image, g *game.Game, in game.Input) {
 		fmt.Fprintf(&held, "%d %s %d  ", i+1, r.mats.Def(id).Name, g.Inventory(id))
 	}
 	w := g.World()
-	status := fmt.Sprintf("%s  tick %d  TPS %.0f  FPS %.0f  awake %d chunks  %d blocks  camera %d,%d\n%s\n"+
-		"LMB place  RMB dig  1-%d material  WASD/arrows move (Shift faster)",
+	status := fmt.Sprintf("%s  tick %d  TPS %.0f  FPS %.0f  awake %d chunks  %d blocks  camera %d,%d\n"+
+		"%d bodies  %d queued\n%s\n"+
+		"LMB place  RMB dig  B body  1-%d material  WASD/arrows move (Shift faster)",
 		g.Selected().Name, w.Tick(), ebiten.ActualTPS(), ebiten.ActualFPS(), w.Awake(), g.Blocks(),
-		in.CameraX, in.CameraY, held.String(), len(g.Slots()))
+		in.CameraX, in.CameraY, g.Bodies(), w.QueueLen(), held.String(), len(g.Slots()))
 	ebitenutil.DebugPrint(dst, status)
 }
