@@ -5,14 +5,15 @@
 //
 // Each tick runs in this order (docs/briefs/body-grid-coupling.md):
 //
-//  1. Write: every body that moved since its pixels were written has them
+//  1. Write: every body that moved since it was written has its cells
 //     erased, all bodies first; then those bodies are written again where
-//     Box2D's last Step put them, in key order. A pixel goes to the cell
-//     its center maps to, rounded down on each axis, so a turned body may
-//     map two pixels to one cell and leave a gap. A cell in the way is
-//     pushed into the world's queue of cells to put back (world.Displace)
-//     if it flows or moves; static terrain, powder that has come to rest,
-//     and the pixels of later bodies keep their cells.
+//     Box2D's last Step put them, in key order. Every cell whose center
+//     falls inside a body's image, mapped back through its transform,
+//     takes the pixel the center falls in, so a turned body has no holes;
+//     a pixel may fill two cells or none. A cell in the way is pushed into
+//     the world's queue of cells to put back (world.Displace) if it flows
+//     or moves; static terrain, powder that has come to rest, and the
+//     cells of later bodies stay.
 //  2. Collide: the terrain near each body is made collision for Box2D, one
 //     static body of edge chains per 64×64 chunk, rebuilt when the chunk's
 //     cells change what bodies collide with (world.Classify).
@@ -138,9 +139,9 @@ func (s *System) Bodies() int {
 }
 
 // Pixels adds to n[id], for every material id, how many pixels the bodies'
-// images hold of it. Every pixel counts, in the grid or not: a turned body
-// covers fewer cells than it has pixels. n must have an entry for every
-// material.
+// images hold of it. Every pixel counts once, whatever the grid holds: a
+// turned body covers more or fewer cells than it has pixels. n must have
+// an entry for every material.
 func (s *System) Pixels(n []int) {
 	for i := range s.bodies {
 		b := &s.bodies[i]
@@ -183,8 +184,8 @@ func (s *System) Drop(m material.ID, x, y, w, h int) (bool, error) {
 // center.
 func (s *System) add(m material.ID, x, y, w, h int, angle float32) error {
 	d := s.mats.Def(m)
-	// The center is a whole cell or a half one, so the pixel centers start
-	// at cell centers, away from the edges where rounding could go either
+	// The center is a whole cell or a half one, so the cell centers start
+	// at pixel centers, away from the edges where rounding could go either
 	// way.
 	id, err := s.phys.AddDynamicBox(physics.Box{
 		Center:      physics.Vec2{X: (float32(x) + float32(w)/2) / cellsPerMeter, Y: (float32(y) + float32(h)/2) / cellsPerMeter},
@@ -221,10 +222,10 @@ func (s *System) Write() {
 }
 
 // sync erases and writes the bodies whose transform p, q is not the one
-// they were written at. A body that did not move but has pixels other
-// bodies keep out is written again too, where an erased body freed cells
-// near it: they may be its cells again. So a pixel covered by bodies that
-// move away comes back, even while its body sleeps.
+// they were written at. A body that did not move but has cells other
+// bodies keep it out of is written again too, where an erased body freed
+// cells near it: they may be its cells again. So a cell covered by bodies
+// that move away comes back, even while its body sleeps.
 func (s *System) sync() {
 	s.freed = s.freed[:0]
 	for i := range s.bodies {

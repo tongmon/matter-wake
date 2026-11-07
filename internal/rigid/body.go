@@ -28,7 +28,7 @@ const (
 )
 
 // body is a rigid body: its Box2D handle, its image of w × h pixels of one
-// material, and where each pixel was last written.
+// material, and the cells it was last written to.
 type body struct {
 	id  physics.Body
 	key uint32
@@ -38,15 +38,15 @@ type body struct {
 	// tone holds each pixel's tone, row by row; its length is the number
 	// of pixels.
 	tone []uint8
-	// x and y are where each pixel was last written, while placed is set.
-	// A pixel is not placed when its cell kept what was there.
-	x, y   []int32
-	placed []bool
-	// blocked counts the pixels that another body's pixels keep out of
-	// their cells: those not written because a body with a higher key held
-	// the cell, and those such a body took since.
+	// cells lists the cells the body was last written to. A cell the body
+	// sampled but did not write, because it kept what was there, is not
+	// listed.
+	cells []cellAt
+	// blocked counts the cells that another body's pixels keep the body
+	// out of: those not written because a body with a higher key held the
+	// cell, and those such a body took since.
 	blocked int
-	// wp and wq are the transform the pixels were last written at, once
+	// wp and wq are the transform the body was last written at, once
 	// written is set. p and q are this tick's, and moved whether they
 	// differ.
 	wp      physics.Vec2
@@ -56,21 +56,26 @@ type body struct {
 	q       physics.Rot
 	moved   bool
 	// force has this Write rewrite the body though it did not move: a body
-	// that may have covered some of its pixels moved.
+	// that may have covered some of its cells moved.
 	force bool
-	// box covers the cells the pixels mapped to at the last write, and
-	// shiftX and shiftY are how far the body moved then, in cells. near is
-	// box and where the shift would take it next, widened by nearCells:
-	// the cells it may touch in the coming Step.
+	// box covers the turned rectangle at the last write, and with it every
+	// cell whose center fell inside the image, written or not; a body too
+	// thin for any cell center still has one. shiftX and shiftY are how far
+	// the body moved then, in cells. near is box and where the shift would
+	// take it next, widened by nearCells: the cells it may touch in the
+	// coming Step.
 	box            rect
 	shiftX, shiftY float32
 	near           rect
-	// v and spin are the body's velocity, read once per write when a pixel
+	// v and spin are the body's velocity, read once per write when a cell
 	// needs its speed (haveV).
 	v     physics.Vec2
 	spin  float32
 	haveV bool
 }
+
+// cellAt is a cell's position in the world.
+type cellAt struct{ x, y int32 }
 
 // newBody returns a body of material m, w × h pixels, for Box2D's body id.
 // Its pixels' tones come from (seed, key, pixel), so they stay with the
@@ -78,9 +83,10 @@ type body struct {
 func newBody(id physics.Body, key uint32, m material.ID, w, h int, seed uint64) body {
 	n := w * h
 	b := body{
-		id: id, key: key, mat: m, w: w, h: h,
-		tone: make([]uint8, n), x: make([]int32, n), y: make([]int32, n),
-		placed: make([]bool, n),
+		id: id, key: key, mat: m, w: w, h: h, tone: make([]uint8, n),
+		// A turned rectangle holds at most its area, half its perimeter
+		// and one cell centers.
+		cells: make([]cellAt, 0, n+w+h+1),
 	}
 	for k := range b.tone {
 		b.tone[k] = uint8(rng.Hash3(seed^toneSalt, uint64(key), uint64(k), 0) >> 56)
@@ -88,62 +94,106 @@ func newBody(id physics.Body, key uint32, m material.ID, w, h int, seed uint64) 
 	return b
 }
 
-// erase empties the cells the pixels of b, at slot, were written to and
-// still hold. A cell another body took since is that body's now.
+// erase empties the cells b, at slot, was written to and still holds. A
+// cell another body took since is that body's now.
 func (s *System) erase(b *body, slot uint16) {
-	for k, on := range b.placed {
-		if !on {
-			continue
-		}
-		x, y := int(b.x[k]), int(b.y[k])
+	for _, at := range b.cells {
+		x, y := int(at.x), int(at.y)
 		if c, ok := s.w.At(x, y); ok && s.kinds[c.Mat] == material.Solid {
 			if owner, _ := c.Body(); owner == slot {
 				s.w.Put(x, y, world.Cell{})
 			}
 		}
-		b.placed[k] = false
 	}
+	b.cells = b.cells[:0]
 	s.w.Flush()
 }
 
-// write writes the pixels of b, at slot, where its transform puts them:
-// each pixel's center, turned and moved with the body, rounded down on
-// each axis to a cell. Two pixels may meet in one cell; the later one
-// holds it. The multiplications are converted one by one, so Go cannot
-// fuse them with an addition and round differently on another CPU
-// (docs/pitfalls.md).
+// sampleEdge widens the rows' spans in write, in cells, so float32's
+// rounding never leaves out a cell whose center lies inside the body.
+const sampleEdge = 1.0 / 64
+
+// write writes b, at slot, where its transform puts it: every cell whose
+// center falls inside the body's image, mapped back through the transform,
+// takes the pixel it falls in. So a turned body has no holes and nothing
+// outside its rectangle; a pixel may fill two cells or none. Each row of
+// cells is scanned only across the span the rectangle crosses. The
+// multiplications are converted one by one, so Go cannot fuse them with an
+// addition and round differently on another CPU (docs/pitfalls.md).
 func (s *System) write(b *body, slot uint16) {
+	// The center, split into a whole cell and the rest: offsets from the
+	// whole cell are small and exact, wherever the body is.
 	px, py := float32(b.p.X*cellsPerMeter), float32(b.p.Y*cellsPerMeter)
+	ox, oy := int(math.Floor(float64(px))), int(math.Floor(float64(py)))
+	fx, fy := px-float32(ox), py-float32(oy)
 	co, si := b.q.C, b.q.S
 	hw, hh := float32(b.w)/2, float32(b.h)/2
-	box := rect{math.MaxInt, math.MaxInt, math.MinInt, math.MinInt}
+	// The half width and height of the box around the turned rectangle,
+	// and the cells it covers.
+	ex := float32(abs32(co)*hw) + float32(abs32(si)*hh)
+	ey := float32(abs32(si)*hw) + float32(abs32(co)*hh)
+	r0, r1 := int(math.Floor(float64(fy-ey))), int(math.Floor(float64(fy+ey)))
+	b.box = rect{
+		ox + int(math.Floor(float64(fx-ex))), oy + r0,
+		ox + int(math.Floor(float64(fx+ex))) + 1, oy + r1 + 1,
+	}
 	b.haveV, b.blocked = false, 0
-	k := 0
-	for j := range b.h {
-		v := float32(j) + 0.5 - hh
-		sv, cv := float32(si*v), float32(co*v)
-		for i := range b.w {
-			u := float32(i) + 0.5 - hw
-			rx := float32(co*u) - sv
-			ry := float32(si*u) + cv
-			x, y := int(math.Floor(float64(px+rx))), int(math.Floor(float64(py+ry)))
-			box.x0, box.y0 = min(box.x0, x), min(box.y0, y)
-			box.x1, box.y1 = max(box.x1, x+1), max(box.y1, y+1)
-			b.placed[k] = s.claim(b, slot, k, x, y, rx, ry)
-			k++
+	b.cells = b.cells[:0]
+	for r := r0; r <= r1; r++ {
+		dy := float32(r) + 0.5 - fy
+		sv, cv := float32(si*dy), float32(co*dy)
+		lo, hi, ok := within(co, sv, hw+sampleEdge, -ex-1, ex+1)
+		if !ok {
+			continue
+		}
+		if lo, hi, ok = within(-si, cv, hh+sampleEdge, lo, hi); !ok {
+			continue
+		}
+		for k := int(math.Ceil(float64(lo + fx - 0.5))); k <= int(math.Floor(float64(hi+fx-0.5))); k++ {
+			dx := float32(k) + 0.5 - fx
+			i := int(math.Floor(float64(float32(co*dx) + sv + hw)))
+			j := int(math.Floor(float64(cv - float32(si*dx) + hh)))
+			// A cell whose center falls outside the image stays out; an
+			// image with pixels missing would leave those out here too.
+			if i < 0 || i >= b.w || j < 0 || j >= b.h {
+				continue
+			}
+			x, y := ox+k, oy+r
+			if s.claim(b, slot, j*b.w+i, x, y, dx, dy) {
+				b.cells = append(b.cells, cellAt{int32(x), int32(y)})
+			}
 		}
 	}
 	if b.written {
 		b.shiftX = float32(b.p.X-b.wp.X) * cellsPerMeter
 		b.shiftY = float32(b.p.Y-b.wp.Y) * cellsPerMeter
 	}
-	b.box, b.wp, b.wq, b.written, b.force = box, b.p, b.q, true, false
+	b.wp, b.wq, b.written, b.force = b.p, b.q, true, false
 	s.w.Flush()
 }
 
-// claim decides what becomes of the cell at (x, y) when pixel k of b, at
-// slot, maps to it, and writes the pixel there if it may. (rx, ry) is the
-// pixel's offset from the body's center in cells, for its speed. Air and
+// within returns the offsets d in [lo, hi] for which |a·d + c| <= half, and
+// false if there are none.
+func within(a, c, half, lo, hi float32) (from, to float32, ok bool) {
+	if a == 0 {
+		return lo, hi, abs32(c) <= half
+	}
+	d0, d1 := (-half-c)/a, (half-c)/a
+	if a < 0 {
+		d0, d1 = d1, d0
+	}
+	from, to = max(lo, d0), min(hi, d1)
+	return from, to, from <= to
+}
+
+// abs32 returns |f|.
+func abs32(f float32) float32 {
+	return math.Float32frombits(math.Float32bits(f) &^ (1 << 31))
+}
+
+// claim decides what becomes of the cell at (x, y) when b, at slot, samples
+// its pixel k there, and writes the pixel there if it may. (rx, ry) is the
+// cell's offset from the body's center in cells, for its speed. Air and
 // the body's own cells take the pixel. Static terrain keeps its cell, as
 // does a powder at rest unless it has settled and the body hits it hard
 // enough (givesWay). Liquids and other powders are pushed into the
@@ -158,7 +208,8 @@ func (s *System) claim(b *body, slot uint16, k, x, y int, rx, ry float32) bool {
 	switch s.kinds[c.Mat] {
 	case material.Empty:
 	case material.Solid:
-		// A cell of the body's own is a pixel that met another.
+		// A cell of the body's own is one it held before it was written
+		// again without moving.
 		if other, _ := c.Body(); other != slot {
 			if b.key < s.bodies[other].key {
 				b.blocked++
@@ -177,13 +228,12 @@ func (s *System) claim(b *body, slot uint16, k, x, y int, rx, ry float32) bool {
 		s.w.Displace(x, y)
 	}
 	s.w.Put(x, y, world.BodyCell(b.mat, b.tone[k], slot, uint16(k)))
-	b.x[k], b.y[k] = int32(x), int32(y)
 	return true
 }
 
-// givesWay reports whether resting powder c gives way to pixel k of b. Only
-// settled powder may, and only to a body big enough, moving fast enough at
-// that pixel.
+// givesWay reports whether resting powder c gives way to pixel k of b, at
+// (rx, ry) cells from its center. Only settled powder may, and only to a
+// body big enough, moving fast enough at that point.
 func (s *System) givesWay(b *body, k int, c world.Cell, rx, ry float32) bool {
 	if !c.Settled() || min(b.w, b.h) < minSideOverSand {
 		return false
@@ -196,7 +246,7 @@ func (s *System) givesWay(b *body, k int, c world.Cell, rx, ry float32) bool {
 		return true
 	}
 	// A chance from 0 at slowSand to 1 at fastSand, drawn from a hash so
-	// the order pixels are written in does not matter.
+	// the order cells are written in does not matter.
 	h := rng.Hash3(s.w.Seed()^sandSalt, uint64(s.w.Tick()), uint64(b.key), uint64(k))
 	return float32(h>>40) < float32((v2-slowSand)/(fastSand-slowSand)*(1<<24))
 }

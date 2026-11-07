@@ -70,9 +70,9 @@ func (s *System) Collide() error {
 	return nil
 }
 
-// want lists the chunks b may touch in the coming Step: those its pixels
-// cover, and those they would cover moved as far again as in the last
-// tick, widened by nearCells.
+// want lists the chunks b may touch in the coming Step: those it covers,
+// and those it would cover moved as far again as in the last tick,
+// widened by nearCells.
 func (s *System) want(b *body) {
 	if !b.written {
 		return
