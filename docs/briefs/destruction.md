@@ -55,10 +55,11 @@
 |---|---|---|---|
 | 픽셀 손상과 삭제 | `internal/game/game.go` `dig` → `internal/rigid/destroy.go` `Wear` | 다름(자체 설계) | Noita에는 플레이어 채굴 도구가 없습니다. 지형과 같은 등급·내구 규칙으로 팝니다(개발자 결정 2026-11-08). 손상은 몸체 이미지의 픽셀마다 두어 몸체를 따라 움직입니다 |
 | 연결 검사를 언제 하는지(이웃 3개 미만) | `internal/rigid/destroy.go` `Break` | 다름(의도) | 픽셀이 하나라도 빠진 몸체는 그 틱에 늘 다시 나누고 형상을 다시 만듭니다. Noita의 조건은 이웃이 3개 이상인 픽셀을 지워도 형상을 그대로 두는데, 그러면 판 자리에 충돌이 남습니다. 가운데를 지운 십자 모양처럼 이웃 4개로도 끊기는 경우를 놓치지 않습니다 |
-| 4방향 연결, 행 우선 탐색 | `internal/rigid/destroy.go` `label` | 같음 | |
-| 가장 큰 조각을 첫 자리로 / 기준점 조각을 남김 | `internal/rigid/destroy.go` `keeper` | 다름(🔶) | 가장 큰 조각(같으면 먼저 찾은 것)이 원래 몸체(슬롯, key, Box2D 몸체)를 가집니다. 우리 몸체에는 기준점(개체 원점)이 없습니다. 규칙 함수 하나 |
+| 4방향 연결, 행 우선 탐색 | `internal/rigid/destroy.go` `find` | 같음 | |
+| 가장 큰 조각을 첫 자리로 / 기준점 조각을 남김 | `internal/rigid/destroy.go` `split` | 다름(🔶) | 가장 큰 조각(같으면 먼저 찾은 것)이 원래 몸체(슬롯, key, Box2D 몸체)를 가집니다. 우리 몸체에는 기준점(개체 원점)이 없습니다. 비교 한 줄 |
+| 파괴 큐는 셀 갱신과 재삽입 뒤, 새 Step 전(BODY_GRID_COUPLING:96) | `internal/game/game.go` `Step` | 다름(의도) | 판 틱에 도구 바로 뒤, 몸체 쓰기 전에 나눕니다. 나뉜 몸체가 그 틱의 쓰기와 지형 충돌에 바로 들어가, 판 자리에 한 틱 동안 충돌이 남지 않습니다 |
 | 크기 1 조각은 몸체가 아님 | `internal/rigid/destroy.go` `minPiece` | 같음(🔶) | 2픽셀 미만 조각은 몸체가 되지 않고 판 사람의 인벤토리로 갑니다(Noita의 행방은 C135 OPEN). 상수 하나 |
-| 조각마다 원래 크기 이미지 | `internal/rigid/destroy.go` `crop` | 다름(의도) | 조각의 경계 상자로 자르고, 이미지 왼쪽 위가 몸체 원점에서 어디인지(`ix`, `iy`)를 둡니다. C132의 비용 대부분이 원래 크기 이미지를 조각마다 만드는 데서 옵니다 |
+| 조각마다 원래 크기 이미지 | `internal/rigid/destroy.go` `crop`, `detach` | 다름(의도) | 조각의 경계 상자로 자르고, 처음 몸체의 이미지가 원점에서 어디서 시작했는지(`left`, `top`)와 그 안에서 이 이미지가 어디서 시작하는지(`cx`, `cy`)를 둡니다. 조각들이 처음 이미지의 좌표를 함께 써서, 칸은 나누기 전과 비트까지 같은 픽셀을 봅니다. C132의 비용 대부분이 원래 크기 이미지를 조각마다 만드는 데서 옵니다 |
 | 새 조각은 부모 변환에서, 부모 v·ω를 그대로 받고 깨어남 | `internal/rigid/destroy.go` `detach`, `internal/physics/physics.go` `AddDynamicBody`, `SetVelocity` | 같음 | 질량 중심 속도로 v를 줍니다(Box2D `b2Body_SetLinearVelocity`) |
 | 남은 조각은 v + ω × Δc | `internal/physics/physics.go` `SetShapes` | 같음 | Box2D가 질량을 다시 셀 때 이 보정을 스스로 합니다(`b2UpdateBodyMassData`). 잠든 몸체는 보정을 건너뛰므로 먼저 깨웁니다 |
 | 윤곽 추적, 구멍 | `internal/rigid/terrain.go` `tracer`(지형과 같은 것) | 다름(자체 구현) | 픽셀 경계의 변을 고체가 오른쪽에 오게 잇습니다. 구멍을 바깥 윤곽에 배속하지 않습니다. 분할이 변의 방향(winding)으로 안팎을 정하기 때문입니다 |
@@ -128,12 +129,12 @@ TPT에는 강체와 파괴가 없습니다(skill의 `references/tpt.md`). 모든
 | 빈칸 | 자료 상태 | TPT 방식 (파일:함수) | 우리 설계 (우리 제약에 맞춘 방법) | 측정 방법 | 추가 분석 제안 |
 |---|---|---|---|---|---|
 | 플레이어가 몸체 셀을 파는 규칙 | 없음(Noita에 채굴 도구 없음) | 없음 | 지형과 같은 등급·내구. 손상은 픽셀마다 이미지에 두고 다시 쓸 때 칸에 그림. 한 틱에 같은 픽셀을 두 칸에서 맞아도 한 번만 닳음 | `TestDiggingWearsABodyLikeTerrain` | 아니오 (채굴은 우리 설계) |
-| PhysicsBody2에서 원래 몸체로 남는 조각 | OPEN(C34:634, C35:649) | 없음 | 가장 큰 조각(같으면 행 우선으로 먼저 찾은 것) 🔶 | `TestLargestPieceKeepsTheBody` | 아니오 (게임 느낌보다 표기 문제) |
+| PhysicsBody2에서 원래 몸체로 남는 조각 | OPEN(C34:634, C35:649) | 없음 | 가장 큰 조각(같으면 행 우선으로 먼저 찾은 것) 🔶 | `TestDugPlankSplits`, `TestCornersDoNotConnect` | 아니오 (게임 느낌보다 표기 문제) |
 | 1픽셀 조각, 아주 작은 몸체의 행방 | OPEN, C135 분석 중 | 없음 | `minPiece` 2픽셀 미만은 몸체가 아니고 판 사람의 인벤토리로 감 🔶. 상수 하나로 바꿈 | `TestTinyPiecesGoToTheInventory` | C135가 진행 중 |
 | 파편이 부력을 받는지 | OPEN(C31:554, DESTRUCTION_BRIDGE:41), C135 분석 중 | 없음 | 재질의 계수 그대로 🔶. `pieceBuoyancy` 하나로 바꿈 | 부력 테스트 그대로 | C135가 진행 중 |
 | 몸체 겹침 정리가 몸체(PhysicsBody2) 파괴에도 있는지, 어떤 칸을 보는지 | OPEN(관측 경로에서는 꺼져 있었음) | 없음 | 새 조각만, 고정 재질·월드 밖·다른 몸체인 칸 🔶 | `TestDetachedPieceDropsPixelsInStone` | 아니오 |
-| 볼록 분할 방법 | 출력만 관측 | 없음 | 띠 사다리꼴 + 병합, 8정점 | `TestShapes*`, 면적·정점 수 | 아니오 |
-| 큰 파괴를 여러 틱에 나눌지 | Noita는 상한 없음 | 없음 | 한 틱에 모두 🔶. 측정 후 개발자 결정 | `BenchmarkBreak` | 아니오 |
+| 볼록 분할 방법 | 출력만 관측 | 없음 | 띠 사다리꼴 + 병합, 8정점 | `TestShapeOf*`, `TestShapeLeavesHolesOut`, `TestShapesOfRandomImages`(무작위 이미지 300개: 볼록, 8정점 이하, 겹침 없음, 깊은 픽셀은 안, 빈 곳은 밖) | 아니오 |
+| 큰 파괴를 여러 틱에 나눌지 | Noita는 상한 없음 | 없음 | 한 틱에 모두 🔶. 측정 후 개발자 결정 | `BenchmarkBreak`, `BenchmarkBreakMany`(아래 측정) | 아니오 |
 | 운동량 보존 | OPEN(C35:662) | 없음 | Noita처럼 새 조각에 부모 v를 그대로 줌. 도는 몸체에서 떨어진 조각은 접선 속도를 받지 않음 🔶 | `TestPiecesKeepTheParentsMotion` | 아니오 |
 
 ## 검증 계획
@@ -145,5 +146,10 @@ TPT에는 강체와 파괴가 없습니다(skill의 `references/tpt.md`). 모든
   - 셀 보존: 격자 + 대기열 + 인벤토리 + 몸체 이미지가 매 틱 같음
   - worker 수와 상관없는 결과, 틱의 할당 0회(파괴가 없는 틱)
 - 측정값과 기준: `BenchmarkBodies` 전후(-count 5), 큰 파괴(320×192 나무를 80조각으로, Noita C132 장면을 우리 식으로)의 `Break` 시간
+- 측정 결과(2026-11-08, 개발 PC, references.md 3절 "강체 파괴"):
+  - 320×192 구조물을 80조각으로 한 번에: `Break` 0.93 ms, 그 뒤 쓰기 0.63 ms(Noita 대상 분해 73~79 ms). 같은 구조물에서 한 픽셀만 파면 형상 전체를 다시 만들어 0.79 ms
+  - 32×16 다리 512개를 한 번에: 7.3 ms(Noita 43.7~45.2 ms). 기준 CPU 추정 18 ms로, 그 틱 하나는 16.7 ms를 넘음
+  - 파괴가 없는 틱의 몸체 몫(`BenchmarkBodies`): 518 → 538 µs(+4%). 쓰기 239 → 260 µs가 늘어난 전부이고, 칸에 픽셀의 손상을 넣는 몫이 대부분
+- 리플레이 골든 `internal/replay/testdata/break.rpl`: 판자 셋(바닥, 모래 더미 위에 기운 것, 물속 턱 위)을 파서 둘씩 나누고, 한 조각을 작은 몸체 여럿으로 잘게 판 뒤 하나를 통째로 파냄. 몸체 3 → 6 → 10 → 9개
 - 리플레이 골든: 몸체를 파서 둘로 가르는 리플레이
 - 직접 플레이로 볼 점: 판자 가운데를 파서 두 동강 낼 때의 움직임, 기운 몸체를 팔 때 조각이 튀지 않는지, 단순화 때문에 조각이 지형 쪽으로 반 칸쯤 떠 보이는지

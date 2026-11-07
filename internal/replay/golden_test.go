@@ -48,7 +48,7 @@ func TestGoldenReplays(t *testing.T) {
 			if many, _ := trace(t, r, tab, 4); many != got {
 				t.Fatalf("4 workers trace\n%s\ndiffers from 1 worker\n%s", many, got)
 			}
-			all.add(cov)
+			all.add(&cov)
 			compareGolden(t, strings.TrimSuffix(path, ".rpl")+".golden", got)
 		})
 	}
@@ -73,7 +73,7 @@ type coverage struct {
 	queued int
 }
 
-func (c *coverage) add(o coverage) {
+func (c *coverage) add(o *coverage) {
 	c.placed += o.placed
 	c.selected += o.selected
 	c.dropped += o.dropped

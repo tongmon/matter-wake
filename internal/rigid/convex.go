@@ -296,25 +296,18 @@ func (sh *shaper) rectangles(px []pixel, w, h int) {
 	sh.pts, sh.ends = sh.pts[:0], sh.ends[:0]
 	sh.used = slices.Grow(sh.used[:0], len(px))[:len(px)]
 	clear(sh.used)
-	free := func(i, j int) bool { return px[j*w+i].ok && !sh.used[j*w+i] }
 	for j := range h {
 		for i := 0; i < w; i++ {
-			if !free(i, j) {
+			if !sh.free(px, w, i, i+1, j) {
 				continue
 			}
 			i1 := i + 1
-			for i1 < w && free(i1, j) {
+			for i1 < w && sh.free(px, w, i1, i1+1, j) {
 				i1++
 			}
 			j1 := j + 1
-			for ; j1 < h; j1++ {
-				run := true
-				for x := i; x < i1 && run; x++ {
-					run = free(x, j1)
-				}
-				if !run {
-					break
-				}
+			for j1 < h && sh.free(px, w, i, i1, j1) {
+				j1++
 			}
 			for y := j; y < j1; y++ {
 				for x := i; x < i1; x++ {
@@ -327,4 +320,15 @@ func (sh *shaper) rectangles(px []pixel, w, h int) {
 			i = i1 - 1
 		}
 	}
+}
+
+// free reports whether the pixels from i0 to i1 of row j of the image px,
+// w pixels wide, are all there and in no rectangle yet.
+func (sh *shaper) free(px []pixel, w, i0, i1, j int) bool {
+	for k := j*w + i0; k < j*w+i1; k++ {
+		if !px[k].ok || sh.used[k] {
+			return false
+		}
+	}
+	return true
 }
