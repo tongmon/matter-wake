@@ -298,8 +298,8 @@ type tracer struct {
 	// with the points of pts kept as lattice points in corners too.
 	body    bool
 	corners []vertex
-	spans             []span
-	chains            []physics.Chain
+	spans   []span
+	chains  []physics.Chain
 }
 
 // solid reports whether cell (i, j) of the chunk, -1..w and -1..h, is one

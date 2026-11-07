@@ -63,3 +63,5 @@
 - **Box2D는 동적 몸체와 겹치게 만든 정적 형상에서 그 몸체를 밀어냅니다.** 같은 자리에 겹치는 형상을 되풀이해 만들면 몸체가 조금씩 밀려, 움직이는 이웃 몸체를 파고듭니다. 움직이는 몸체끼리의 접촉은 정적 형상보다 무르기 때문입니다. 셀에서 만든 지형은 기운 몸체와 늘 조금 겹치므로, `internal/rigid`는 몸체에 파고드는 새 정착 칸을 지형에서 뺍니다(`keepOut`, 2026-11-08).
 - **Box2D는 정적 몸체를 지워도 그 위에서 잠든 몸체를 깨우지 않습니다.** 지형 충돌을 다시 만들면(지우고 새로 만들기) 그 위에서 잠든 상자는 받침이 사라져도 공중에 떠 있습니다. `internal/rigid`는 다시 만든 청크 근처의 몸체를 `physics.World.Wake`로 깨웁니다(`TestTerrainRebuildsOnlyOnChange`, 2026-11-07).
 - **cgo 없이(`CGO_ENABLED=0`) 빌드하면 `internal/physics`는 `needsCgoAndACCompilerSeeThirdPartyREADME`가 없다는 에러로 멈춥니다.** 원인을 알리려고 일부러 둔 이름입니다(nocgo.go). `go run ./tools/check`도 cgo 단계에서 실패합니다.
+- **Box2D가 형상을 바꾸고 질량을 다시 셀 때 하는 속도 보정(v + ω × Δc)은 깨어 있는 몸체에만 합니다.** `b2UpdateBodyMassData`는 잠든 몸체의 속도 상태가 없어 건너뜁니다. 그래서 `physics.World.SetShapes`는 형상을 바꾸기 전에 몸체를 깨웁니다(2026-11-08, 파괴 작업).
+- **`b2BodyDef.linearVelocity`는 원점의 속도이고, `b2Body_SetLinearVelocity`는 질량 중심의 속도입니다.** 형상 없이 만든 몸체에 속도를 주고 형상을 더하면 질량 중심이 원점에서 옮겨 가며 ω × Δc가 더해집니다. 파괴 조각처럼 질량 중심의 속도를 정해 주려면 형상을 다 만든 뒤 `SetVelocity`를 부릅니다(2026-11-08).
