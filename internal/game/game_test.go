@@ -447,6 +447,8 @@ func TestNewRejectsBadConfig(t *testing.T) {
 		{"unknown body", Config{Slots: []string{"sand"}, Tool: testTool, Body: BodyTool{Material: "oak", Width: 4, Height: 4}}},
 		{"body of sand", Config{Slots: []string{"sand"}, Tool: testTool, Body: BodyTool{Material: "sand", Width: 4, Height: 4}}},
 		{"body of no size", Config{Slots: []string{"sand"}, Tool: testTool, Body: BodyTool{Material: "wood", Height: 4}}},
+		{"solid slot", Config{Slots: []string{"sand", "wood"}, Tool: testTool}},
+		{"solid slot in creative mode", Config{Slots: []string{"wood"}, Tool: testTool, Creative: true}},
 	}
 	for _, tt := range tests {
 		tt.cfg.Width, tt.cfg.Height, tt.cfg.Materials = 64, 64, tab

@@ -39,12 +39,13 @@ type body struct {
 	// of pixels.
 	tone []uint8
 	// x and y are where each pixel was last written, while placed is set.
-	// A pixel is not placed when its cell kept what was there. over holds,
-	// for a placed pixel that took another body's cell, that body's slot
-	// plus one, and 0 otherwise.
+	// A pixel is not placed when its cell kept what was there.
 	x, y   []int32
 	placed []bool
-	over   []uint16
+	// blocked counts the pixels that another body's pixels keep out of
+	// their cells: those not written because a body with a higher key held
+	// the cell, and those such a body took since.
+	blocked int
 	// wp and wq are the transform the pixels were last written at, once
 	// written is set. p and q are this tick's, and moved whether they
 	// differ.
@@ -54,8 +55,8 @@ type body struct {
 	p       physics.Vec2
 	q       physics.Rot
 	moved   bool
-	// force has the next Write rewrite the body though it did not move: a
-	// body that covered some of its pixels moved away.
+	// force has this Write rewrite the body though it did not move: a body
+	// that may have covered some of its pixels moved.
 	force bool
 	// box covers the cells the pixels mapped to at the last write, and
 	// shiftX and shiftY are how far the body moved then, in cells. near is
@@ -79,7 +80,7 @@ func newBody(id physics.Body, key uint32, m material.ID, w, h int, seed uint64) 
 	b := body{
 		id: id, key: key, mat: m, w: w, h: h,
 		tone: make([]uint8, n), x: make([]int32, n), y: make([]int32, n),
-		placed: make([]bool, n), over: make([]uint16, n),
+		placed: make([]bool, n),
 	}
 	for k := range b.tone {
 		b.tone[k] = uint8(rng.Hash3(seed^toneSalt, uint64(key), uint64(k), 0) >> 56)
@@ -88,9 +89,7 @@ func newBody(id physics.Body, key uint32, m material.ID, w, h int, seed uint64) 
 }
 
 // erase empties the cells the pixels of b, at slot, were written to and
-// still hold. A cell another body took since is that body's now. A pixel
-// that had taken another body's cell gives it back: that body is rewritten
-// in this tick's writes.
+// still hold. A cell another body took since is that body's now.
 func (s *System) erase(b *body, slot uint16) {
 	for k, on := range b.placed {
 		if !on {
@@ -100,12 +99,9 @@ func (s *System) erase(b *body, slot uint16) {
 		if c, ok := s.w.At(x, y); ok && s.kinds[c.Mat] == material.Solid {
 			if owner, _ := c.Body(); owner == slot {
 				s.w.Put(x, y, world.Cell{})
-				if o := b.over[k]; o != 0 {
-					s.bodies[o-1].force = true
-				}
 			}
 		}
-		b.placed[k], b.over[k] = false, 0
+		b.placed[k] = false
 	}
 	s.w.Flush()
 }
@@ -121,7 +117,7 @@ func (s *System) write(b *body, slot uint16) {
 	co, si := b.q.C, b.q.S
 	hw, hh := float32(b.w)/2, float32(b.h)/2
 	box := rect{math.MaxInt, math.MaxInt, math.MinInt, math.MinInt}
-	b.haveV = false
+	b.haveV, b.blocked = false, 0
 	k := 0
 	for j := range b.h {
 		v := float32(j) + 0.5 - hh
@@ -152,7 +148,8 @@ func (s *System) write(b *body, slot uint16) {
 // does a powder at rest unless it has settled and the body hits it hard
 // enough (givesWay). Liquids and other powders are pushed into the
 // world's queue of cells to put back. Another body's cell goes to the body
-// with the higher key: the one written later, which takes it.
+// with the higher key: the one written later, which takes it. Either way
+// the body that loses the cell counts it as blocked.
 func (s *System) claim(b *body, slot uint16, k, x, y int, rx, ry float32) bool {
 	c, ok := s.w.At(x, y)
 	if !ok {
@@ -160,15 +157,14 @@ func (s *System) claim(b *body, slot uint16, k, x, y int, rx, ry float32) bool {
 	}
 	switch s.kinds[c.Mat] {
 	case material.Empty:
-		b.over[k] = 0
 	case material.Solid:
-		// A cell of the body's own is a pixel that met another; the cell
-		// keeps what it had taken.
+		// A cell of the body's own is a pixel that met another.
 		if other, _ := c.Body(); other != slot {
 			if b.key < s.bodies[other].key {
+				b.blocked++
 				return false
 			}
-			b.over[k] = other + 1
+			s.bodies[other].blocked++
 		}
 	case material.Static:
 		return false
@@ -177,10 +173,8 @@ func (s *System) claim(b *body, slot uint16, k, x, y int, rx, ry float32) bool {
 			return false
 		}
 		s.w.Displace(x, y)
-		b.over[k] = 0
 	case material.Liquid:
 		s.w.Displace(x, y)
-		b.over[k] = 0
 	}
 	s.w.Put(x, y, world.BodyCell(b.mat, b.tone[k], slot, uint16(k)))
 	b.x[k], b.y[k] = int32(x), int32(y)

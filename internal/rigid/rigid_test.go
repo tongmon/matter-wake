@@ -258,12 +258,10 @@ func TestCoveredBodyComesBack(t *testing.T) {
 	}
 	// Move the second body away.
 	b.p.X += 3
-	s.erase(b, 1)
-	if !a.force {
-		t.Fatal("the first body was not marked to be written again")
+	s.sync()
+	if !a.written || a.moved {
+		t.Fatal("the first body moved")
 	}
-	s.write(b, 1)
-	s.write(a, 0)
 	if n, _ := owned(w, id.wood, 0); n != 100 {
 		t.Fatalf("the first body holds %d cells after the second moved away, want all 100", n)
 	}
@@ -357,5 +355,30 @@ func TestPixelsCountsImages(t *testing.T) {
 	}
 	if c := cells(w); c[material.Air] != 100*100 {
 		t.Fatalf("Drop changed the grid before Write: %v", c)
+	}
+}
+
+// A pixel covered by two later bodies in turn comes back once both have
+// moved away, whichever moves first (Codex review).
+func TestPixelCoveredTwiceComesBack(t *testing.T) {
+	for _, first := range []int{1, 2} {
+		s, w, id := newSystem(t, 100, 100, 1)
+		for _, x := range []int{20, 24, 28} {
+			if err := s.add(id.wood, x, 20, 10, 10, 0); err != nil {
+				t.Fatal(err)
+			}
+		}
+		for i := range s.bodies {
+			s.bodies[i].p, s.bodies[i].q = s.phys.Transform(s.bodies[i].id)
+		}
+		s.sync()
+		// Move the two later bodies away one at a time.
+		for _, k := range []int{first, 3 - first} {
+			s.bodies[k].p.Y += 3
+			s.sync()
+		}
+		if n, _ := owned(w, id.wood, 0); n != 100 {
+			t.Fatalf("moving body %d first, the first body holds %d cells after both moved away, want 100", first, n)
+		}
 	}
 }

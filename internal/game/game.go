@@ -208,8 +208,13 @@ func New(cfg *Config) (*Game, error) {
 	slots := make([]material.ID, len(cfg.Slots))
 	for i, name := range cfg.Slots {
 		id, ok := cfg.Materials.Lookup(name)
-		if !ok {
+		switch {
+		case !ok:
 			return nil, fmt.Errorf("game: slot %d names unknown material %q", i+1, name)
+		case cfg.Materials.Def(id).Kind == material.Solid:
+			// A solid's cells are the pixels of bodies; the body tool
+			// makes them.
+			return nil, fmt.Errorf("game: slot %d names %q, a solid, which the brush cannot place", i+1, name)
 		}
 		slots[i] = id
 	}
