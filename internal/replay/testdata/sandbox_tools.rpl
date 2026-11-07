@@ -15,7 +15,7 @@ tool 10 2000 4
 body wood 16 12
 mode play
 slots sand water stone
-materials 84fb98ac55b2d24b
+materials cbe9996c5ef09a49
 ticks 600
 
 # Wait while the sand and the water fall.

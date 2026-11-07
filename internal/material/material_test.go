@@ -39,7 +39,7 @@ func TestShippedTableLoads(t *testing.T) {
 }
 
 func TestDiggable(t *testing.T) {
-	want := map[Kind]bool{Empty: false, Static: true, Powder: true, Liquid: false}
+	want := map[Kind]bool{Empty: false, Static: true, Powder: true, Liquid: false, Solid: true}
 	for k, dig := range want {
 		if k.Diggable() != dig {
 			t.Errorf("%v.Diggable() = %v, want %v", k, !dig, dig)
@@ -79,8 +79,8 @@ func TestParseRejectsBadTables(t *testing.T) {
 		{"sink over 100", `{"materials":[{"name":"air","kind":"empty"},{"name":"sand","kind":"powder","sinkChance":101}]}`, "percents"},
 		{"negative accel", `{"materials":[{"name":"air","kind":"empty"},{"name":"sand","kind":"powder","fallAccel":-1}]}`, "fallAccel"},
 		{"damping over 1", `{"materials":[{"name":"air","kind":"empty"},{"name":"water","kind":"liquid","flowDamping":1.5}]}`, "flowDamping"},
-		{"hardness on liquid", `{"materials":[{"name":"air","kind":"empty"},{"name":"water","kind":"liquid","hardness":1}]}`, "only powders and statics"},
-		{"hp on air", `{"materials":[{"name":"air","kind":"empty","hp":5}]}`, "only powders and statics"},
+		{"hardness on liquid", `{"materials":[{"name":"air","kind":"empty"},{"name":"water","kind":"liquid","hardness":1}]}`, "only powders, statics and solids"},
+		{"hp on air", `{"materials":[{"name":"air","kind":"empty","hp":5}]}`, "only powders, statics and solids"},
 		{"negative hp", `{"materials":[{"name":"air","kind":"empty"},{"name":"sand","kind":"powder","hp":-1}]}`, "hp"},
 		{"hardness over 255", `{"materials":[{"name":"air","kind":"empty"},{"name":"sand","kind":"powder","hardness":256}]}`, "hardness"},
 		{"accel not a number", `{"materials":[{"name":"air","kind":"empty"},{"name":"sand","kind":"powder","fallAccel":"fast"}]}`, "not a number"},
@@ -92,7 +92,6 @@ func TestParseRejectsBadTables(t *testing.T) {
 		{"buoyancy on water", `{"materials":[{"name":"air","kind":"empty"},{"name":"water","kind":"liquid","buoyancy":1}]}`, "only solids"},
 		{"negative buoyancy", `{"materials":[{"name":"air","kind":"empty"},{"name":"wood","kind":"solid","density":6,"buoyancy":-0.5}]}`, "buoyancy"},
 		{"fall on wood", `{"materials":[{"name":"air","kind":"empty"},{"name":"wood","kind":"solid","density":6,"fallAccel":0.5}]}`, "only powders and liquids"},
-		{"hp on wood", `{"materials":[{"name":"air","kind":"empty"},{"name":"wood","kind":"solid","density":6,"hp":5}]}`, "only powders and statics"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

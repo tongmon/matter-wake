@@ -54,16 +54,19 @@ func TestGoldenReplays(t *testing.T) {
 	}
 	// The replays must keep exercising every tool, or a golden could pass
 	// while pinning nothing about it.
-	if all.placed == 0 || all.dug[material.Powder] == 0 || all.dug[material.Static] == 0 || all.selected == 0 || all.dropped == 0 || all.queued == 0 {
-		t.Fatalf("the replays place %d cells, dig %d powder and %d static cells, select a slot %d times, drop %d bodies "+
-			"and queue cells in %d ticks; each must happen",
-			all.placed, all.dug[material.Powder], all.dug[material.Static], all.selected, all.dropped, all.queued)
+	if all.placed == 0 || all.dug[material.Powder] == 0 || all.dug[material.Static] == 0 || all.dug[material.Solid] == 0 ||
+		all.selected == 0 || all.dropped == 0 || all.broken == 0 || all.queued == 0 {
+		t.Fatalf("the replays place %d cells, dig %d powder, %d static and %d solid cells, select a slot %d times, "+
+			"drop %d bodies, break off %d and queue cells in %d ticks; each must happen",
+			all.placed, all.dug[material.Powder], all.dug[material.Static], all.dug[material.Solid], all.selected,
+			all.dropped, all.broken, all.queued)
 	}
 }
 
-// coverage counts what a replay's inputs did.
+// coverage counts what a replay's inputs did: broken counts the bodies
+// that breaking added.
 type coverage struct {
-	placed, selected, dropped int
+	placed, selected, dropped, broken int
 	// dug counts the cells dug out by their material's kind.
 	dug [material.Solid + 1]int
 	// queued counts the ticks that ended with cells in the queue.
@@ -74,6 +77,7 @@ func (c *coverage) add(o coverage) {
 	c.placed += o.placed
 	c.selected += o.selected
 	c.dropped += o.dropped
+	c.broken += o.broken
 	c.queued += o.queued
 	for k, n := range o.dug {
 		c.dug[k] += n
@@ -90,7 +94,8 @@ func (c *coverage) add(o coverage) {
 // makes nor destroys them, and a body pushes cells into the queue. Solids
 // are counted in the bodies' images instead, since a turned body covers
 // more or fewer cells than it has pixels; they grow only by what the body
-// tool drops. In the terrain the counts cover the blocks in memory, which
+// tool drops, and what is dug or broken off a body goes into the
+// inventory. In the terrain the counts cover the blocks in memory, which
 // come and go.
 func trace(t *testing.T, r *Replay, tab *material.Table, workers int) (string, coverage) {
 	t.Helper()
@@ -119,14 +124,17 @@ func trace(t *testing.T, r *Replay, tab *material.Table, workers int) (string, c
 		for id := range held {
 			held[id] = g.Inventory(material.ID(id))
 		}
-		bodies := g.Bodies()
+		bodies, dropped := g.Bodies(), g.Dropped()
 		if err := g.Step(in); err != nil {
 			t.Fatal(err)
 		}
-		if n := g.Bodies() - bodies; n > 0 {
+		if n := g.Dropped() - dropped; n > 0 {
 			cov.dropped += n
 			m := tab.MustLookup(r.Body.Material)
 			start[m] += n * r.Body.Width * r.Body.Height
+		}
+		if n := g.Bodies() - bodies - (g.Dropped() - dropped); n > 0 {
+			cov.broken += n
 		}
 		if w.QueueLen() > 0 {
 			cov.queued++

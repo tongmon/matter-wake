@@ -22,10 +22,11 @@ const testMaterials = `{"materials": [
 	{"name": "water", "kind": "liquid", "density": 20, "fallAccel": 0.375, "sinkChance": 50,
 	 "flowSpeed": 0.9, "flowDamping": 0.8, "dispersion": 4},
 	{"name": "bedrock", "kind": "static", "density": 255, "hardness": 11, "hp": 1},
-	{"name": "wood", "kind": "solid", "density": 6, "friction": 0.9, "restitution": 0.2}
+	{"name": "wood", "kind": "solid", "density": 6, "hardness": 8, "hp": 300, "friction": 0.9, "restitution": 0.2}
 ]}`
 
-// testTool digs stone (hardness 10, hp 1000) in four ticks and sand in one.
+// testTool digs stone (hardness 10, hp 1000) in four ticks and sand and
+// wood in one.
 var testTool = Tool{Power: 10, Rate: 300, Radius: 3}
 
 func testTable(t testing.TB) *material.Table {
@@ -490,6 +491,49 @@ func TestBodyToolDropsBodies(t *testing.T) {
 	floorY := g.World().Height() - max(g.World().Width()/120, 2)
 	if c, _ := g.World().At(64, floorY-1); c.Mat != tab.MustLookup("wood") {
 		t.Fatalf("no body on the floor at (64, %d): %+v", floorY-1, c)
+	}
+}
+
+// The tool digs a body's pixels like terrain, into the inventory, and a
+// body dug through breaks into bodies of its pieces. The wood the body
+// tool dropped is all in the bodies and the inventory at every tick. A
+// tool too weak for wood leaves it.
+func TestDigBreaksBodies(t *testing.T) {
+	tab := testTable(t)
+	wood := tab.MustLookup("wood")
+	for _, power := range []uint8{7, 10} {
+		g, err := New(&Config{
+			Width: 128, Height: 96, Seed: 1, Workers: 2, Materials: tab,
+			Slots: []string{"sand"}, Tool: Tool{Power: power, Rate: 300, Radius: 2},
+			Body: BodyTool{Material: "wood", Width: 30, Height: 6},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(g.Close)
+		step(t, g, Input{CursorX: 64, CursorY: 10, Drop: true})
+		for range 120 {
+			step(t, g, Input{})
+		}
+		// Dig down through the plank's middle, a cell a tick.
+		floorY := g.World().Height() - max(g.World().Width()/120, 2)
+		for y := floorY - 8; y < floorY; y++ {
+			for range 3 {
+				step(t, g, dig(64, y))
+				n := make([]int, tab.Len())
+				g.BodyPixels(n)
+				if n[wood]+g.Inventory(wood) != 180 {
+					t.Fatalf("power %d: the bodies hold %d pixels of wood and the inventory %d, want 180 in all",
+						power, n[wood], g.Inventory(wood))
+				}
+			}
+		}
+		switch {
+		case power < 8 && (g.Bodies() != 1 || g.Inventory(wood) != 0):
+			t.Fatalf("a tool of power %d made %d bodies and dug %d wood", power, g.Bodies(), g.Inventory(wood))
+		case power >= 8 && (g.Bodies() != 2 || g.Inventory(wood) == 0):
+			t.Fatalf("a tool of power %d made %d bodies and dug %d wood, want 2 bodies", power, g.Bodies(), g.Inventory(wood))
+		}
 	}
 }
 

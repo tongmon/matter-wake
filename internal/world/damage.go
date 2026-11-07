@@ -20,18 +20,33 @@ func (w *World) Wear(x, y int, amount uint32) bool {
 		return false
 	}
 	c := w.cell(w.pos(x, y))
-	hp := uint64(w.mats[c.Mat].hp)
-	if hp == 0 {
+	damage, gone := Worn(w.mats[c.Mat].hp, c.Damage, amount)
+	if gone {
 		return true
 	}
-	// At most 2^32 · 2^16, which fits a uint64.
-	steps := (uint64(amount)*DamageScale + hp - 1) / hp
-	if uint64(c.Damage)+steps >= DamageScale {
-		return true
-	}
-	c.Damage += uint16(steps)
+	c.Damage = damage
 	// Damage changes only how the cell is drawn, but marking it is what
 	// tells the renderer to draw it again.
 	w.touch(rect{x, y, x + 1, y + 1})
 	return false
+}
+
+// Worn returns the damage, in steps of 1/DamageScale of hp, of something
+// of hp hp that had damage and takes amount more, and whether that uses it
+// up; then the damage returned means nothing. It is Wear's rule, for
+// what keeps its damage outside the grid, such as the pixels of rigid
+// bodies. No damage leaves it as it was.
+func Worn(hp uint32, damage uint16, amount uint32) (uint16, bool) {
+	if amount == 0 {
+		return damage, false
+	}
+	if hp == 0 {
+		return damage, true
+	}
+	// At most 2^32 · 2^16, which fits a uint64.
+	steps := (uint64(amount)*DamageScale + uint64(hp) - 1) / uint64(hp)
+	if uint64(damage)+steps >= DamageScale {
+		return damage, true
+	}
+	return damage + uint16(steps), false
 }

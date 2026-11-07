@@ -64,6 +64,53 @@ static void physicsPush( b2BodyId body, b2Vec2 force, float torque, bool wake )
 	b2Body_ApplyForceToCenter( body, force, wake );
 	b2Body_ApplyTorque( body, torque, wake );
 }
+
+// Wakes the body, replaces its shapes with the convex hulls of the polygons
+// in points, counts[k] points for polygon k, and gives it their mass. A
+// polygon whose points make no hull is skipped. Box2D copies the points.
+// Returns how many shapes it made.
+static int physicsSetShapes( b2BodyId body, const b2Vec2* points, const int* counts, int n, float density,
+							 float friction, float restitution )
+{
+	// Awake, the body has a velocity for Box2D to move with its center of
+	// mass when the mass is updated below.
+	b2Body_SetAwake( body, true );
+	b2ShapeId old;
+	while ( b2Body_GetShapes( body, &old, 1 ) > 0 )
+	{
+		b2DestroyShape( old, false );
+	}
+	b2ShapeDef def = b2DefaultShapeDef();
+	def.density = density;
+	def.material.friction = friction;
+	def.material.restitution = restitution;
+	def.updateBodyMass = false;
+	int made = 0;
+	for ( int k = 0; k < n; ++k )
+	{
+		b2Hull hull = b2ComputeHull( points, counts[k] );
+		points += counts[k];
+		if ( hull.count == 0 )
+		{
+			continue;
+		}
+		b2Polygon polygon = b2MakePolygon( &hull, 0.0f );
+		b2ShapeId shape = b2CreatePolygonShape( body, &def, &polygon );
+		if ( shape.index1 != 0 )
+		{
+			made += 1;
+		}
+	}
+	b2Body_UpdateMassFromShapes( body );
+	return made;
+}
+
+// One call into C for both velocities.
+static void physicsSetVelocity( b2BodyId body, b2Vec2 v, float w )
+{
+	b2Body_SetLinearVelocity( body, v );
+	b2Body_SetAngularVelocity( body, w );
+}
 */
 import "C"
 
@@ -101,9 +148,11 @@ type Config struct {
 type World struct {
 	id     C.b2WorldId
 	closed bool
-	// points is AddStaticChains's buffer: a chain's points as Box2D takes
-	// them, in Go memory that holds no Go pointers.
+	// points and counts are AddStaticChains's and SetShapes's buffers:
+	// points as Box2D takes them and how many make each polygon, in Go
+	// memory that holds no Go pointers.
 	points []C.b2Vec2
+	counts []C.int
 }
 
 // NewWorld makes a World. Close it when done: its memory is C memory.
@@ -298,6 +347,131 @@ func checkChains(chains []Chain, friction float32) error {
 	return nil
 }
 
+// AddDynamicBody adds a dynamic body with no shapes, its origin at at and
+// turned by rot, awake and at rest. Give it shapes with SetShapes before
+// the next Step: without them it has no mass.
+func (w *World) AddDynamicBody(at Vec2, rot Rot) (Body, error) {
+	w.mustBeOpen()
+	if !finiteVec(at) || !finite(rot.C) || !finite(rot.S) {
+		return 0, fmt.Errorf("physics: body at %v turned %v is not finite", at, rot)
+	}
+	// Box2D's own test for a rotation, with its tolerance.
+	if qq := float32(rot.C*rot.C) + float32(rot.S*rot.S); qq <= 1-0.0006 || qq >= 1+0.0006 {
+		return 0, fmt.Errorf("physics: rotation %v is not of length 1", rot)
+	}
+	def := C.b2DefaultBodyDef()
+	def._type = C.b2_dynamicBody
+	def.position = vec(at)
+	def.rotation = C.b2Rot{c: C.float(rot.C), s: C.float(rot.S)}
+	defp := &def
+	id := C.b2CreateBody(w.id, defp)
+	if id.index1 == 0 {
+		return 0, fmt.Errorf("physics: Box2D rejected a body at %v", at)
+	}
+	return bodyOf(id), nil
+}
+
+// MaxPolygonVertices is the most corners a polygon of SetShapes may have:
+// Box2D's limit.
+const MaxPolygonVertices = C.B2_MAX_POLYGON_VERTICES
+
+// Polygons lists convex polygons in a body's frame, in meters: the corners
+// of each, one polygon after another, and where each polygon's corners end.
+type Polygons struct {
+	Points []Vec2
+	Ends   []int
+}
+
+// Surface is what a body's shapes are made of.
+type Surface struct {
+	// Density in kilograms per square meter; positive for a dynamic body.
+	Density float32
+	// Friction is the Coulomb friction coefficient, usually 0 to 1.
+	Friction float32
+	// Restitution is how much of its speed a shape keeps when it bounces,
+	// 0 to 1.
+	Restitution float32
+}
+
+// SetShapes replaces the shapes of dynamic body b with p's polygons, each
+// the convex hull of its corners, made of s, and gives b the mass, center
+// of mass and rotational inertia of those shapes. It wakes b first. The
+// origin stays where it is and so do the velocities of the points of b's
+// frame: the center of mass moves by some Δc, so its velocity becomes
+// v + ω × Δc. A polygon Box2D can make no hull of, its corners on a line or
+// within Box2D's weld distance of each other, is skipped; SetShapes
+// returns how many shapes it made. A polygon of fewer than 3 or more than
+// MaxPolygonVertices corners, a corner that is not finite, or a surface
+// that is not a dynamic body's is an error, and nothing changes.
+func (w *World) SetShapes(b Body, p Polygons, s Surface) (int, error) {
+	id := w.body(b)
+	err := p.check()
+	if err != nil {
+		return 0, err
+	}
+	err = s.check()
+	if err != nil {
+		return 0, err
+	}
+	w.points, w.counts = w.points[:0], w.counts[:0]
+	for _, v := range p.Points {
+		w.points = append(w.points, vec(v))
+	}
+	start := 0
+	for _, end := range p.Ends {
+		w.counts = append(w.counts, C.int(end-start))
+		start = end
+	}
+	points, counts := &w.points[0], &w.counts[0]
+	n := C.physicsSetShapes(id, points, counts, C.int(len(p.Ends)), C.float(s.Density), C.float(s.Friction), C.float(s.Restitution))
+	return int(n), nil
+}
+
+func (p Polygons) check() error {
+	if len(p.Ends) == 0 || p.Ends[len(p.Ends)-1] != len(p.Points) {
+		return fmt.Errorf("physics: %d polygons do not end at the last of %d points", len(p.Ends), len(p.Points))
+	}
+	start := 0
+	for k, end := range p.Ends {
+		if n := end - start; n < 3 || n > MaxPolygonVertices {
+			return fmt.Errorf("physics: polygon %d has %d corners, 3 to %d", k, n, MaxPolygonVertices)
+		}
+		start = end
+	}
+	for _, v := range p.Points {
+		if !finiteVec(v) {
+			return fmt.Errorf("physics: polygon corner %v is not finite", v)
+		}
+	}
+	return nil
+}
+
+func (s Surface) check() error {
+	ok := s.Density > 0 && s.Friction >= 0 && s.Restitution >= 0
+	if !ok || !finite(s.Density) || !finite(s.Friction) || !finite(s.Restitution) {
+		return fmt.Errorf("physics: surface %+v needs a positive density and friction and restitution of 0 or more", s)
+	}
+	return nil
+}
+
+// LocalCenter returns the body's center of mass in its own frame, in
+// meters from its origin.
+func (w *World) LocalCenter(b Body) Vec2 {
+	c := C.b2Body_GetLocalCenter(w.body(b))
+	return Vec2{float32(c.x), float32(c.y)}
+}
+
+// SetVelocity sets the velocity of the body's center of mass, in meters
+// per second, and its angular velocity in radians per second. A velocity
+// other than zero wakes it. Values that are not finite are a programmer
+// error.
+func (w *World) SetVelocity(b Body, v Vec2, spin float32) {
+	if !finiteVec(v) || !finite(spin) {
+		panic(fmt.Sprintf("physics: SetVelocity(%v, %v) is not finite", v, spin))
+	}
+	C.physicsSetVelocity(w.body(b), vec(v), C.float(spin))
+}
+
 // DestroyBody removes b and its shapes from the world. The handle becomes
 // invalid: Box2D does not check it in a release build, so using it again
 // is a programmer error that may crash.
@@ -425,11 +599,6 @@ func (w *World) Wake(b Body) {
 // Awake reports whether the body is awake.
 func (w *World) Awake(b Body) bool {
 	return bool(C.b2Body_IsAwake(w.body(b)))
-}
-
-// setVelocity sets the body's linear velocity, for tests.
-func (w *World) setVelocity(b Body, v Vec2) {
-	C.b2Body_SetLinearVelocity(w.body(b), vec(v))
 }
 
 // awakeBodies returns how many bodies are awake.

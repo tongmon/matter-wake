@@ -451,7 +451,11 @@ func TestTickDoesNotAllocate(t *testing.T) {
 	for range 10 {
 		tick(t, s, w)
 	}
+	debris := make([]int, testMaterials)
 	allocs := testing.AllocsPerRun(100, func() {
+		if err := s.Break(debris); err != nil {
+			t.Fatal(err)
+		}
 		s.Write()
 		if err := s.Collide(); err != nil {
 			t.Fatal(err)
