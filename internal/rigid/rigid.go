@@ -80,6 +80,8 @@ type System struct {
 	rebuilt []int
 	// trace is the scratch space of contour tracing.
 	trace tracer
+	// freed lists, during a Write, the cells each erased body covered.
+	freed []rect
 }
 
 // New returns a System for the bodies of w, whose cells are of mats. It
@@ -214,11 +216,39 @@ func (s *System) Write() {
 	for i := range s.bodies {
 		b := &s.bodies[i]
 		b.p, b.q = s.phys.Transform(b.id)
+	}
+	s.sync()
+}
+
+// sync erases and writes the bodies whose transform p, q is not the one
+// they were written at. A body that did not move but has pixels other
+// bodies keep out is written again too, where an erased body freed cells
+// near it: they may be its cells again. So a pixel covered by bodies that
+// move away comes back, even while its body sleeps.
+func (s *System) sync() {
+	s.freed = s.freed[:0]
+	for i := range s.bodies {
+		b := &s.bodies[i]
 		b.moved = !b.written || b.p != b.wp || b.q != b.wq
 		if b.moved {
 			s.erase(b, uint16(i))
+			if b.written {
+				s.freed = append(s.freed, b.box)
+			}
 		} else {
 			b.shiftX, b.shiftY = 0, 0
+		}
+	}
+	for i := range s.bodies {
+		b := &s.bodies[i]
+		if b.moved || b.blocked == 0 {
+			continue
+		}
+		for _, r := range s.freed {
+			if r.overlaps(b.box) {
+				b.force = true
+				break
+			}
 		}
 	}
 	for i := range s.bodies {

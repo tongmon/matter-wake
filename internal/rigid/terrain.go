@@ -17,9 +17,9 @@ const (
 	// make the terrain there collision first. 🧪
 	nearCells = 4
 	// A traced outline is simplified by dropping the corners that lie
-	// within tolNum/tolDen cells of the line that skips them. 🧪 0.75 makes
+	// within tolNum/tolDen cells of the edge that skips them. 🧪 0.75 makes
 	// a 45° staircase one straight edge along its outer corners but keeps
-	// a bump of one cell.
+	// a bump of one cell, one corner cut.
 	tolNum = 3
 	tolDen = 4
 )
@@ -438,8 +438,12 @@ func (t *tracer) add(x0, y0 int, sp span) {
 			}
 		}
 	} else {
-		t.keep[0], t.keep[n-1] = true, true
-		t.simplify(0, n-1)
+		// An open chain keeps the corners next to its ends, so its first
+		// and last edges run along the lattice, the way the next chunk's
+		// ghost points run, however each chunk simplified the rest.
+		first, last := min(1, n-1), max(n-2, 0)
+		t.keep[0], t.keep[first], t.keep[last], t.keep[n-1] = true, true, true, true
+		t.simplify(first, last)
 	}
 	sp.start = len(t.pts)
 	for k := range n {
@@ -452,33 +456,46 @@ func (t *tracer) add(x0, y0 int, sp span) {
 }
 
 // simplify keeps, between t.verts[a] and t.verts[b], the corner farthest
-// from the line between them if it is more than the tolerance away, and
-// then does the same on each side of it (Douglas–Peucker). The arithmetic
-// is on whole cells, so it is the same everywhere.
+// from the segment between them if it is more than the tolerance away, and
+// then does the same on each side of it (Douglas–Peucker). It measures to
+// the segment, not the line through it, so an outline that turns back on
+// itself keeps its turn. The arithmetic is on whole cells, so it is the
+// same everywhere.
 func (t *tracer) simplify(a, b int) {
 	if b-a < 2 {
 		return
 	}
 	p, q := t.verts[a], t.verts[b]
 	lx, ly := int64(q.x-p.x), int64(q.y-p.y)
-	far, farCross := -1, int64(-1)
+	ll := max(lx*lx+ly*ly, 1)
+	far, farDist := -1, int64(-1)
 	for k := a + 1; k < b; k++ {
-		ex, ey := int64(t.verts[k].x-p.x), int64(t.verts[k].y-p.y)
-		c := lx*ey - ly*ex
-		if c < 0 {
-			c = -c
-		}
-		if c > farCross {
-			far, farCross = k, c
+		if d := segDist2(t.verts[k], p, lx, ly, ll); d > farDist {
+			far, farDist = k, d
 		}
 	}
-	// The distance is cross / length; compare their squares, scaled.
-	if farCross*farCross*tolDen*tolDen <= tolNum*tolNum*(lx*lx+ly*ly) {
+	// farDist is the squared distance times ll; compare it scaled.
+	if farDist*tolDen*tolDen <= tolNum*tolNum*ll {
 		return
 	}
 	t.keep[far] = true
 	t.simplify(a, far)
 	t.simplify(far, b)
+}
+
+// segDist2 returns the squared distance from v to the segment from p along
+// (lx, ly), times ll, its squared length (1 for a segment of no length).
+func segDist2(v, p vertex, lx, ly, ll int64) int64 {
+	ex, ey := int64(v.x-p.x), int64(v.y-p.y)
+	switch dot := ex*lx + ey*ly; {
+	case dot <= 0:
+		return (ex*ex + ey*ey) * ll
+	case dot >= ll:
+		fx, fy := ex-lx, ey-ly
+		return (fx*fx + fy*fy) * ll
+	}
+	c := lx*ey - ly*ex
+	return c * c
 }
 
 func dist2(a, b vertex) int {

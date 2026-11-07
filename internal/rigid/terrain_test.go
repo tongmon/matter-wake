@@ -4,6 +4,7 @@ import (
 	"math"
 	"testing"
 
+	"github.com/tongmon/matter-wake/internal/material"
 	"github.com/tongmon/matter-wake/internal/physics"
 	"github.com/tongmon/matter-wake/internal/rng"
 	"github.com/tongmon/matter-wake/internal/world"
@@ -125,9 +126,9 @@ func TestOutlineKeepsCornersApart(t *testing.T) {
 	}
 }
 
-// A 45° staircase becomes one straight edge along its outer corners. A
-// bump of one cell stays, though its far side may become a ramp that ends
-// within the tolerance of the floor.
+// A 45° staircase becomes one straight edge along its outer corners,
+// between the lattice edges an open chain keeps at its ends. A bump of one
+// cell stays, with a corner cut within the tolerance.
 func TestContourSimplifiesStairs(t *testing.T) {
 	chains, _ := outlineOf(t, []string{
 		"........#",
@@ -140,8 +141,8 @@ func TestContourSimplifiesStairs(t *testing.T) {
 		".########",
 		"#########",
 	})
-	if len(chains) != 1 || !equalPoints(chains[0].Points, pts(0, 7, 7, 0)) {
-		t.Fatalf("chains %+v, want one edge from (0, 7) to (7, 0)", chains)
+	if len(chains) != 1 || !equalPoints(chains[0].Points, pts(0, 7, 0, 6, 6, 0, 7, 0)) {
+		t.Fatalf("chains %+v, want one edge from (0, 6) to (6, 0) between the steps at the ends", chains)
 	}
 	chains, _ = outlineOf(t, []string{
 		"........",
@@ -151,8 +152,8 @@ func TestContourSimplifiesStairs(t *testing.T) {
 		"########",
 		"########",
 	})
-	if len(chains) != 1 || !equalPoints(chains[0].Points, pts(0, 3, 2, 3, 2, 2, 6, 3)) {
-		t.Fatalf("chains %+v, want the bump kept up to its top-left corner, then a ramp", chains)
+	if len(chains) != 1 || !equalPoints(chains[0].Points, pts(0, 3, 2, 3, 2, 2, 3, 3, 6, 3)) {
+		t.Fatalf("chains %+v, want the bump kept with its top-right corner cut", chains)
 	}
 }
 
@@ -326,4 +327,58 @@ func TestTerrainRebuildsOnlyOnChange(t *testing.T) {
 	if _, r := owned(w, id.wood, 0); r.y1 != 110 {
 		t.Fatalf("the body is at %v, want fallen into the hole, on row 110", r)
 	}
+}
+
+// Where an outline crosses a chunk border, each chunk's ghost point runs
+// on in the direction of the other chunk's first or last edge as it was
+// simplified, so Box2D sees the seam as the slope it is, not a corner.
+// Stairs simplified into diagonals must keep this too (Codex review).
+func TestGhostsFollowTheNeighborsEdges(t *testing.T) {
+	for _, fill := range []func(w *world.World, stone material.ID){
+		func(w *world.World, stone material.ID) { w.Fill(0, 40, 128, 64, stone) },
+		func(w *world.World, stone material.ID) { // a 45° slope across x = 64
+			for x := range 128 {
+				w.Fill(x, 63-x/2, x+1, 64, stone)
+			}
+		},
+		func(w *world.World, stone material.ID) { // 45° stairs
+			for x := range 128 {
+				w.Fill(x, max(64-x+40, 0), x+1, 64, stone)
+			}
+		},
+	} {
+		s, w, id := newSystem(t, 128, 64, 1)
+		fill(w, id.stone)
+		var ends [2]physics.Chain
+		for i := range 2 {
+			c := s.chunkCells(i)
+			cls := make([]world.Class, (c.x1-c.x0+2)*(c.y1-c.y0+2))
+			w.Classify(c.x0-1, c.y0-1, c.x1+1, c.y1+1, cls)
+			tr := &tracer{cls: cls}
+			chains := tr.outline(c.x0, c.y0, c.x1-c.x0, c.y1-c.y0)
+			for _, ch := range chains {
+				if !ch.Loop && (ch.Points[0].X == 6.4 || ch.Points[len(ch.Points)-1].X == 6.4) {
+					ends[i] = physics.Chain{Points: append([]physics.Vec2(nil), ch.Points...), Before: ch.Before, After: ch.After}
+				}
+			}
+		}
+		a, b := ends[0], ends[1]
+		if len(a.Points) == 0 || len(b.Points) == 0 {
+			t.Fatalf("no chain meets the border: %+v %+v", a, b)
+		}
+		v := a.Points[len(a.Points)-1]
+		if v != b.Points[0] {
+			t.Fatalf("the left chunk ends at %v, the right starts at %v", v, b.Points[0])
+		}
+		if !sameWay(v, a.After, b.Points[1]) || !sameWay(v, b.Before, a.Points[len(a.Points)-2]) {
+			t.Fatalf("at %v the left ghost %v does not run along the right edge to %v, or the right ghost %v along the left edge from %v",
+				v, a.After, b.Points[1], b.Before, a.Points[len(a.Points)-2])
+		}
+	}
+}
+
+// sameWay reports whether p and q lie in the same direction from v.
+func sameWay(v, p, q physics.Vec2) bool {
+	px, py, qx, qy := float64(p.X-v.X), float64(p.Y-v.Y), float64(q.X-v.X), float64(q.Y-v.Y)
+	return math.Abs(px*qy-py*qx) < 1e-6 && px*qx+py*qy > 0
 }
