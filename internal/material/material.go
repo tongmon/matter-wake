@@ -41,6 +41,9 @@ const (
 	Powder
 	// Liquid falls and spreads sideways, like water.
 	Liquid
+	// Solid is the matter of rigid bodies, like wood. Its cells are the
+	// pixels of bodies: the bodies move them, the cell rules never do.
+	Solid
 )
 
 var kindNames = [...]string{
@@ -48,6 +51,7 @@ var kindNames = [...]string{
 	Static: "static",
 	Powder: "powder",
 	Liquid: "liquid",
+	Solid:  "solid",
 }
 
 // Diggable reports whether a tool may dig materials of the kind: powders
@@ -107,7 +111,8 @@ type Def struct {
 	Name string `json:"name"`
 	Kind Kind   `json:"kind"`
 	// Density decides what sinks through what: a moving cell may sink into a
-	// liquid of lower density.
+	// liquid of lower density. A solid's density also sets the mass of its
+	// bodies (rigid package).
 	Density uint8 `json:"density"`
 
 	// FallAccel is how much a falling cell's speed grows each tick, in
@@ -137,6 +142,13 @@ type Def struct {
 	// damage dealt to it reaches HP, so 0 digs it at the first touch.
 	// Diggable kinds only.
 	HP uint32 `json:"hp"`
+
+	// Friction is how much a solid's bodies grip what they touch, as
+	// Box2D's Coulomb coefficient, usually 0 to 1. Solids only.
+	Friction fixed.Q8 `json:"friction"`
+	// Restitution is how much of its speed a solid's body keeps when it
+	// bounces, 0..1. Solids only.
+	Restitution fixed.Q8 `json:"restitution"`
 
 	// Color is the base color; each cell varies it by its tone.
 	Color Color `json:"color"`
@@ -214,6 +226,23 @@ func validate(d Def) error {
 	}
 	if !d.Kind.Diggable() && (d.Hardness != 0 || d.HP != 0) {
 		return fmt.Errorf("%q: only powders and statics may have hardness or hp", d.Name)
+	}
+	if err := validateSolid(d); err != nil {
+		return fmt.Errorf("%q: %w", d.Name, err)
+	}
+	return nil
+}
+
+// validateSolid checks the values only solids have: a body needs mass, so
+// a solid needs a density.
+func validateSolid(d Def) error {
+	switch {
+	case d.Kind != Solid && (d.Friction != 0 || d.Restitution != 0):
+		return errors.New("only solids may have friction or restitution")
+	case d.Kind == Solid && d.Density == 0:
+		return errors.New("a solid needs a density: it sets its bodies' mass")
+	case d.Friction < 0 || d.Restitution < 0 || d.Restitution > fixed.One:
+		return fmt.Errorf("friction %v must not be negative and restitution %v must be in [0, 1]", d.Friction, d.Restitution)
 	}
 	return nil
 }

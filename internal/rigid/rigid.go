@@ -1,0 +1,235 @@
+// Package rigid puts rigid bodies in the cell grid. A body is a rectangle
+// of pixels of a solid material that Box2D (internal/physics) moves; its
+// pixels are cells of the world, and the terrain's cells are what it
+// collides with.
+//
+// Each tick runs in this order (docs/briefs/body-grid-coupling.md):
+//
+//  1. Write: every body that moved since its pixels were written has them
+//     erased, all bodies first; then those bodies are written again where
+//     Box2D's last Step put them, in key order. A pixel goes to the cell
+//     its center maps to, rounded down on each axis, so a turned body may
+//     map two pixels to one cell and leave a gap. A cell in the way is
+//     pushed into the world's queue of cells to put back (world.Displace)
+//     if it flows or moves; static terrain, powder that has come to rest,
+//     and the pixels of later bodies keep their cells.
+//  2. Collide: the terrain near each body is made collision for Box2D, one
+//     static body of edge chains per 64×64 chunk, rebuilt when the chunk's
+//     cells change what bodies collide with (world.Classify).
+//  3. The world's tick runs the cells, then puts back the queued ones.
+//  4. Step advances Box2D by one tick.
+//
+// Cells are 0.1 m on a side and the y axis points down, in the grid and in
+// Box2D alike. Everything here runs on the caller's goroutine, in an order
+// fixed by the bodies' keys and the chunks' indexes, so the result does
+// not depend on the world's worker count.
+package rigid
+
+import (
+	"fmt"
+
+	"github.com/tongmon/matter-wake/internal/fixed"
+	"github.com/tongmon/matter-wake/internal/material"
+	"github.com/tongmon/matter-wake/internal/physics"
+	"github.com/tongmon/matter-wake/internal/world"
+)
+
+const (
+	// cellsPerMeter is how many cells make a meter: a cell is 0.1 m, as in
+	// Noita (✅ 2026-11-07, design.md 2절).
+	cellsPerMeter = 10
+	// gravity pulls bodies down, along +y, in m/s². 🧪 Noita's (C41).
+	gravity = 12
+	// tickSeconds is one tick of the game's 60 Hz.
+	tickSeconds = float32(1.0 / 60)
+	// subSteps is how many solver steps Box2D splits a tick into. 🧪 Box2D's
+	// recommendation at 60 Hz.
+	subSteps = 4
+	// densityScale turns a solid's density into Box2D's kilograms per
+	// square meter: Noita's wood of density 6 weighs 0.6 kg/m² (C31, C05).
+	densityScale = 0.1
+	// maxBodies and maxPixels are what a cell's link to its body holds
+	// (world.BodyCell): 16 bits each.
+	maxBodies = 1 << 16
+	maxPixels = 1 << 16
+)
+
+// System holds the rigid bodies of one world and the terrain collision
+// near them. It is not safe for concurrent use. Box2D keeps its worlds in
+// a global table without a lock, so make and close Systems from one
+// goroutine at a time.
+type System struct {
+	w     *world.World
+	phys  *physics.World
+	mats  *material.Table
+	kinds []material.Kind
+	// bodies holds the bodies by slot, the index their cells link to. Keys
+	// grow with the slots, so this is also key order.
+	bodies []body
+	// terrain holds the terrain collision of each chunk of the world, row
+	// by row; cols is how many chunks a row has.
+	terrain []chunk
+	cols    int
+	// wanted lists the chunks near a body this tick, and stamp, by chunk,
+	// the last tick (counted by ticks) that listed it.
+	wanted []int
+	stamp  []uint32
+	ticks  uint32
+	// rebuilt lists the chunks whose collision was rebuilt this tick, to
+	// wake the bodies near them.
+	rebuilt []int
+	// trace is the scratch space of contour tracing.
+	trace tracer
+}
+
+// New returns a System for the bodies of w, whose cells are of mats. It
+// walls the world's edges in for Box2D, so bodies stay in the world.
+func New(w *world.World, mats *material.Table) (*System, error) {
+	phys, err := physics.NewWorld(physics.Config{Gravity: physics.Vec2{X: 0, Y: gravity}})
+	if err != nil {
+		return nil, fmt.Errorf("rigid: %w", err)
+	}
+	s := &System{w: w, phys: phys, mats: mats, kinds: make([]material.Kind, mats.Len())}
+	for i := range s.kinds {
+		s.kinds[i] = mats.Def(material.ID(i)).Kind
+	}
+	cols := (w.Width() + world.ChunkSize - 1) / world.ChunkSize
+	rows := (w.Height() + world.ChunkSize - 1) / world.ChunkSize
+	s.terrain = make([]chunk, cols*rows)
+	s.stamp = make([]uint32, cols*rows)
+	s.cols = cols
+	if err := s.wall(); err != nil {
+		phys.Close()
+		return nil, err
+	}
+	return s, nil
+}
+
+// wall puts a static box 1 m thick along each edge of the world, outside
+// it.
+func (s *System) wall() error {
+	wm := float32(s.w.Width()) / cellsPerMeter
+	hm := float32(s.w.Height()) / cellsPerMeter
+	const t = 0.5 // half the thickness
+	for _, b := range [...]physics.Box{
+		{Center: physics.Vec2{X: -t, Y: hm / 2}, HalfW: t, HalfH: hm/2 + 2*t},
+		{Center: physics.Vec2{X: wm + t, Y: hm / 2}, HalfW: t, HalfH: hm/2 + 2*t},
+		{Center: physics.Vec2{X: wm / 2, Y: -t}, HalfW: wm/2 + 2*t, HalfH: t},
+		{Center: physics.Vec2{X: wm / 2, Y: hm + t}, HalfW: wm/2 + 2*t, HalfH: t},
+	} {
+		b.Friction = terrainFriction
+		if _, err := s.phys.AddStaticBox(b); err != nil {
+			return fmt.Errorf("rigid: %w", err)
+		}
+	}
+	return nil
+}
+
+// Close frees the System's Box2D world.
+func (s *System) Close() {
+	s.phys.Close()
+}
+
+// Bodies returns how many bodies there are.
+func (s *System) Bodies() int {
+	return len(s.bodies)
+}
+
+// Pixels adds to n[id], for every material id, how many pixels the bodies'
+// images hold of it. Every pixel counts, in the grid or not: a turned body
+// covers fewer cells than it has pixels. n must have an entry for every
+// material.
+func (s *System) Pixels(n []int) {
+	for i := range s.bodies {
+		b := &s.bodies[i]
+		n[b.mat] += len(b.tone)
+	}
+}
+
+// Drop adds a body of material m, w × h pixels, with its top-left pixel at
+// cell (x, y), at rest and unturned. It reports false, and adds nothing,
+// when a cell under it is outside the world or memory, static, powder or
+// another body, or when the world holds as many bodies as it can. Liquid
+// and air give way when its pixels are written. The body's pixels go into
+// the grid at the next Write.
+func (s *System) Drop(m material.ID, x, y, w, h int) (bool, error) {
+	switch {
+	case int(m) >= len(s.kinds) || s.kinds[m] != material.Solid:
+		return false, fmt.Errorf("rigid: material %d is not a solid", m)
+	case w < 1 || h < 1 || w*h > maxPixels:
+		return false, fmt.Errorf("rigid: a body of %d×%d pixels; it needs 1 to %d", w, h, maxPixels)
+	case len(s.bodies) >= maxBodies:
+		return false, nil
+	}
+	for cy := y; cy < y+h; cy++ {
+		for cx := x; cx < x+w; cx++ {
+			c, ok := s.w.At(cx, cy)
+			if !ok {
+				return false, nil
+			}
+			switch s.kinds[c.Mat] {
+			case material.Static, material.Powder, material.Solid:
+				return false, nil
+			case material.Empty, material.Liquid:
+			}
+		}
+	}
+	return true, s.add(m, x, y, w, h, 0)
+}
+
+// add makes the body Drop checked, turned by angle radians about its
+// center.
+func (s *System) add(m material.ID, x, y, w, h int, angle float32) error {
+	d := s.mats.Def(m)
+	// The center is a whole cell or a half one, so the pixel centers start
+	// at cell centers, away from the edges where rounding could go either
+	// way.
+	id, err := s.phys.AddDynamicBox(physics.Box{
+		Center:      physics.Vec2{X: (float32(x) + float32(w)/2) / cellsPerMeter, Y: (float32(y) + float32(h)/2) / cellsPerMeter},
+		Angle:       angle,
+		HalfW:       float32(w) / (2 * cellsPerMeter),
+		HalfH:       float32(h) / (2 * cellsPerMeter),
+		Density:     float32(d.Density) * densityScale,
+		Friction:    q8(d.Friction),
+		Restitution: q8(d.Restitution),
+	})
+	if err != nil {
+		return fmt.Errorf("rigid: %w", err)
+	}
+	slot := len(s.bodies)
+	s.bodies = append(s.bodies, newBody(id, uint32(slot), m, w, h, s.w.Seed()))
+	return nil
+}
+
+// q8 converts a material's fixed-point value to Box2D's float.
+func q8(v fixed.Q8) float32 {
+	return float32(v) / float32(fixed.One)
+}
+
+// Write erases the pixels of every body that moved since they were last
+// written, then writes them where the bodies are now, in key order. A body
+// whose position and rotation are exactly as they were, asleep or
+// resting, keeps its cells.
+func (s *System) Write() {
+	for i := range s.bodies {
+		b := &s.bodies[i]
+		b.p, b.q = s.phys.Transform(b.id)
+		b.moved = !b.written || b.p != b.wp || b.q != b.wq
+		if b.moved {
+			s.erase(b, uint16(i))
+		} else {
+			b.shiftX, b.shiftY = 0, 0
+		}
+	}
+	for i := range s.bodies {
+		b := &s.bodies[i]
+		if b.moved || b.force {
+			s.write(b, uint16(i))
+		}
+	}
+}
+
+// Step advances Box2D by one tick.
+func (s *System) Step() {
+	s.phys.Step(tickSeconds, subSteps)
+}

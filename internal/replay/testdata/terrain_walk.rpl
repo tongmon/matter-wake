@@ -1,4 +1,4 @@
-matter-wake-replay 5
+matter-wake-replay 6
 # The terrain around the spawn of a 4096x4096 world, with a target of four
 # blocks in memory and a check every 60 ticks. The camera digs into the
 # ground, walks two blocks right and comes back: the blocks it left go
@@ -14,9 +14,10 @@ view 480 270
 stream 64 4 512 4 60
 budget 250000
 tool 10 2000 4
+body wood 16 12
 mode play
 slots sand water stone
-materials ee74dacd409567c3
+materials 84fb98ac55b2d24b
 ticks 900
 
 # Select stone and wait at the spawn.

@@ -1,21 +1,21 @@
-tick 0 air 115088 stone 5008 sand 4320 water 5184 held stone 0 sand 0 water 0 checksum e51b68b0ce4137ce
-tick 30 air 115088 stone 5008 sand 4320 water 5184 held stone 0 sand 0 water 0 checksum 2353c8e54823b0d9
-tick 60 air 115088 stone 5008 sand 4320 water 5184 held stone 0 sand 0 water 0 checksum 2f28d5f78a2ace78
-tick 90 air 115088 stone 5008 sand 4320 water 5184 held stone 0 sand 0 water 0 checksum 1bb9f584adfbdae4
-tick 120 air 115206 stone 5008 sand 4202 water 5184 held stone 0 sand 118 water 0 checksum 4c410e6b1a151a3a
-tick 150 air 115196 stone 5008 sand 4212 water 5184 held stone 0 sand 108 water 0 checksum f1c331d056a54bd4
-tick 180 air 115224 stone 4980 sand 4212 water 5184 held stone 28 sand 108 water 0 checksum 145ca8935abebc7c
-tick 210 air 115224 stone 4980 sand 4212 water 5184 held stone 28 sand 108 water 0 checksum ddb377cd294d3e66
-tick 240 air 115196 stone 5008 sand 4212 water 5184 held stone 0 sand 108 water 0 checksum 2f712be646b450af
-tick 270 air 115196 stone 5008 sand 4212 water 5184 held stone 0 sand 108 water 0 checksum 035e215cfce4ae8d
-tick 300 air 115224 stone 4980 sand 4212 water 5184 held stone 28 sand 108 water 0 checksum 1a1361b08f00c0a3
-tick 330 air 115205 stone 4999 sand 4212 water 5184 held stone 9 sand 108 water 0 checksum 6de412963f656ab2
-tick 360 air 115205 stone 4999 sand 4212 water 5184 held stone 9 sand 108 water 0 checksum d00a65312e4fa3e5
-tick 390 air 115205 stone 4999 sand 4212 water 5184 held stone 9 sand 108 water 0 checksum 2b24470a89d1307e
-tick 420 air 115205 stone 4999 sand 4212 water 5184 held stone 9 sand 108 water 0 checksum fe984167e5d641ce
-tick 450 air 115205 stone 4999 sand 4212 water 5184 held stone 9 sand 108 water 0 checksum fb0708defd504213
-tick 480 air 115205 stone 4999 sand 4212 water 5184 held stone 9 sand 108 water 0 checksum 1d6363ad44e27444
-tick 510 air 115205 stone 4999 sand 4212 water 5184 held stone 9 sand 108 water 0 checksum 0f3c028641e253eb
-tick 540 air 115205 stone 4999 sand 4212 water 5184 held stone 9 sand 108 water 0 checksum c247ec51edbc7940
-tick 570 air 115205 stone 4999 sand 4212 water 5184 held stone 9 sand 108 water 0 checksum 3b02b84dba9f294b
-tick 600 air 115205 stone 4999 sand 4212 water 5184 held stone 9 sand 108 water 0 checksum a23d7072e7a8d4ad
+tick 0 air 115088 stone 5008 sand 4320 water 5184 wood 0 held stone 0 sand 0 water 0 wood 0 queued 0 bodies 0 checksum e51b68b0ce4137ce
+tick 30 air 115088 stone 5008 sand 4320 water 5184 wood 0 held stone 0 sand 0 water 0 wood 0 queued 0 bodies 0 checksum 2af18e3d044912cf
+tick 60 air 115088 stone 5008 sand 4320 water 5184 wood 0 held stone 0 sand 0 water 0 wood 0 queued 0 bodies 0 checksum 9781fed957175272
+tick 90 air 115088 stone 5008 sand 4320 water 5184 wood 0 held stone 0 sand 0 water 0 wood 0 queued 0 bodies 0 checksum b1722a1d9fbe4c5e
+tick 120 air 115206 stone 5008 sand 4202 water 5184 wood 0 held stone 0 sand 118 water 0 wood 0 queued 0 bodies 0 checksum a7ddf2c62503ab7b
+tick 150 air 115196 stone 5008 sand 4212 water 5184 wood 0 held stone 0 sand 108 water 0 wood 0 queued 0 bodies 0 checksum a159779fffae021d
+tick 180 air 115224 stone 4980 sand 4212 water 5184 wood 0 held stone 28 sand 108 water 0 wood 0 queued 0 bodies 0 checksum 4180af8ef0773aa8
+tick 210 air 115224 stone 4980 sand 4212 water 5184 wood 0 held stone 28 sand 108 water 0 wood 0 queued 0 bodies 0 checksum 2caf5a5ac9308775
+tick 240 air 115196 stone 5008 sand 4212 water 5184 wood 0 held stone 0 sand 108 water 0 wood 0 queued 0 bodies 0 checksum fc737db70abae581
+tick 270 air 115196 stone 5008 sand 4212 water 5184 wood 0 held stone 0 sand 108 water 0 wood 0 queued 0 bodies 0 checksum 30e18afc57831e45
+tick 300 air 115224 stone 4980 sand 4212 water 5184 wood 0 held stone 28 sand 108 water 0 wood 0 queued 0 bodies 0 checksum d74451f7ddf188fc
+tick 330 air 115205 stone 4999 sand 4212 water 5184 wood 0 held stone 9 sand 108 water 0 wood 0 queued 0 bodies 0 checksum ef6f58dfb08dbcd5
+tick 360 air 115205 stone 4999 sand 4212 water 5184 wood 0 held stone 9 sand 108 water 0 wood 0 queued 0 bodies 0 checksum 16268f09136f76cc
+tick 390 air 115205 stone 4999 sand 4212 water 5184 wood 0 held stone 9 sand 108 water 0 wood 0 queued 0 bodies 0 checksum 0b682b17f07c0544
+tick 420 air 115205 stone 4999 sand 4212 water 5184 wood 0 held stone 9 sand 108 water 0 wood 0 queued 0 bodies 0 checksum e300a0fb221a41db
+tick 450 air 115205 stone 4999 sand 4212 water 5184 wood 0 held stone 9 sand 108 water 0 wood 0 queued 0 bodies 0 checksum e70c6c847b1e5e2b
+tick 480 air 115205 stone 4999 sand 4212 water 5184 wood 0 held stone 9 sand 108 water 0 wood 0 queued 0 bodies 0 checksum 63a893cd38a71411
+tick 510 air 115205 stone 4999 sand 4212 water 5184 wood 0 held stone 9 sand 108 water 0 wood 0 queued 0 bodies 0 checksum 10bf43e2e789ea6e
+tick 540 air 115205 stone 4999 sand 4212 water 5184 wood 0 held stone 9 sand 108 water 0 wood 0 queued 0 bodies 0 checksum e3d0ae308d9ba93a
+tick 570 air 115205 stone 4999 sand 4212 water 5184 wood 0 held stone 9 sand 108 water 0 wood 0 queued 0 bodies 0 checksum d2baacd4865a320b
+tick 600 air 115205 stone 4999 sand 4212 water 5184 wood 0 held stone 9 sand 108 water 0 wood 0 queued 0 bodies 0 checksum 0def635b161716bb

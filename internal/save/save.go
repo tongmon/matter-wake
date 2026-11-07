@@ -53,8 +53,10 @@ import (
 	"github.com/tongmon/matter-wake/internal/world"
 )
 
-// BlockVersion is the block layout this build reads and writes.
-const BlockVersion = 1
+// BlockVersion is the block layout this build writes. It also reads
+// version 1, which had no rest field: its cells read back with Rest 0, so
+// resting powders count their ticks at rest again.
+const BlockVersion = 2
 
 // MetaVersion is the world header layout this build reads and writes.
 const MetaVersion = 1
@@ -75,9 +77,10 @@ type field struct {
 	get   func(b []byte, c *world.Cell) error
 }
 
-// fields are the fields of a block of BlockVersion, in the order written.
-// Mat is written as an index into the block's material list; put and get
-// see that index in place of the material ID.
+// fields are the fields of a block of BlockVersion, in the order written;
+// a block of version 1 has all but the last (fieldsOf). Mat is written as
+// an index into the block's material list; put and get see that index in
+// place of the material ID.
 var fields = []field{
 	{
 		"mat", 2,
@@ -120,6 +123,25 @@ var fields = []field{
 		func(b []byte, c *world.Cell) { binary.LittleEndian.PutUint16(b, c.Damage) },
 		func(b []byte, c *world.Cell) error { c.Damage = binary.LittleEndian.Uint16(b); return nil },
 	},
+	{
+		"rest", 1,
+		func(b []byte, c *world.Cell) { b[0] = c.Rest },
+		func(b []byte, c *world.Cell) error {
+			if b[0] > world.SettleTicks {
+				return fmt.Errorf("rest is %d, above %d", b[0], world.SettleTicks)
+			}
+			c.Rest = b[0]
+			return nil
+		},
+	},
+}
+
+// fieldsOf returns the fields a block of the given version holds.
+func fieldsOf(version uint16) []field {
+	if version == 1 {
+		return fields[:len(fields)-1]
+	}
+	return fields
 }
 
 func boolByte(v bool) byte {
@@ -131,11 +153,18 @@ func boolByte(v bool) byte {
 
 // EncodeBlock writes the cells of b, whose materials come from mats.
 func EncodeBlock(w io.Writer, b *world.Block, mats *material.Table) error {
+	return encodeBlock(w, b, mats, BlockVersion)
+}
+
+// encodeBlock writes b in the layout of the given version; tests write
+// older versions with it.
+func encodeBlock(w io.Writer, b *world.Block, mats *material.Table, version uint16) error {
+	fields := fieldsOf(version)
 	sum := crc32.NewIEEE()
 	bw := bufio.NewWriter(io.MultiWriter(w, sum))
 	// A bufio.Writer keeps its first error and Flush returns it.
 	_, _ = bw.WriteString(blockMagic)
-	writeUint(bw, BlockVersion, 2)
+	writeUint(bw, uint64(version), 2)
 	// A table holds up to material.MaxMaterials materials, with names of
 	// any length, so both take 32 bits. The list's size comes first, so a
 	// reader knows how much to expect besides the cells.
@@ -219,7 +248,7 @@ func DecodeBlock(r io.Reader, mats *material.Table) (*world.Block, error) {
 	}
 	// A bytes.Reader reads byte by byte, so DEFLATE never reads past its
 	// field.
-	d := &decoder{r: bytes.NewReader(body[headBytes:])}
+	d := &decoder{r: bytes.NewReader(body[headBytes:]), fields: fieldsOf(binary.LittleEndian.Uint16(data[len(blockMagic):]))}
 	b, err := d.block(mats, binary.LittleEndian.Uint64(data[headBytes-8:]))
 	if err != nil {
 		return nil, fmt.Errorf("save: block: %w", err)
@@ -239,8 +268,8 @@ func readBlock(r io.Reader) ([]byte, error) {
 		return nil, errors.New("not a matter-wake block")
 	}
 	if n >= len(blockMagic)+2 {
-		if v := binary.LittleEndian.Uint16(head[len(blockMagic):]); v != BlockVersion {
-			return nil, fmt.Errorf("format version %d; this build reads version %d", v, BlockVersion)
+		if v := binary.LittleEndian.Uint16(head[len(blockMagic):]); v < 1 || v > BlockVersion {
+			return nil, fmt.Errorf("format version %d; this build reads versions 1 to %d", v, BlockVersion)
 		}
 	}
 	if err != nil {
@@ -259,9 +288,11 @@ func readBlock(r io.Reader) ([]byte, error) {
 	return append(head, rest...), nil
 }
 
-// decoder reads the parts of a block after its version.
+// decoder reads the parts of a block after its version, which holds
+// fields.
 type decoder struct {
-	r *bytes.Reader
+	r      *bytes.Reader
+	fields []field
 }
 
 func (d *decoder) block(mats *material.Table, listBytes uint64) (*world.Block, error) {
@@ -277,12 +308,12 @@ func (d *decoder) block(mats *material.Table, listBytes uint64) (*world.Block, e
 	if err != nil {
 		return nil, err
 	}
-	if int(n) != len(fields) {
-		return nil, fmt.Errorf("%d fields, want %d", n, len(fields))
+	if int(n) != len(d.fields) {
+		return nil, fmt.Errorf("%d fields, want %d", n, len(d.fields))
 	}
 	b := new(world.Block)
 	raw := make([]byte, 4*cells)
-	for _, f := range fields {
+	for _, f := range d.fields {
 		if err := d.field(f, raw[:f.width*cells]); err != nil {
 			return nil, fmt.Errorf("field %q: %w", f.name, err)
 		}

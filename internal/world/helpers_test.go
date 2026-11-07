@@ -10,7 +10,7 @@ import (
 )
 
 type testIDs struct {
-	stone, sand, water material.ID
+	stone, sand, water, wood material.ID
 }
 
 // Indexes of the materials testDefs returns.
@@ -18,10 +18,12 @@ const (
 	defStone = 1
 	defSand  = 2
 	defWater = 3
+	defWood  = 4
 )
 
-// testDefs returns air, stone, sand and water with the shipped values of
-// data/materials.json. Tests change single values to isolate a rule.
+// testDefs returns air, stone, sand, water and wood with the shipped
+// values of data/materials.json. Tests change single values to isolate a
+// rule.
 func testDefs() []material.Def {
 	q := func(f float64) fixed.Q8 {
 		v, err := fixed.FromFloat(f)
@@ -42,6 +44,7 @@ func testDefs() []material.Def {
 			FallAccel: q(0.375), SinkChance: 50,
 			FlowSpeed: q(0.9), FlowDamping: q(0.8), Dispersion: 4,
 		},
+		{Name: "wood", Kind: material.Solid, Density: 6, Friction: q(0.9), Restitution: q(0.2)},
 	}
 }
 
@@ -72,7 +75,9 @@ func newTestWorldWith(tb testing.TB, width, height, workers int, edit func(defs 
 		tb.Fatal(err)
 	}
 	tb.Cleanup(w.Close)
-	return w, testIDs{stone: tab.MustLookup("stone"), sand: tab.MustLookup("sand"), water: tab.MustLookup("water")}
+	return w, testIDs{
+		stone: tab.MustLookup("stone"), sand: tab.MustLookup("sand"), water: tab.MustLookup("water"), wood: tab.MustLookup("wood"),
+	}
 }
 
 // find returns where the only cell of material id is, or false.

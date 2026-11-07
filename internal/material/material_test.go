@@ -84,6 +84,13 @@ func TestParseRejectsBadTables(t *testing.T) {
 		{"negative hp", `{"materials":[{"name":"air","kind":"empty"},{"name":"sand","kind":"powder","hp":-1}]}`, "hp"},
 		{"hardness over 255", `{"materials":[{"name":"air","kind":"empty"},{"name":"sand","kind":"powder","hardness":256}]}`, "hardness"},
 		{"accel not a number", `{"materials":[{"name":"air","kind":"empty"},{"name":"sand","kind":"powder","fallAccel":"fast"}]}`, "not a number"},
+		{"friction on stone", `{"materials":[{"name":"air","kind":"empty"},{"name":"stone","kind":"static","friction":0.5}]}`, "only solids"},
+		{"restitution on sand", `{"materials":[{"name":"air","kind":"empty"},{"name":"sand","kind":"powder","restitution":0.5}]}`, "only solids"},
+		{"solid without density", `{"materials":[{"name":"air","kind":"empty"},{"name":"wood","kind":"solid"}]}`, "density"},
+		{"negative friction", `{"materials":[{"name":"air","kind":"empty"},{"name":"wood","kind":"solid","density":6,"friction":-1}]}`, "friction"},
+		{"restitution over 1", `{"materials":[{"name":"air","kind":"empty"},{"name":"wood","kind":"solid","density":6,"restitution":1.5}]}`, "restitution"},
+		{"fall on wood", `{"materials":[{"name":"air","kind":"empty"},{"name":"wood","kind":"solid","density":6,"fallAccel":0.5}]}`, "only powders and liquids"},
+		{"hp on wood", `{"materials":[{"name":"air","kind":"empty"},{"name":"wood","kind":"solid","density":6,"hp":5}]}`, "only powders and statics"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

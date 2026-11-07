@@ -6,6 +6,11 @@ import (
 	"github.com/tongmon/matter-wake/internal/rng"
 )
 
+// SettleTicks is how many ticks a powder must end at rest before it counts
+// as settled ground for rigid bodies (Cell.Rest, Classify). 🧪 Noita's
+// threshold (docs/briefs/body-grid-coupling.md).
+const SettleTicks = 20
+
 // Motion limits (🧪). They also bound how far one cell update reaches:
 // a fall at maxFall moves at most fallReach cells sideways, and a liquid
 // then flows at most its dispersion further. Both must stay within MaxReach
@@ -62,7 +67,7 @@ func (w *World) update(x, y int, j *job) {
 	}
 	p := &w.mats[c.Mat]
 	switch p.kind {
-	case material.Empty, material.Static:
+	case material.Empty, material.Static, material.Solid:
 		return
 	case material.Powder, material.Liquid:
 	}
@@ -87,7 +92,9 @@ func (w *World) update(x, y int, j *job) {
 // tick (pauses). One that starts to fall from rest moves one cell without
 // speeding up; after that it falls by fall. One blocked below keeps its
 // speed and may slide down diagonally. It comes to rest, no longer falling,
-// once both sides are blocked as well.
+// once both sides are blocked as well. Each update that ends at rest
+// without moving counts a tick of Rest, up to SettleTicks; moving resets it
+// (swap).
 func (w *World) updatePowder(at spot, p *matProps, j *job) {
 	c := w.cell(at.i)
 	if c.Falling && w.mayMove(at, p) && pauses(p, &j.s) {
@@ -108,6 +115,9 @@ func (w *World) updatePowder(at spot, p *matProps, j *job) {
 	}
 	if !w.isEmpty(at.x-1, at.y) && !w.isEmpty(at.x+1, at.y) {
 		c.Falling = false
+	}
+	if !c.Falling && c.Rest < SettleTicks {
+		c.Rest++
 	}
 }
 
@@ -167,7 +177,7 @@ func (w *World) entryTo(x, y int, p *matProps) entry {
 		if t.density < p.density && p.sinkChance > 0 {
 			return sink
 		}
-	case material.Static, material.Powder:
+	case material.Static, material.Powder, material.Solid:
 	}
 	return blocked
 }
@@ -192,14 +202,14 @@ func (w *World) isEmpty(x, y int) bool {
 
 // swap moves the cell at index i to (x, y), the cell there to i, and
 // returns the index the moving cell went to. The moving cell is then done
-// for the tick (Cell.Last), and so is the cell it pushes out if the scan
-// has passed where that cell was: it had its update there, moving or not
-// (TestDisplacedCellIsNotUpdatedTwice).
+// for the tick (Cell.Last) and no longer at rest, and so is the cell it
+// pushes out if the scan has passed where that cell was: it had its update
+// there, moving or not (TestDisplacedCellIsNotUpdatedTwice).
 func (w *World) swap(i, x, y int, j *job) int {
 	k := w.pos(x, y)
 	from, to := w.cell(i), w.cell(k)
 	*from, *to = *to, *from
-	to.Last = w.tick
+	to.Last, to.Rest = w.tick, 0
 	if from.Mat != material.Air && j.passed(x, y) {
 		from.Last = w.tick
 	}

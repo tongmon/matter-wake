@@ -30,6 +30,12 @@
 // only some blocks in memory, and its owner loads and unloads them
 // (LoadBlock, UnloadBlock). A chunk runs only when every cell its updates
 // could reach is in memory; the others wait as they are.
+//
+// Between ticks, rigid bodies (internal/rigid) write their pixels as cells
+// of solid materials (BodyCell, Put), which the cell rules never move. A
+// cell in a body's way waits in a queue (Displace), and after each tick's
+// cell updates the queue puts what it can back, searching up from where
+// each cell was (reinsert.go).
 package world
 
 import (
@@ -51,8 +57,12 @@ const MaxReach = ChunkSize/2 - 1
 
 // Cell is one grid position. The zero value is air.
 //
-// A cell is 16 bytes: 14 of fields and 2 of padding, left free on purpose
-// until a field needs them (TestCellSize).
+// A cell is 16 bytes: 15 of fields and 1 of padding, left free on purpose
+// until a field needs it (TestCellSize).
+//
+// A cell of a solid material is a pixel of a rigid body. The cell rules
+// never move it, so it has no use for Vy and Ax and keeps in them the body
+// and the pixel it is instead (BodyCell, Cell.Body).
 type Cell struct {
 	// Mat is what the cell holds.
 	Mat material.ID
@@ -75,6 +85,11 @@ type Cell struct {
 	// of 1/DamageScale. It moves with the cell and never heals; a new cell
 	// starts at 0. Only Wear changes it.
 	Damage uint16
+	// Rest counts the ticks a powder has ended at rest, neither falling nor
+	// moving, up to SettleTicks; it drops to 0 when the powder moves. A
+	// powder that has rested SettleTicks ticks is settled: rigid bodies
+	// collide with it (Classify). Other kinds keep 0.
+	Rest uint8
 }
 
 type chunk struct {
@@ -190,6 +205,15 @@ type World struct {
 	waiting int
 	// order is hold's buffer: one entry a chunk that would run.
 	order []candidate
+	// pending covers the cells Put and Displace changed since the last
+	// Flush.
+	pending rect
+	// fresh holds the cells new to the queue of cells to put back, retry
+	// those that failed to go back before, and spare is fresh's other
+	// buffer. retryBudget is how many retries the next tick may try
+	// (reinsert.go).
+	fresh, retry, spare []queued
+	retryBudget         int
 	// scanAll makes every chunk scan all its cells every tick, for tests
 	// that check that sleeping changes nothing.
 	scanAll bool
@@ -232,6 +256,8 @@ func New(cfg Config) (*World, error) {
 		budget: cfg.Budget,
 		focusX: cfg.Width / 2,
 		focusY: cfg.Height / 2,
+
+		retryBudget: retryFull,
 	}
 	w.blocks = make([]*Block, w.bcols*w.brows)
 	if !cfg.Streamed {
@@ -413,8 +439,10 @@ func (w *World) tone(x, y int) uint8 {
 // Step advances the world by one tick. It runs the chunks whose change
 // rectangle is not empty, phase by phase, and after each phase merges what
 // the runs marked in the chunks around them, so a chunk that runs later in
-// the tick already sees it.
+// the tick already sees it. Then it tries to put back the cells waiting in
+// the queue (Displace).
 func (w *World) Step() {
+	w.Flush()
 	w.tick++
 	w.version++
 	w.awake = 0
@@ -437,6 +465,7 @@ func (w *World) Step() {
 		}
 		end = start
 	}
+	w.reinsertQueued()
 }
 
 // runPhase runs the chunks of row cy and the given parity in the blocks

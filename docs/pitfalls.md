@@ -58,4 +58,6 @@
 - **cgo 호출 하나는 개발 PC에서 약 34 ns입니다.** 몸체 300개의 위치와 회전을 하나씩 읽으면 20 µs로, 같은 몸체의 Step(약 55 µs)의 3분의 1이 넘습니다. 몸체가 많아지면 한 번의 호출로 여러 몸체를 읽습니다(references.md 3절).
 - **Box2D는 월드를 잠금 없는 전역 표(최대 128개)에 둡니다.** `b2CreateWorld`와 `b2DestroyWorld`를 여러 goroutine에서 동시에 부르면 C 안에서 경쟁이 납니다. race 검출기는 C 메모리를 보지 못합니다. 월드는 한 goroutine에서 차례로 만들고 닫습니다. 그래서 `internal/physics`의 테스트는 `t.Parallel`을 쓰지 않습니다.
 - **Box2D는 잘못된 입력을 거부하면 stdout에 출력합니다.** 로직은 출력하지 않으므로 `internal/physics`가 로그 콜백을 아무것도 안 하는 함수로 바꾸고, 같은 실수를 Go 쪽에서 먼저 에러로 돌려줍니다.
+- **Box2D 릴리스 빌드는 지운 몸체의 핸들을 검사하지 않습니다.** `DestroyBody` 뒤에 같은 `physics.Body`로 위치를 읽으면 Go panic이 아니라 C 안의 접근 위반으로 프로세스가 죽습니다(2026-11-07 테스트에서 확인). 핸들을 지운 쪽에서 버립니다. `b2Body_IsValid`로 매번 검사하면 읽기마다 cgo 호출이 하나 늘어 쓰지 않았습니다.
+- **Box2D는 정적 몸체를 지워도 그 위에서 잠든 몸체를 깨우지 않습니다.** 지형 충돌을 다시 만들면(지우고 새로 만들기) 그 위에서 잠든 상자는 받침이 사라져도 공중에 떠 있습니다. `internal/rigid`는 다시 만든 청크 근처의 몸체를 `physics.World.Wake`로 깨웁니다(`TestTerrainRebuildsOnlyOnChange`, 2026-11-07).
 - **cgo 없이(`CGO_ENABLED=0`) 빌드하면 `internal/physics`는 `needsCgoAndACCompilerSeeThirdPartyREADME`가 없다는 에러로 멈춥니다.** 원인을 알리려고 일부러 둔 이름입니다(nocgo.go). `go run ./tools/check`도 cgo 단계에서 실패합니다.

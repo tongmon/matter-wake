@@ -10,10 +10,20 @@
 // the same for the whole session. Creative mode, for development, places
 // without taking from the inventory and so makes cells.
 //
+// The rooms also hold rigid bodies (internal/rigid), which the body tool,
+// a development tool, drops from nothing. A body's pixels are cells of a
+// solid material; it pushes the cells in its way into the world's queue of
+// cells to put back, so for every other material the cells in the world
+// plus those in the queue plus the inventory stay the same. The solids'
+// pixels are counted in the bodies' images, since a turned body covers
+// fewer cells than it has pixels (BodyPixels).
+//
 // A session plays the sandbox, a small room kept whole in memory; the
 // collapse room, as small, for measuring; or the terrain, the big world of
-// which only the blocks around the camera stay in memory (stream.go). The terrain makes a block the first time the
-// camera comes near it; after that the block lives in the store.
+// which only the blocks around the camera stay in memory (stream.go). The
+// terrain makes a block the first time the camera comes near it; after
+// that the block lives in the store. The terrain has no bodies yet: they
+// are not saved, and would not leave memory with the blocks.
 package game
 
 import (
@@ -22,6 +32,7 @@ import (
 	"slices"
 
 	"github.com/tongmon/matter-wake/internal/material"
+	"github.com/tongmon/matter-wake/internal/rigid"
 	"github.com/tongmon/matter-wake/internal/scene"
 	"github.com/tongmon/matter-wake/internal/world"
 )
@@ -60,6 +71,9 @@ type Input struct {
 	Dig bool
 	// Select picks a material slot, 1-based; 0 keeps the current one.
 	Select int
+	// Drop drops a body of the body tool centred on the cursor, in the
+	// rooms. It does nothing where the body would not fit.
+	Drop bool
 }
 
 // Tool is what the player digs and places with.
@@ -72,6 +86,16 @@ type Tool struct {
 	Rate uint32
 	// Radius is the radius in cells of the brush it digs and places with.
 	Radius int
+}
+
+// BodyTool is what the body tool drops: rectangular bodies of one solid
+// material. It is a development tool, for trying bodies out, until bodies
+// come from destruction.
+type BodyTool struct {
+	// Material names the solid the bodies are made of; empty for no tool.
+	Material string
+	// Width and Height are the bodies' size in pixels.
+	Width, Height int
 }
 
 // Config describes a new session.
@@ -99,6 +123,8 @@ type Config struct {
 	// Slots name the materials the player can place, in key order.
 	Slots []string
 	Tool  Tool
+	// Body is what the body tool drops.
+	Body BodyTool
 	// Creative places without taking from the inventory: any slot's
 	// material, as much as the brush holds. It is for trying materials out
 	// in development; play starts with an empty inventory instead.
@@ -160,6 +186,11 @@ type Game struct {
 	// ahead and aheadList are Upcoming's buffers.
 	ahead     []aheadBlock
 	aheadList [][2]int
+	// bodies are the rigid bodies of the rooms, nil in the terrain.
+	// body is the body tool's material and size; bodyW is 0 without one.
+	bodies       *rigid.System
+	body         material.ID
+	bodyW, bodyH int
 }
 
 // New starts a session in cfg.Scene with an empty inventory. In the
@@ -203,10 +234,36 @@ func New(cfg *Config) (*Game, error) {
 		inventory: make([]int, cfg.Materials.Len()),
 	}
 	if err := g.setUp(cfg); err != nil {
-		w.Close()
+		g.Close()
 		return nil, err
 	}
 	return g, nil
+}
+
+// setUpBodies checks the body tool and, in the rooms, makes the System
+// that holds the bodies.
+func (g *Game) setUpBodies(cfg *Config) error {
+	if t := cfg.Body; t.Material != "" {
+		id, ok := cfg.Materials.Lookup(t.Material)
+		switch {
+		case !ok:
+			return fmt.Errorf("game: the body tool names unknown material %q", t.Material)
+		case cfg.Materials.Def(id).Kind != material.Solid:
+			return fmt.Errorf("game: the body tool's material %q is not a solid", t.Material)
+		case t.Width < 1 || t.Height < 1:
+			return fmt.Errorf("game: the body tool's size %dx%d is not positive", t.Width, t.Height)
+		}
+		g.body, g.bodyW, g.bodyH = id, t.Width, t.Height
+	}
+	if cfg.Scene == SceneTerrain {
+		return nil
+	}
+	s, err := rigid.New(g.world, cfg.Materials)
+	if err != nil {
+		return fmt.Errorf("game: %w", err)
+	}
+	g.bodies = s
+	return nil
 }
 
 // resumeTick checks cfg.Resume and returns the tick the world starts at.
@@ -240,6 +297,9 @@ func resumeTick(cfg *Config) (uint32, error) {
 
 // setUp lays out the session's scene.
 func (g *Game) setUp(cfg *Config) error {
+	if err := g.setUpBodies(cfg); err != nil {
+		return err
+	}
 	switch cfg.Scene {
 	case SceneSandbox:
 		return scene.Sandbox(g.world, cfg.Materials)
@@ -365,7 +425,26 @@ func (g *Game) ResidentBlocks() [][2]int {
 
 // Close releases the session's resources.
 func (g *Game) Close() {
+	if g.bodies != nil {
+		g.bodies.Close()
+	}
 	g.world.Close()
+}
+
+// Bodies returns how many rigid bodies the session holds.
+func (g *Game) Bodies() int {
+	if g.bodies == nil {
+		return 0
+	}
+	return g.bodies.Bodies()
+}
+
+// BodyPixels adds to n[id], for every material id, how many pixels the
+// bodies' images hold of it.
+func (g *Game) BodyPixels(n []int) {
+	if g.bodies != nil {
+		g.bodies.Pixels(n)
+	}
 }
 
 // World returns the session's world for drawing. Callers must not change it.
@@ -403,6 +482,11 @@ func (g *Game) Inventory(id material.ID) int {
 // Step applies one tick of input and advances the world. In the terrain it
 // first loads and unloads blocks for the camera; an error there, from the
 // store, ends the session.
+//
+// The tools act first. Then the bodies' pixels are written where Box2D's
+// last Step left them and the terrain near them is made collision; the
+// world's tick runs the cells and puts back the cells the bodies pushed
+// out; and Box2D steps (internal/rigid).
 func (g *Game) Step(in Input) error {
 	if g.terrain != nil {
 		if err := g.stream(in.CameraX, in.CameraY); err != nil {
@@ -421,7 +505,21 @@ func (g *Game) Step(in Input) error {
 	case in.Place:
 		g.place(in.CursorX, in.CursorY)
 	}
+	if g.bodies == nil {
+		g.world.Step()
+		return nil
+	}
+	if in.Drop && g.bodyW > 0 {
+		if _, err := g.bodies.Drop(g.body, in.CursorX-g.bodyW/2, in.CursorY-g.bodyH/2, g.bodyW, g.bodyH); err != nil {
+			return fmt.Errorf("game: %w", err)
+		}
+	}
+	g.bodies.Write()
+	if err := g.bodies.Collide(); err != nil {
+		return fmt.Errorf("game: %w", err)
+	}
 	g.world.Step()
+	g.bodies.Step()
 	return nil
 }
 

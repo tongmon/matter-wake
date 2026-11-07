@@ -32,12 +32,16 @@ func TestWrite(t *testing.T) {
 		{CursorX: -3, CursorY: 40, Place: true, Dig: true},
 		{CursorX: -3, CursorY: 40, Place: true, Dig: true, CameraX: 512, CameraY: -1},
 		none,
+		{CursorX: 30, CursorY: 8, Drop: true},
+		{CursorX: 30, CursorY: 8, Place: true, Dig: true, Drop: true},
+		{CursorX: 30, CursorY: 8, Place: true, Drop: true},
 	}
+	r.Body = game.BodyTool{Material: "wood", Width: 16, Height: 12}
 	var buf bytes.Buffer
 	if err := Write(&buf, r); err != nil {
 		t.Fatal(err)
 	}
-	want := `matter-wake-replay 5
+	want := `matter-wake-replay 6
 seed 7
 size 64 32
 scene sandbox
@@ -45,16 +49,20 @@ view 64 32
 stream 64 4 512 12 60
 budget 0
 tool 10 2000 2
+body wood 16 12
 mode play
 slots sand water
 materials 0123456789abcdef
-ticks 9
+ticks 12
 2 10 5 P 0 0 0
 4 11 5 P 2 0 0
 5 11 5 D 0 0 0
 6 -3 40 PD 0 0 0
 7 -3 40 PD 0 512 -1
 8 0 0 - 0 0 0
+9 30 8 B 0 0 0
+10 30 8 PDB 0 0 0
+11 30 8 PB 0 0 0
 `
 	if got := buf.String(); got != want {
 		t.Fatalf("got\n%s\nwant\n%s", got, want)
@@ -71,7 +79,7 @@ func TestRoundTrip(t *testing.T) {
 		}
 		long[i] = game.Input{
 			CursorX: s.IntN(600) - 60, CursorY: s.IntN(400) - 60,
-			Place: s.Bool(), Dig: s.IntN(4) == 0, Select: s.IntN(12),
+			Place: s.Bool(), Dig: s.IntN(4) == 0, Drop: s.IntN(8) == 0, Select: s.IntN(12),
 			CameraX: s.IntN(20000) - 100, CameraY: s.IntN(20000) - 100,
 		}
 	}
@@ -89,6 +97,9 @@ func TestRoundTrip(t *testing.T) {
 			r.Creative = i%2 == 1
 			r.Scene = []game.Scene{game.SceneTerrain, game.SceneSandbox, game.SceneCollapse}[i%3]
 			r.Budget = i * 100_000
+			if i%2 == 0 {
+				r.Body = game.BodyTool{Material: "wood", Width: 3 + i, Height: 7}
+			}
 			var buf bytes.Buffer
 			if err := Write(&buf, r); err != nil {
 				t.Fatal(err)
@@ -114,7 +125,7 @@ func checkHeader(t *testing.T, got, want *Replay) {
 	t.Helper()
 	if got.Seed != want.Seed || got.Width != want.Width || got.Height != want.Height ||
 		got.Scene != want.Scene || got.ViewWidth != want.ViewWidth || got.ViewHeight != want.ViewHeight ||
-		got.Stream != want.Stream || got.Budget != want.Budget || got.Tool != want.Tool || got.Creative != want.Creative ||
+		got.Stream != want.Stream || got.Budget != want.Budget || got.Tool != want.Tool || got.Body != want.Body || got.Creative != want.Creative ||
 		got.Materials != want.Materials || strings.Join(got.Slots, ",") != strings.Join(want.Slots, ",") {
 		t.Fatalf("header = %+v, want %+v", got, want)
 	}
@@ -123,7 +134,7 @@ func checkHeader(t *testing.T, got, want *Replay) {
 // Replays are text so they can be written by hand: blank lines, comments,
 // extra spaces and Windows line ends are all accepted.
 func TestReadHandWritten(t *testing.T) {
-	src := "matter-wake-replay 5\r\n" +
+	src := "matter-wake-replay 6\r\n" +
 		"# A hand-written replay.\r\n" +
 		"\r\n" +
 		"seed 18446744073709551615\r\n" +
@@ -133,6 +144,7 @@ func TestReadHandWritten(t *testing.T) {
 		"stream 0 0  0 1 1\r\n" +
 		"budget  70000\r\n" +
 		"tool  0 1  0\r\n" +
+		"body  wood 16  12\r\n" +
 		"mode creative \r\n" +
 		"slots stone\r\n" +
 		"materials unknown\r\n" +
@@ -147,7 +159,8 @@ func TestReadHandWritten(t *testing.T) {
 	}
 	checkHeader(t, r, &Replay{
 		Seed: 1<<64 - 1, Width: 64, Height: 32, Scene: game.SceneTerrain, ViewWidth: 64, ViewHeight: 32,
-		Stream: game.Stream{Target: 1, Check: 1}, Budget: 70000, Tool: game.Tool{Rate: 1}, Creative: true,
+		Stream: game.Stream{Target: 1, Check: 1}, Budget: 70000, Tool: game.Tool{Rate: 1},
+		Body: game.BodyTool{Material: "wood", Width: 16, Height: 12}, Creative: true,
 		Slots: []string{"stone"}, Materials: "unknown",
 	})
 	want := []game.Input{none, put, put, put, {Select: 1}, none}
@@ -163,18 +176,19 @@ func TestReadHandWritten(t *testing.T) {
 
 func TestReadErrors(t *testing.T) {
 	const (
-		v        = "matter-wake-replay 5\n"
+		v        = "matter-wake-replay 6\n"
 		sized    = v + "seed 1\nsize 64 32\n"
 		streamed = sized + "scene sandbox\nview 64 32\nstream 64 4 512 12 60\n"
 		viewed   = streamed + "budget 250000\n"
-		header   = viewed + "tool 10 2000 4\nmode play\nslots sand\nmaterials 00\n"
+		tooled   = viewed + "tool 10 2000 4\nbody none\n"
+		header   = tooled + "mode play\nslots sand\nmaterials 00\n"
 	)
 	tests := []struct {
 		name, src, wantErr string
 	}{
 		{"empty", "", "not a matter-wake replay"},
-		{"newer version", "matter-wake-replay 6\n", "version 6"},
-		{"older version", "matter-wake-replay 4\nseed 1\n", "version 4"},
+		{"newer version", "matter-wake-replay 7\n", "version 7"},
+		{"older version", "matter-wake-replay 5\nseed 1\n", "version 5"},
 		{"bad version", "matter-wake-replay one\n", "version"},
 		{"missing seed", v + "size 64 32\n", `"seed`},
 		{"negative seed", v + "seed -1\n", "seed"},
@@ -197,11 +211,15 @@ func TestReadErrors(t *testing.T) {
 		{"negative radius", viewed + "tool 10 2000 -1\n", "tool"},
 		{"power over 255", viewed + "tool 256 2000 4\n", "tool"},
 		{"zero rate", viewed + "tool 10 0 4\n", "tool"},
-		{"no mode", viewed + "tool 10 2000 4\nslots sand\n", `"mode`},
-		{"bad mode", viewed + "tool 10 2000 4\nmode fast\n", "mode"},
-		{"no slots", viewed + "tool 10 2000 4\nmode play\nslots\n", "slots"},
-		{"no materials", viewed + "tool 10 2000 4\nmode play\nslots sand\nmaterials\n", "materials"},
-		{"two fingerprints", viewed + "tool 10 2000 4\nmode play\nslots sand\nmaterials a b\n", "materials"},
+		{"no body", viewed + "tool 10 2000 4\nmode play\n", `"body`},
+		{"body without size", viewed + "tool 10 2000 4\nbody wood\n", "body"},
+		{"body of no width", viewed + "tool 10 2000 4\nbody wood 0 12\n", "body"},
+		{"body of bad height", viewed + "tool 10 2000 4\nbody wood 16 tall\n", "body"},
+		{"no mode", tooled + "slots sand\n", `"mode`},
+		{"bad mode", tooled + "mode fast\n", "mode"},
+		{"no slots", tooled + "mode play\nslots\n", "slots"},
+		{"no materials", tooled + "mode play\nslots sand\nmaterials\n", "materials"},
+		{"two fingerprints", tooled + "mode play\nslots sand\nmaterials a b\n", "materials"},
 		{"no ticks", header, `"ticks`},
 		{"negative ticks", header + "ticks -1\n", "ticks"},
 		{"too many ticks", header + fmt.Sprintf("ticks %d\n", MaxTicks+1), "at most"},
@@ -215,6 +233,8 @@ func TestReadErrors(t *testing.T) {
 		{"bad buttons", header + "ticks 5\n1 0 0 X 0 0 0\n", "buttons"},
 		{"buttons out of order", header + "ticks 5\n1 0 0 DP 0 0 0\n", "buttons"},
 		{"repeated button", header + "ticks 5\n1 0 0 PP 0 0 0\n", "buttons"},
+		{"drop before dig", header + "ticks 5\n1 0 0 BD 0 0 0\n", "buttons"},
+		{"repeated drop", header + "ticks 5\n1 0 0 PBB 0 0 0\n", "buttons"},
 		{"negative slot", header + "ticks 5\n1 0 0 - -1 0 0\n", "slot"},
 		{"bad camera", header + "ticks 5\n1 0 0 - 0 0 y\n", "camera"},
 	}
@@ -253,6 +273,9 @@ func TestWriteRejectsBadReplays(t *testing.T) {
 		{"no fingerprint", func(r *Replay) { r.Materials = "" }},
 		{"fingerprint with a space", func(r *Replay) { r.Materials = "a b" }},
 		{"negative slot", func(r *Replay) { r.Inputs = []game.Input{{Select: -1}} }},
+		{"body of no size", func(r *Replay) { r.Body = game.BodyTool{Material: "wood"} }},
+		{"body named none", func(r *Replay) { r.Body = game.BodyTool{Material: "none", Width: 1, Height: 1} }},
+		{"body with a space", func(r *Replay) { r.Body = game.BodyTool{Material: "dry wood", Width: 1, Height: 1} }},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -272,12 +295,13 @@ func TestNewAndConfig(t *testing.T) {
 		Width: 96, Height: 64, Seed: 42, Workers: 3, Materials: tab,
 		Scene: game.SceneTerrain, ViewWidth: 40, ViewHeight: 30, Stream: game.Stream{Grid: 9, Lead: 2, LeadMax: 100, Target: 3, Check: 5},
 		Budget: 12345, Slots: []string{"water", "stone"}, Tool: game.Tool{Power: 3, Rate: 77, Radius: 5}, Creative: true,
+		Body: game.BodyTool{Material: "wood", Width: 6, Height: 4},
 	}
 	r := New(cfg)
 	want := &Replay{
 		Seed: 42, Width: 96, Height: 64, Scene: game.SceneTerrain, ViewWidth: 40, ViewHeight: 30,
 		Stream: game.Stream{Grid: 9, Lead: 2, LeadMax: 100, Target: 3, Check: 5}, Budget: 12345,
-		Tool: game.Tool{Power: 3, Rate: 77, Radius: 5}, Creative: true, Slots: []string{"water", "stone"}, Materials: tab.Fingerprint(),
+		Tool: game.Tool{Power: 3, Rate: 77, Radius: 5}, Body: cfg.Body, Creative: true, Slots: []string{"water", "stone"}, Materials: tab.Fingerprint(),
 	}
 	checkHeader(t, r, want)
 	if len(r.Inputs) != 0 {
@@ -290,7 +314,8 @@ func TestNewAndConfig(t *testing.T) {
 	got := r.Config(tab, 2)
 	if got.Width != 96 || got.Height != 64 || got.Seed != 42 || got.Workers != 2 || got.Materials != tab ||
 		got.Scene != cfg.Scene || got.ViewWidth != 40 || got.ViewHeight != 30 || got.Stream != cfg.Stream ||
-		got.Budget != 12345 || got.Store != nil || strings.Join(got.Slots, ",") != "water,stone" || got.Tool != cfg.Tool || !got.Creative {
+		got.Budget != 12345 || got.Store != nil || strings.Join(got.Slots, ",") != "water,stone" || got.Tool != cfg.Tool ||
+		got.Body != cfg.Body || !got.Creative {
 		t.Fatalf("Config = %+v", got)
 	}
 }
