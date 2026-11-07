@@ -89,6 +89,8 @@ func TestParseRejectsBadTables(t *testing.T) {
 		{"solid without density", `{"materials":[{"name":"air","kind":"empty"},{"name":"wood","kind":"solid"}]}`, "density"},
 		{"negative friction", `{"materials":[{"name":"air","kind":"empty"},{"name":"wood","kind":"solid","density":6,"friction":-1}]}`, "friction"},
 		{"restitution over 1", `{"materials":[{"name":"air","kind":"empty"},{"name":"wood","kind":"solid","density":6,"restitution":1.5}]}`, "restitution"},
+		{"buoyancy on water", `{"materials":[{"name":"air","kind":"empty"},{"name":"water","kind":"liquid","buoyancy":1}]}`, "only solids"},
+		{"negative buoyancy", `{"materials":[{"name":"air","kind":"empty"},{"name":"wood","kind":"solid","density":6,"buoyancy":-0.5}]}`, "buoyancy"},
 		{"fall on wood", `{"materials":[{"name":"air","kind":"empty"},{"name":"wood","kind":"solid","density":6,"fallAccel":0.5}]}`, "only powders and liquids"},
 		{"hp on wood", `{"materials":[{"name":"air","kind":"empty"},{"name":"wood","kind":"solid","density":6,"hp":5}]}`, "only powders and statics"},
 	}

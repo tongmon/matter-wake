@@ -15,8 +15,8 @@ type ids struct {
 }
 
 // testTable returns air, stone, sand, water and wood with the values of
-// data/materials.json.
-func testTable(tb testing.TB) *material.Table {
+// data/materials.json, but wood of buoyancy b (0.7 there).
+func testTable(tb testing.TB, b float64) *material.Table {
 	tb.Helper()
 	q := func(f float64) fixed.Q8 {
 		v, err := fixed.FromFloat(f)
@@ -33,7 +33,7 @@ func testTable(tb testing.TB) *material.Table {
 			Name: "water", Kind: material.Liquid, Density: 20, FallAccel: q(0.375), SinkChance: 50,
 			FlowSpeed: q(0.9), FlowDamping: q(0.8), Dispersion: 4,
 		},
-		{Name: "wood", Kind: material.Solid, Density: 6, Friction: q(0.9), Restitution: q(0.2)},
+		{Name: "wood", Kind: material.Solid, Density: 6, Friction: q(0.9), Restitution: q(0.2), Buoyancy: q(b)},
 	})
 	if err != nil {
 		tb.Fatal(err)
@@ -45,7 +45,13 @@ func testTable(tb testing.TB) *material.Table {
 // System and the test materials.
 func newSystem(tb testing.TB, width, height, workers int) (*System, *world.World, ids) {
 	tb.Helper()
-	tab := testTable(tb)
+	return newSystemBuoyancy(tb, width, height, workers, 0.7)
+}
+
+// newSystemBuoyancy is newSystem with wood of buoyancy b.
+func newSystemBuoyancy(tb testing.TB, width, height, workers int, b float64) (*System, *world.World, ids) {
+	tb.Helper()
+	tab := testTable(tb, b)
 	w, err := world.New(world.Config{Width: width, Height: height, Seed: 1, Workers: workers, Materials: tab})
 	if err != nil {
 		tb.Fatal(err)
@@ -67,7 +73,9 @@ func tick(tb testing.TB, s *System, w *world.World) {
 		tb.Fatal(err)
 	}
 	w.Step()
-	s.Step()
+	if err := s.Step(); err != nil {
+		tb.Fatal(err)
+	}
 }
 
 // drop drops a w × h body of wood with its top-left pixel at (x, y), and

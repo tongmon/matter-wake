@@ -149,6 +149,10 @@ type Def struct {
 	// Restitution is how much of its speed a solid's body keeps when it
 	// bounces, 0..1. Solids only.
 	Restitution fixed.Q8 `json:"restitution"`
+	// Buoyancy is how strongly liquid under a solid's body holds it up:
+	// 1 cancels gravity and the body's speed, less lets it sink, more
+	// lifts it. 0 or more. Solids only.
+	Buoyancy fixed.Q8 `json:"buoyancy"`
 
 	// Color is the base color; each cell varies it by its tone.
 	Color Color `json:"color"`
@@ -237,12 +241,14 @@ func validate(d Def) error {
 // a solid needs a density.
 func validateSolid(d Def) error {
 	switch {
-	case d.Kind != Solid && (d.Friction != 0 || d.Restitution != 0):
-		return errors.New("only solids may have friction or restitution")
+	case d.Kind != Solid && (d.Friction != 0 || d.Restitution != 0 || d.Buoyancy != 0):
+		return errors.New("only solids may have friction, restitution or buoyancy")
 	case d.Kind == Solid && d.Density == 0:
 		return errors.New("a solid needs a density: it sets its bodies' mass")
 	case d.Friction < 0 || d.Restitution < 0 || d.Restitution > fixed.One:
 		return fmt.Errorf("friction %v must not be negative and restitution %v must be in [0, 1]", d.Friction, d.Restitution)
+	case d.Buoyancy < 0:
+		return fmt.Errorf("buoyancy %v must not be negative", d.Buoyancy)
 	}
 	return nil
 }

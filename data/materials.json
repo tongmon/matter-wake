@@ -20,7 +20,7 @@
     },
     {
       "name": "wood", "kind": "solid", "density": 6,
-      "friction": 0.9, "restitution": 0.2,
+      "friction": 0.9, "restitution": 0.2, "buoyancy": 0.7,
       "color": "#8a5a32", "toneSpread": 40
     }
   ]

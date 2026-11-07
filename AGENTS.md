@@ -92,8 +92,8 @@ Module path: `github.com/tongmon/matter-wake`.
 | `internal/save/` | Encodes a world for saving: each block of cells, field by field, and the world header. | **no** |
 | `internal/replay/` | Encodes and decodes replays: how a session started and its input for every tick. Holds the replay goldens. | **no** |
 | `internal/sched/` | The fixed goroutine pool. The only logic package with `sync`. | **no** |
-| `internal/physics/` | Rigid bodies: Box2D v3.2 compiled through cgo, the only cgo package. Worlds, boxes, terrain chains, Step, transforms, velocities. Holds the determinism golden. | **no** |
-| `internal/rigid/` | Rigid bodies in the grid: writes and erases their pixels as cells, pushes the cells in the way into the world's queue, and makes the terrain near them collision. Pure Go; calls `internal/physics`. | **no** |
+| `internal/physics/` | Rigid bodies: Box2D v3.2 compiled through cgo, the only cgo package. Worlds, boxes, terrain chains, Step, transforms, velocities, mass, forces. Holds the determinism golden. | **no** |
+| `internal/rigid/` | Rigid bodies in the grid: writes and erases their pixels as cells, pushes the cells in the way into the world's queue, makes the terrain near them collision, and pushes them with the buoyancy and drag of liquid. Pure Go; calls `internal/physics`. | **no** |
 | `internal/fixed/` | Fixed-point numbers (Q8) for simulation values with fractions. | **no** |
 | `internal/rng/` | Seeded random numbers (SplitMix64), stable across Go versions. | **no** |
 | `data/` | Materials and other tunables (JSON). | |

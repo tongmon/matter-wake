@@ -57,6 +57,13 @@ static b2ChainId physicsCreateChain( b2BodyId body, const b2Vec2* points, int co
 	def.materialCount = 1;
 	return b2CreateChain( body, &def );
 }
+
+// One call into C for a force at the center of mass and a torque.
+static void physicsPush( b2BodyId body, b2Vec2 force, float torque, bool wake )
+{
+	b2Body_ApplyForceToCenter( body, force, wake );
+	b2Body_ApplyTorque( body, torque, wake );
+}
 */
 import "C"
 
@@ -324,6 +331,24 @@ func (w *World) Velocity(b Body) (linear Vec2, angular float32) {
 	id := w.body(b)
 	v := C.b2Body_GetLinearVelocity(id)
 	return Vec2{float32(v.x), float32(v.y)}, float32(C.b2Body_GetAngularVelocity(id))
+}
+
+// Mass returns the body's mass in kilograms.
+func (w *World) Mass(b Body) float32 {
+	return float32(C.b2Body_GetMass(w.body(b)))
+}
+
+// Push adds a force at the body's center of mass, in newtons, and a torque,
+// in newton meters, to what the next Step applies to it; Step clears them
+// after. A sleeping body ignores them unless wake is set, which wakes it
+// first. A force or torque that is not finite is an error, and nothing is
+// pushed.
+func (w *World) Push(b Body, force Vec2, torque float32, wake bool) error {
+	if !finiteVec(force) || !finite(torque) {
+		return fmt.Errorf("physics: push of %v and torque %v", force, torque)
+	}
+	C.physicsPush(w.body(b), vec(force), C.float(torque), C.bool(wake))
+	return nil
 }
 
 // Angle returns the body's angle in radians, in [-pi, pi]. It is computed
