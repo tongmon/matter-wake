@@ -56,6 +56,11 @@ type body struct {
 	// splits the body and shapes it anew; redraw has the next Write write
 	// it again though it did not move. dead marks a body Break removes.
 	dirty, redraw, dead bool
+	// cover marks, once the body has lost pixels, the pixels its shapes
+	// cover: those it has and those a shape reaches into, where the
+	// outline was simplified. Nil while the body is whole: its shape is
+	// the rectangle of its image.
+	cover []bool
 	// cells lists the cells the body was last written to. A cell the body
 	// sampled but did not write, because it kept what was there, is not
 	// listed.
@@ -338,12 +343,12 @@ func (s *System) pixelSpeed2(b *body, rx, ry float32) float32 {
 	return float32(vx*vx) + float32(vy*vy)
 }
 
-// reaches reports whether cell (x, y) and the rectangle of b's image,
-// where b was last written, overlap by more than keepOutDepth cells: along
-// each of the cell's axes and the body's, their extents overlap by that
-// much. Pixels gone from the image still count: the rectangle holds the
-// body's shapes. The multiplications are converted one by one, as in
-// write.
+// reaches reports whether cell (x, y) and b's shapes, where b was last
+// written, overlap by more than keepOutDepth cells: along each of the
+// cell's axes and the body's, their extents overlap by that much with the
+// rectangle of b's image, and, once b has lost pixels, with one of the
+// pixels its shapes cover (cover). The multiplications are converted one
+// by one, as in write.
 func (b *body) reaches(x, y int) bool {
 	px, py := float32(b.wp.X*cellsPerMeter), float32(b.wp.Y*cellsPerMeter)
 	ox, oy := int(math.Floor(float64(px))), int(math.Floor(float64(py)))
@@ -355,10 +360,37 @@ func (b *body) reaches(x, y int) bool {
 	hw, hh := float32(b.w)/2, float32(b.h)/2
 	const d = keepOutDepth - 0.5 // the cell's half side counts once per axis
 	cell := (ac + as) / 2
-	return abs32(dx) < float32(ac*hw)+float32(as*hh)-d &&
-		abs32(dy) < float32(as*hw)+float32(ac*hh)-d &&
-		abs32(float32(co*dx)+float32(si*dy)) < hw+cell-keepOutDepth &&
-		abs32(float32(co*dy)-float32(si*dx)) < hh+cell-keepOutDepth
+	lu, lv := float32(co*dx)+float32(si*dy), float32(co*dy)-float32(si*dx)
+	if abs32(dx) >= float32(ac*hw)+float32(as*hh)-d ||
+		abs32(dy) >= float32(as*hw)+float32(ac*hh)-d ||
+		abs32(lu) >= hw+cell-keepOutDepth ||
+		abs32(lv) >= hh+cell-keepOutDepth {
+		return false
+	}
+	return b.cover == nil || b.reachesCover(lu+hw, lv+hh, co, si, cell)
+}
+
+// reachesCover reports whether a cell whose center lies at (fi, fj) in b's
+// image, in pixels, overlaps by more than keepOutDepth a pixel b's shapes
+// cover, with b turned by (co, si); cell is the cell's half extent along
+// b's axes. A cell overlaps only pixels whose centers lie within about a
+// pixel and a half of its own.
+func (b *body) reachesCover(fi, fj, co, si, cell float32) bool {
+	lim := cell + 0.5 - keepOutDepth
+	i0, j0 := int(math.Floor(float64(fi)))-2, int(math.Floor(float64(fj)))-2
+	for j := max(j0, 0); j <= min(j0+4, b.h-1); j++ {
+		for i := max(i0, 0); i <= min(i0+4, b.w-1); i++ {
+			if !b.cover[j*b.w+i] {
+				continue
+			}
+			au, av := fi-float32(i)-0.5, fj-float32(j)-0.5
+			if abs32(au) < lim && abs32(av) < lim &&
+				abs32(float32(co*au)-float32(si*av)) < lim && abs32(float32(si*au)+float32(co*av)) < lim {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // velocity reads b's velocity from Box2D into b.v and b.spin, once per

@@ -133,11 +133,11 @@ func BenchmarkBodies(b *testing.B) {
 // newStructure lays out the large break of Noita's C132, our way: one
 // wooden body of 320 × 192 pixels in a room, resting on a stone floor,
 // cut into 10 × 8 blocks of 24 × 16 pixels joined by necks 2 pixels wide
-// (32,992 pixels; Noita's had 33,280). It returns the System, the world
-// and the cells of the necks.
+// (32,992 pixels; Noita's had 33,280). It returns the System and the
+// world, which the caller closes, and the cells of the necks.
 func newStructure(tb testing.TB) (*System, *world.World, [][2]int) {
 	tb.Helper()
-	s, w, id := newSystem(tb, 512, 256, 2)
+	s, w, id := openSystem(tb, 512, 256, 2, 0.7)
 	w.Fill(0, 250, 512, 256, id.stone)
 	const x0, y0 = 96, 40
 	place(tb, s, id.wood, x0, y0, 320, 192, 0)
@@ -180,7 +180,7 @@ func BenchmarkBreak(b *testing.B) {
 	debris := make([]int, testMaterials)
 	for range b.N {
 		b.StopTimer()
-		s, _, necks := newStructure(b)
+		s, w, necks := newStructure(b)
 		s.Wear(96, 40, 1<<30)
 		b.StartTimer()
 		t0 := now()
@@ -205,6 +205,10 @@ func BenchmarkBreak(b *testing.B) {
 		if len(s.bodies) != 80 {
 			b.Fatalf("the structure broke into %d bodies, want 80", len(s.bodies))
 		}
+		b.StopTimer()
+		s.Close()
+		w.Close()
+		b.StartTimer()
 	}
 	for _, st := range []struct {
 		name string
@@ -225,7 +229,7 @@ func BenchmarkBreakMany(b *testing.B) {
 	debris := make([]int, testMaterials)
 	for range b.N {
 		b.StopTimer()
-		s, w, id := newSystem(b, 1280, 420, 2)
+		s, w, id := openSystem(b, 1280, 420, 2, 0.7)
 		w.Fill(0, 410, 1280, 420, id.stone)
 		var gaps, necks [][2]int
 		for k := range 512 {
@@ -255,6 +259,10 @@ func BenchmarkBreakMany(b *testing.B) {
 		if len(s.bodies) != 1024 {
 			b.Fatalf("512 bridges broke into %d bodies, want 1024", len(s.bodies))
 		}
+		b.StopTimer()
+		s.Close()
+		w.Close()
+		b.StartTimer()
 	}
 	slices.Sort(brk)
 	b.ReportMetric(float64(brk[len(brk)/2])/1e6, "break-ms")
