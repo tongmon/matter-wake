@@ -524,7 +524,9 @@ func (g *Game) Step(in Input) error {
 		return fmt.Errorf("game: %w", err)
 	}
 	g.world.Step()
-	g.bodies.Step()
+	if err := g.bodies.Step(); err != nil {
+		return fmt.Errorf("game: %w", err)
+	}
 	return nil
 }
 

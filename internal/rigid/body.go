@@ -1,6 +1,7 @@
 package rigid
 
 import (
+	"fmt"
 	"math"
 
 	"github.com/tongmon/matter-wake/internal/material"
@@ -67,11 +68,18 @@ type body struct {
 	box            rect
 	shiftX, shiftY float32
 	near           rect
-	// v and spin are the body's velocity, read once per write when a cell
-	// needs its speed (haveV).
+	// v and spin are the body's velocity, read once per tick when needed
+	// (haveV).
 	v     physics.Vec2
 	spin  float32
 	haveV bool
+	// mass is the body's mass in kilograms and buoyancy its material's.
+	mass, buoyancy float32
+	// The liquid cells this tick's write pushed away: how many (dragN),
+	// the sums of their offsets from the center of mass in cells (dragX,
+	// dragY) and of their squared distances from it (dragR2). The drag
+	// of each is linear in its offset, so the sums give the total (C42).
+	dragN, dragX, dragY, dragR2 float32
 }
 
 // cellAt is a cell's position in the world.
@@ -138,6 +146,7 @@ func (s *System) write(b *body, slot uint16) {
 		ox + int(math.Floor(float64(fx+ex))) + 1, oy + r1 + 1,
 	}
 	b.haveV, b.blocked = false, 0
+	b.dragN, b.dragX, b.dragY, b.dragR2 = 0, 0, 0, 0
 	b.cells = b.cells[:0]
 	for r := r0; r <= r1; r++ {
 		dy := float32(r) + 0.5 - fy
@@ -197,7 +206,8 @@ func abs32(f float32) float32 {
 // the body's own cells take the pixel. Static terrain keeps its cell, as
 // does a powder at rest unless it has settled and the body hits it hard
 // enough (givesWay). Liquids and other powders are pushed into the
-// world's queue of cells to put back. Another body's cell goes to the body
+// world's queue of cells to put back; a liquid drags on the body as it
+// goes (C42, push). Another body's cell goes to the body
 // with the higher key: the one written later, which takes it. Either way
 // the body that loses the cell counts it as blocked.
 func (s *System) claim(b *body, slot uint16, k, x, y int, rx, ry float32) bool {
@@ -225,6 +235,10 @@ func (s *System) claim(b *body, slot uint16, k, x, y int, rx, ry float32) bool {
 		}
 		s.w.Displace(x, y)
 	case material.Liquid:
+		b.dragN++
+		b.dragX += rx
+		b.dragY += ry
+		b.dragR2 += float32(rx*rx) + float32(ry*ry)
 		s.w.Displace(x, y)
 	}
 	s.w.Put(x, y, world.BodyCell(b.mat, b.tone[k], slot, uint16(k)))
@@ -254,10 +268,7 @@ func (s *System) givesWay(b *body, k int, c world.Cell, rx, ry float32) bool {
 // pixelSpeed2 returns the square of the speed, in (m/s)², of the point of
 // b at (rx, ry) cells from its center, which is its center of mass.
 func (s *System) pixelSpeed2(b *body, rx, ry float32) float32 {
-	if !b.haveV {
-		b.v, b.spin = s.phys.Velocity(b.id)
-		b.haveV = true
-	}
+	s.velocity(b)
 	mx, my := rx/cellsPerMeter, ry/cellsPerMeter
 	vx := b.v.X - float32(b.spin*my)
 	vy := b.v.Y + float32(b.spin*mx)
@@ -282,6 +293,82 @@ func (b *body) reaches(x, y int) bool {
 		abs32(dy) < float32(as*hw)+float32(ac*hh)-d &&
 		abs32(float32(co*dx)+float32(si*dy)) < hw+cell-keepOutDepth &&
 		abs32(float32(co*dy)-float32(si*dx)) < hh+cell-keepOutDepth
+}
+
+// velocity reads b's velocity from Box2D into b.v and b.spin, once per
+// tick.
+func (s *System) velocity(b *body) {
+	if !b.haveV {
+		b.v, b.spin = s.phys.Velocity(b.id)
+		b.haveV = true
+	}
+}
+
+// liquidK scales the drag of a liquid cell on a body (C42). Noita's.
+const liquidK = float32(-0.05)
+
+// push adds to b, for the coming Step, what liquid does to it as in Noita:
+// the drag of the liquid cells this tick's write pushed away (C42), which
+// wakes it, and the buoyancy of liquid under it (C41), which does not.
+func (s *System) push(b *body) error {
+	drag := b.dragN > 0
+	lift := b.buoyancy > 0 && s.overLiquid(b)
+	if !drag && !lift {
+		return nil
+	}
+	s.velocity(b)
+	var f physics.Vec2
+	var torque float32
+	if drag {
+		const m2 = cellsPerMeter * cellsPerMeter
+		f, torque = liquidDrag(b.v, b.spin, b.mass, b.dragN, b.dragX/cellsPerMeter, b.dragY/cellsPerMeter, b.dragR2/m2)
+		b.dragN, b.dragX, b.dragY, b.dragR2 = 0, 0, 0, 0
+	}
+	if lift {
+		up := buoyancy(b.buoyancy, b.mass, b.v)
+		f = physics.Vec2{X: f.X + up.X, Y: f.Y + up.Y}
+	}
+	if err := s.phys.Push(b.id, f, torque, drag); err != nil {
+		return fmt.Errorf("rigid: %w", err)
+	}
+	return nil
+}
+
+// overLiquid reports whether the cell just under b, in the column of its
+// center of mass, holds a liquid: the one point where b feels the liquid
+// that holds it up (🔶; Noita samples one point too, C41).
+func (s *System) overLiquid(b *body) bool {
+	if !b.written {
+		return false
+	}
+	x := int(math.Floor(float64(float32(b.p.X * cellsPerMeter))))
+	c, ok := s.w.At(x, b.box.y1)
+	return ok && s.kinds[c.Mat] == material.Liquid
+}
+
+// liquidDrag returns the force and torque that liquid cells put on a body
+// of mass m, moving at v and spinning at w, as it writes itself over them
+// (C42). Each cell at r from the center of mass, in meters, pushes against
+// the velocity of that point, v + w × r, scaled by the speed of the center
+// of mass: F = (v + w × r) |v| K m, with the torque r × F. That is linear
+// in r, so n cells whose offsets sum to (sx, sy) and whose squared lengths
+// sum to r2 give the total.
+func liquidDrag(v physics.Vec2, w, m, n, sx, sy, r2 float32) (physics.Vec2, float32) {
+	speed := float32(math.Sqrt(float64(float32(v.X*v.X) + float32(v.Y*v.Y))))
+	c := float32(speed*liquidK) * m
+	f := physics.Vec2{
+		X: c * (float32(n*v.X) - float32(w*sy)),
+		Y: c * (float32(n*v.Y) + float32(w*sx)),
+	}
+	return f, c * (float32(v.Y*sx) - float32(v.X*sy) + float32(w*r2))
+}
+
+// buoyancy returns the force liquid under a body of buoyancy b and mass m,
+// moving at v, holds it up with (C41): -b m (v + g). At b = 1 it cancels
+// gravity and brakes the body to a stop. It adds no torque.
+func buoyancy(b, m float32, v physics.Vec2) physics.Vec2 {
+	k := -b * m
+	return physics.Vec2{X: k * v.X, Y: k * (v.Y + gravity)}
 }
 
 // rect is a half-open rectangle of cells, [x0, x1) × [y0, y1).

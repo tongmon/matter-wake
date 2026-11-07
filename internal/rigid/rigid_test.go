@@ -295,9 +295,9 @@ func TestStaticKeepsItsCells(t *testing.T) {
 	}
 }
 
-// A body dropped into water sinks (there is no buoyancy yet), pushing the
-// water it meets into the queue, which puts it back behind the body. The
-// water in the grid plus in the queue never changes.
+// A wood body dropped into water sinks (its buoyancy, 0.7, is below 1),
+// pushing the water it meets into the queue, which puts it back behind
+// the body. The water in the grid plus in the queue never changes.
 func TestBodyKeepsTheWater(t *testing.T) {
 	s, w, id := newSystem(t, 128, 128, 1)
 	w.Fill(0, 120, 128, 128, id.stone)
@@ -457,7 +457,9 @@ func TestTickDoesNotAllocate(t *testing.T) {
 			t.Fatal(err)
 		}
 		w.Step()
-		s.Step()
+		if err := s.Step(); err != nil {
+			t.Fatal(err)
+		}
 	})
 	if allocs != 0 {
 		t.Fatalf("a tick allocates %v times", allocs)

@@ -161,3 +161,76 @@ func TestStaticChainsRefuseBadInput(t *testing.T) {
 		}
 	}
 }
+
+// Push accelerates a body by force over its mass and spins it by torque
+// over its inertia, for one Step: Box2D clears them after it. Mass is the
+// density times the area.
+func TestPushAndMass(t *testing.T) {
+	w, err := NewWorld(Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(w.Close)
+	b, err := w.AddDynamicBox(Box{HalfW: 1, HalfH: 0.5, Density: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := w.Mass(b)
+	if m != 4 {
+		t.Fatalf("a 2 m × 1 m box of density 2 weighs %v, want 4", m)
+	}
+	inertia := m * (2*2 + 1*1) / 12
+	if err := w.Push(b, Vec2{8, -4}, 3, false); err != nil {
+		t.Fatal(err)
+	}
+	w.Step(dt, subSteps)
+	v, spin := w.Velocity(b)
+	if math.Abs(float64(v.X-8/m*dt)) > 1e-5 || math.Abs(float64(v.Y+4/m*dt)) > 1e-5 || math.Abs(float64(spin-3/inertia*dt)) > 1e-5 {
+		t.Fatalf("after one push the velocity is %v spinning %v, want (%v, %v) and %v", v, spin, 8/m*dt, -4/m*dt, 3/inertia*dt)
+	}
+	w.Step(dt, subSteps)
+	if v2, spin2 := w.Velocity(b); v2 != v || spin2 != spin {
+		t.Fatalf("the push went on into the next Step: %v %v, then %v %v", v, spin, v2, spin2)
+	}
+	if err := w.Push(b, Vec2{float32(math.Inf(1)), 0}, 0, false); err == nil {
+		t.Error("an infinite force was pushed")
+	}
+	if err := w.Push(b, Vec2{}, float32(math.NaN()), false); err == nil {
+		t.Error("a NaN torque was pushed")
+	}
+	if n := testing.AllocsPerRun(100, func() { _ = w.Push(b, Vec2{1, 1}, 1, false) }); n != 0 {
+		t.Errorf("Push allocates %v times", n)
+	}
+}
+
+// A sleeping body ignores a push unless it is told to wake.
+func TestPushWakesOnlyWhenTold(t *testing.T) {
+	w := newDownWorld(t)
+	if _, err := w.AddStaticChains([]Chain{floor()}, 0.6); err != nil {
+		t.Fatal(err)
+	}
+	b, err := w.AddDynamicBox(Box{Center: Vec2{0, -0.5}, HalfW: 0.5, HalfH: 0.5, Density: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range 300 {
+		w.Step(dt, subSteps)
+	}
+	if w.Awake(b) {
+		t.Fatal("the box did not fall asleep on the floor")
+	}
+	if err := w.Push(b, Vec2{0, -100}, 0, false); err != nil {
+		t.Fatal(err)
+	}
+	w.Step(dt, subSteps)
+	if w.Awake(b) {
+		t.Fatal("a push without wake woke the box")
+	}
+	if err := w.Push(b, Vec2{0, -100}, 0, true); err != nil {
+		t.Fatal(err)
+	}
+	w.Step(dt, subSteps)
+	if v, _ := w.Velocity(b); !w.Awake(b) || v.Y >= 0 {
+		t.Fatalf("a push with wake left the box awake %v moving %v, want awake and rising", w.Awake(b), v)
+	}
+}

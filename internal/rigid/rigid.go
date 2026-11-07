@@ -20,7 +20,10 @@
 //     powder that newly reaches into a body's shape is left out while the
 //     body is there, so Box2D does not push the body out of it.
 //  3. The world's tick runs the cells, then puts back the queued ones.
-//  4. Step advances Box2D by one tick.
+//  4. Step pushes each body with what liquid does to it, as in Noita: the
+//     drag of the liquid cells its Write pushed away (C42) and the
+//     buoyancy of liquid under it (C41). Then it advances Box2D by one
+//     tick.
 //
 // Cells are 0.1 m on a side and the y axis points down, in the grid and in
 // Box2D alike. Everything here runs on the caller's goroutine, in an order
@@ -214,6 +217,8 @@ func (s *System) add(m material.ID, x, y, w, h int, angle float32) error {
 	}
 	slot := len(s.bodies)
 	s.bodies = append(s.bodies, newBody(id, uint32(slot), m, w, h, s.w.Seed()))
+	b := &s.bodies[slot]
+	b.mass, b.buoyancy = s.phys.Mass(id), q8(d.Buoyancy)
 	return nil
 }
 
@@ -273,7 +278,16 @@ func (s *System) sync() {
 	}
 }
 
-// Step advances Box2D by one tick.
-func (s *System) Step() {
+// Step pushes each body with what liquid does to it (push), then advances
+// Box2D by one tick.
+func (s *System) Step() error {
+	for i := range s.bodies {
+		b := &s.bodies[i]
+		if err := s.push(b); err != nil {
+			return err
+		}
+		b.haveV = false
+	}
 	s.phys.Step(tickSeconds, subSteps)
+	return nil
 }

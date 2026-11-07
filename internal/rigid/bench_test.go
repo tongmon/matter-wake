@@ -103,7 +103,9 @@ func BenchmarkBodies(b *testing.B) {
 			t2 := now()
 			w.Step()
 			t3 := now()
-			s.Step()
+			if err := s.Step(); err != nil {
+				b.Fatal(err)
+			}
 			t4 := now()
 			all.write = append(all.write, t1-t0)
 			all.collide = append(all.collide, t2-t1)
