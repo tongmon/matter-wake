@@ -89,7 +89,8 @@ type System struct {
 	rebuilt []int
 	// trace is the scratch space of contour tracing.
 	trace tracer
-	// freed lists, during a Write, the cells each erased body covered.
+	// freed lists the cells each body erased in the last Write covered,
+	// for that Write and the Collide after it.
 	freed []rect
 }
 
