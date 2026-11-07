@@ -218,7 +218,7 @@ func (s *System) add(m material.ID, x, y, w, h int, angle float32) error {
 	slot := len(s.bodies)
 	s.bodies = append(s.bodies, newBody(id, uint32(slot), m, w, h, s.w.Seed()))
 	b := &s.bodies[slot]
-	b.mass, b.buoyancy = s.phys.Mass(id), q8(d.Buoyancy)
+	b.mass, b.inertia, b.buoyancy = s.phys.Mass(id), s.phys.Inertia(id), q8(d.Buoyancy)
 	return nil
 }
 
