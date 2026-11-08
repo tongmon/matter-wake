@@ -15,7 +15,7 @@ type ids struct {
 }
 
 // testTable returns air, stone, sand, water and wood with the values of
-// data/materials.json, but wood of buoyancy b (0.7 there).
+// data/materials.json, but wood of buoyancy b (0 there).
 func testTable(tb testing.TB, b float64) *material.Table {
 	tb.Helper()
 	q := func(f float64) fixed.Q8 {
