@@ -11,41 +11,36 @@ import (
 	"github.com/tongmon/matter-wake/internal/world"
 )
 
-// The bodies of a big world live with its 512×512 blocks (design.md 8절):
-// a body belongs to the block that holds its center of mass (owner). When
-// a block leaves memory its bodies leave with it (Unload), recorded as
-// save.Body, and when it comes back they are made again (Load). A body
-// whose next Step may reach a block not in memory waits, frozen, until the
-// block is back (freeze).
+// The bodies of a big world live with its 512×512 blocks (design.md 8절).
+// A block has no bodies of its own: when it leaves memory, every body that
+// touches it leaves with it (leavesWith, Unload), recorded as save.Body,
+// and when it comes back they are made again (Load). A body whose next
+// Step may reach a block not in memory waits, frozen, until the block is
+// back (freeze).
 
-// owner returns the block that owns b: the one that holds its center of
-// mass where Box2D has it now, or, if that block is not in memory, the
-// nearest block that is, by whole blocks, the first in row order of
-// equally near ones. 🔶 Noita collects "the bodies in the block" when it
-// unloads one, and what decides that is not known (C137 may answer).
-func (s *System) owner(b *body) [2]int {
+// unloadMargin widens, in cells, the box around a body when a block
+// leaving memory looks for the bodies it takes: 🧪 one, as Box2D's AABB is
+// a little bigger than its body in Noita, which took a resting box one
+// pixel from the block and left one two pixels from it (C137,
+// BODY_BLOCK_RESIDENCY 3.2).
+const unloadMargin = 1
+
+// leavesWith reports whether b leaves memory with the block of cells area:
+// whether the box around its turned rectangle, where Box2D has it now,
+// widened by unloadMargin, touches the block. So a body across two blocks
+// leaves with the first of them to go, whole, wherever its center is, as
+// in Noita, and it is saved with that block alone (C137). The box is the
+// rectangle's own extent, not the cells it covers, which reach a cell
+// further when an edge lies on a cell's edge.
+func (s *System) leavesWith(b *body, area rect) bool {
 	p, q := s.phys.Transform(b.id)
-	lx, ly := b.lc.X*cellsPerMeter, b.lc.Y*cellsPerMeter
-	cx := float32(p.X*cellsPerMeter) + float32(q.C*lx) - float32(q.S*ly)
-	cy := float32(p.Y*cellsPerMeter) + float32(q.S*lx) + float32(q.C*ly)
-	cols, rows := s.w.Blocks()
-	bx := min(max(int(math.Floor(float64(cx)))>>9, 0), cols-1)
-	by := min(max(int(math.Floor(float64(cy)))>>9, 0), rows-1)
-	if s.w.Resident(bx, by) {
-		return [2]int{bx, by}
-	}
-	best, bestD := [2]int{bx, by}, -1
-	for y := range rows {
-		for x := range cols {
-			if !s.w.Resident(x, y) {
-				continue
-			}
-			if d := (x-bx)*(x-bx) + (y-by)*(y-by); bestD < 0 || d < bestD {
-				best, bestD = [2]int{x, y}, d
-			}
-		}
-	}
-	return best
+	wx, wy := b.middle(q.C, q.S)
+	hw, hh := float32(b.w)/2, float32(b.h)/2
+	ex := float32(abs32(q.C)*hw) + float32(abs32(q.S)*hh) + unloadMargin
+	ey := float32(abs32(q.S)*hw) + float32(abs32(q.C)*hh) + unloadMargin
+	cx, cy := float32(p.X*cellsPerMeter)+wx, float32(p.Y*cellsPerMeter)+wy
+	return cx-ex <= float32(area.x1) && float32(area.x0) <= cx+ex &&
+		cy-ey <= float32(area.y1) && float32(area.y0) <= cy+ey
 }
 
 // blockCells returns the cells of block (bx, by).
@@ -92,22 +87,22 @@ func (s *System) motion(b *body) (physics.Vec2, float32) {
 	return s.phys.Velocity(b.id)
 }
 
-// Unload takes out the bodies block (bx, by) owns, before its cells leave
-// memory: it erases their pixels, wherever they are, appends a record of
-// each to out, in key order, and removes them from Box2D. The bodies that
-// stay but have pixels in the block are erased too and written again by
-// the next Write, outside it, so no body's pixel leaves with the block as
-// a cell. 🔶 A body goes with its owner, though it reaches into a block
-// that stays; Box2D wakes the bodies that touched it. The block's terrain
+// Unload takes out the bodies that leave memory with block (bx, by)
+// (leavesWith), before its cells do: it erases their pixels, in the block
+// and in the blocks that stay alike, appends a record of each to out, in
+// key order, and removes them from Box2D, which wakes the bodies that
+// touched them. A body that does not leave but still has pixels in the
+// block, written before it moved away, is erased too and written again by
+// the next Write, outside the block. So no body's pixel leaves with the
+// block as a cell, and none is left behind (C137). The block's terrain
 // collision is dropped.
 func (s *System) Unload(bx, by int, out []save.Body) []save.Body {
 	area := blockCells(bx, by)
-	at := [2]int{bx, by}
 	dead := false
 	for i := range s.bodies {
 		b := &s.bodies[i]
 		switch {
-		case s.owner(b) == at:
+		case s.leavesWith(b, area):
 			out = append(out, s.record(b))
 			s.erase(b, uint16(i))
 			if b.written {
@@ -179,8 +174,8 @@ func (s *System) Load(bx, by int, recs []save.Body) error {
 		}
 		b, err := s.remake(r, home)
 		if err != nil {
-			for _, m := range made {
-				s.phys.DestroyBody(m.id)
+			for k := range made {
+				s.phys.DestroyBody(made[k].id)
 			}
 			return err
 		}
@@ -318,17 +313,29 @@ func (s *System) remake(r *save.Body, home rect) (body, error) {
 		s.phys.DestroyBody(id)
 		return body{}, err
 	}
-	s.phys.SetVelocity(id, physics.Vec2{X: r.VX, Y: r.VY}, r.Spin)
+	v, spin, asleep := restoreMotion(r)
+	s.phys.SetVelocity(id, v, spin)
 	box := boxAt(&b, at, rot)
 	// Past the world's edge there is nothing to change.
 	reach := rect{
 		max(box.x0-nearCells, 0), max(box.y0-nearCells, 0),
 		min(box.x1+nearCells, s.w.Width()), min(box.y1+nearCells, s.w.Height()),
 	}
-	if !r.Awake && reach.x0 >= home.x0 && reach.y0 >= home.y0 && reach.x1 <= home.x1 && reach.y1 <= home.y1 {
+	if asleep && reach.x0 >= home.x0 && reach.y0 >= home.y0 && reach.x1 <= home.x1 && reach.y1 <= home.y1 {
 		s.phys.Sleep(id)
 	}
 	return b, nil
+}
+
+// restoreMotion returns the velocity of its center of mass and the angular
+// velocity a body made again from r starts with, and whether it may start
+// asleep. 🔶 It keeps what r holds, so a body that left falling goes on
+// falling and a pile that slept does not all wake when its block comes
+// back. Noita keeps neither: its bodies come back at rest and awake (C137,
+// BODY_BLOCK_RESIDENCY 6.1-6.2). To do as Noita does, return zeros and
+// false.
+func restoreMotion(r *save.Body) (physics.Vec2, float32, bool) {
+	return physics.Vec2{X: r.VX, Y: r.VY}, r.Spin, !r.Awake
 }
 
 // Reset starts Box2D anew, as New does: a world with only the walls, and
@@ -398,25 +405,7 @@ func (s *System) freeze() {
 		}
 	}
 	for k := 0; k < len(s.cold); k++ {
-		f := s.bodies[s.cold[k]].near
-		x0, y0 := max(f.x0, 0)/world.ChunkSize, max(f.y0, 0)/world.ChunkSize
-		x1 := (min(f.x1, s.w.Width()) - 1) / world.ChunkSize
-		y1 := (min(f.y1, s.w.Height()) - 1) / world.ChunkSize
-		for cy := y0; cy <= y1; cy++ {
-			for cx := x0; cx <= x1; cx++ {
-				c := cy*s.cols + cx
-				if s.stamp[c] != s.ticks {
-					continue
-				}
-				for j := s.nearHead[c]; j >= 0; j = s.nearNext[j] {
-					o := &s.bodies[s.nearBody[j]]
-					if !o.cold && o.near.overlaps(f) {
-						o.cold = true
-						s.cold = append(s.cold, s.nearBody[j])
-					}
-				}
-			}
-		}
+		s.chill(s.bodies[s.cold[k]].near)
 	}
 	for i := range s.bodies {
 		b := &s.bodies[i]
@@ -432,6 +421,31 @@ func (s *System) freeze() {
 				s.phys.SetVelocity(b.id, b.fv, b.fspin)
 			}
 			b.frozen = false
+		}
+	}
+}
+
+// chill marks cold, for freeze, the bodies whose reach overlaps f, the
+// reach of a body freeze stops, and lists them to look at next. It finds
+// them among the bodies Collide listed near the chunks f covers.
+func (s *System) chill(f rect) {
+	x0, y0 := max(f.x0, 0), max(f.y0, 0)
+	x1, y1 := min(f.x1, s.w.Width()), min(f.y1, s.w.Height())
+	if x0 >= x1 || y0 >= y1 {
+		return
+	}
+	for cy := y0 / world.ChunkSize; cy <= (y1-1)/world.ChunkSize; cy++ {
+		for cx := x0 / world.ChunkSize; cx <= (x1-1)/world.ChunkSize; cx++ {
+			c := cy*s.cols + cx
+			if s.stamp[c] != s.ticks {
+				continue
+			}
+			for j := s.nearHead[c]; j >= 0; j = s.nearNext[j] {
+				if o := &s.bodies[s.nearBody[j]]; !o.cold && o.near.overlaps(f) {
+					o.cold = true
+					s.cold = append(s.cold, s.nearBody[j])
+				}
+			}
 		}
 	}
 }

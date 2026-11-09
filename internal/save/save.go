@@ -1,6 +1,6 @@
 // Package save encodes a world for saving: one stream per block, of its
 // cells, the cells taken from it that wait to go back and the rigid bodies
-// it owns (EncodeBlock), a short header for the whole world (WriteMeta)
+// that left with it (EncodeBlock), a short header for the whole world (WriteMeta)
 // and the session (WriteSession).
 //
 // A block is written field by field, never as the bytes of the cells in
@@ -853,6 +853,22 @@ func (l *lines) stream(s *Session, f []string) {
 	s.Stream = st
 }
 
+// bodies reads the fields of a bodies line of a session of version v
+// into s; seen is set once one was read.
+func (l *lines) bodies(s *Session, f []string, v uint64, seen *bool) {
+	switch {
+	case v < 4:
+		l.err = fmt.Errorf("line %q: a version %d session has no bodies line", l.line, v)
+	case len(f) != 1:
+		l.err = fmt.Errorf("line %q, want %q", l.line, "bodies <next key>")
+	case *seen:
+		l.err = errors.New("the bodies line is there twice")
+	default:
+		s.NextKey = uint32(l.uint("next key", f[0], 32))
+		*seen = true
+	}
+}
+
 // chunk reads the fields of a chunk line into s; seen holds the chunks
 // read so far.
 func (l *lines) chunk(s *Session, f []string, seen map[[2]int]bool) {
@@ -901,17 +917,7 @@ func ReadSession(r io.Reader) (*Session, error) {
 		f := strings.Fields(l.line)
 		switch {
 		case len(f) > 0 && f[0] == "bodies":
-			switch {
-			case v < 4:
-				l.err = fmt.Errorf("line %q: a version %d session has no bodies line", l.line, v)
-			case len(f) != 2:
-				l.err = fmt.Errorf("line %q, want %q", l.line, "bodies <next key>")
-			case bodies:
-				l.err = errors.New("the bodies line is there twice")
-			default:
-				s.NextKey = uint32(l.uint("next key", f[1], 32))
-				bodies = true
-			}
+			l.bodies(s, f[1:], v, &bodies)
 		case strings.HasPrefix(l.line, "held "):
 			l.held(s.Held, strings.TrimPrefix(l.line, "held "))
 		case len(f) > 0 && f[0] == "stream":

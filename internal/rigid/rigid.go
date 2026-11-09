@@ -25,9 +25,9 @@
 //     buoyancy of liquid under it (C41). Then it advances Box2D by one
 //     tick.
 //
-// In a big world kept in memory by blocks, a body belongs to the block that
-// holds its center of mass and leaves memory with it (Unload, Load), and a
-// body that may reach a block not in memory waits, frozen, until it is
+// In a big world kept in memory by blocks, a body leaves memory with the
+// first block it touches to go and comes back with it (Unload, Load), and
+// a body that may reach a block not in memory waits, frozen, until it is
 // back (save.go).
 //
 // Cells are 0.1 m on a side and the y axis points down, in the grid and in

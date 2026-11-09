@@ -239,9 +239,10 @@ func (g *Game) restore(bx, by int, b *save.Block) error {
 	return nil
 }
 
-// unload takes block (bx, by) out of memory into the store. Its bodies go
-// first, so none of their pixels is saved as a cell; then the cells taken
-// from it that wait to go back; then its cells.
+// unload takes block (bx, by) out of memory into the store. The bodies that
+// touch it go first, whole, so none of their pixels is saved as a cell or
+// left behind; then the cells taken from it that wait to go back; then its
+// cells.
 func (g *Game) unload(bx, by int) error {
 	out := save.Block{Bodies: g.bodies.Unload(bx, by, nil)}
 	out.Queued = g.world.TakeQueued(bx, by, nil)

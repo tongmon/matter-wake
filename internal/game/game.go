@@ -27,7 +27,7 @@
 // which only the blocks around the camera stay in memory (stream.go). The
 // terrain makes a block the first time the camera comes near it; after
 // that the block lives in the store, with the cells taken from it that
-// wait to go back and the bodies it owns.
+// wait to go back and the bodies that left memory with it.
 package game
 
 import (
@@ -576,10 +576,6 @@ func (g *Game) Step(in Input) error {
 		g.dig(in.CursorX, in.CursorY)
 	case in.Place:
 		g.place(in.CursorX, in.CursorY)
-	}
-	if g.bodies == nil {
-		g.world.Step()
-		return nil
 	}
 	// The bodies the tool dug pixels out of split; the pieces too small to
 	// be bodies go to the inventory with what was dug.

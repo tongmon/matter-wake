@@ -54,17 +54,6 @@ func grid(w *world.World) []world.Cell {
 	return all
 }
 
-// solids returns how many cells of block (bx, by) hold a solid.
-func solids(s *System, b *world.Block) int {
-	n := 0
-	for _, c := range b {
-		if s.kinds[c.Mat] == material.Solid {
-			n++
-		}
-	}
-	return n
-}
-
 // A body taken out with its block and loaded again is the body it was:
 // the same record, mass, inertia and center of mass to the bit, the same
 // shapes, and written back it covers the same cells. That holds for a box
@@ -122,57 +111,65 @@ func TestLoadedBodyIsTheSame(t *testing.T) {
 	}
 }
 
-// A body belongs to the block that holds its center of mass, and leaves
-// with it, though its pixels reach into the next block. Its pixels there
-// go too: the block that stays holds no pixel of a body that is not in
-// memory, and the block that leaves holds no body's pixel as a cell, the
-// pixels of a body that stays included.
-func TestBodyLeavesWithTheBlockOfItsCenter(t *testing.T) {
+// A block leaving memory takes every body that touches it, whole, wherever
+// its center is: one whose cells are one cell away from the block too, but
+// not one two cells away, as Noita took a box one pixel from the block and
+// left one two pixels away (C137, BODY_BLOCK_RESIDENCY 3.2). The same holds
+// from either side. The block that leaves holds no body's pixel as a cell,
+// and the block that stays no pixel of a body that left.
+func TestBodiesLeaveWithEveryBlockTheyTouch(t *testing.T) {
 	s, w, id := newStreamedSystem(t, 2, 1)
-	floor := w.Height() - 4
-	// Centered at x = 516, in block 1, with 8 columns in block 0; and one
-	// centered at x = 504, in block 0, with 4 columns in block 1.
-	drop(t, s, id.wood, 508, floor-12, 16, 12)
-	drop(t, s, id.wood, 492, floor-30, 24, 6)
-	for range 90 {
-		tick(t, s, w)
+	// Keys 0 to 5: centered in block 1 with 4 columns in block 0; centered
+	// in block 0 with 4 columns in block 1; in block 0 one cell from block
+	// 1; in block 0 two cells from it; in block 1 one cell from block 0;
+	// in block 1 two cells from it.
+	for k, x := range []int{508, 492, 495, 494, 513, 514} {
+		width := 16
+		if k == 1 {
+			width = 24
+		}
+		drop(t, s, id.wood, x, 60+50*k, width, 12)
 	}
-	keyOf := map[uint32]bool{}
-	for _, r := range s.Records(nil) {
-		keyOf[r.Key] = true
+	s.Write()
+	keys := func(recs []save.Body) []uint32 {
+		var k []uint32
+		for _, r := range recs {
+			k = append(k, r.Key)
+		}
+		return k
 	}
-	if len(keyOf) != 2 {
-		t.Fatalf("%d bodies; the test needs 2", len(keyOf))
-	}
-	recs := s.Unload(1, 0, nil)
-	if len(recs) != 1 || recs[0].Key != 0 {
-		t.Fatalf("block (1, 0) took %d bodies, want the one of key 0", len(recs))
-	}
-	left := s.Records(nil)
-	if len(left) != 1 || left[0].Key != 1 {
-		t.Fatalf("%d bodies stayed, want the one of key 1", len(left))
-	}
-	cells, err := w.UnloadBlock(1, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if n := solids(s, cells); n != 0 {
-		t.Fatalf("the block that left holds %d cells of bodies' pixels", n)
-	}
-	for y := range w.Height() {
-		for x := range world.BlockSize {
-			c, _ := w.At(x, y)
-			if b, _ := c.Body(); s.kinds[c.Mat] == material.Solid && (int(b) >= len(s.bodies) || s.bodies[b].key != 1) {
-				t.Fatalf("cell (%d, %d) still shows a pixel of a body that left", x, y)
+	check := func(bx int, leaving, staying []uint32) []save.Body {
+		t.Helper()
+		recs := s.Unload(bx, 0, nil)
+		if got := keys(recs); !slices.Equal(got, leaving) {
+			t.Fatalf("block (%d, 0) took bodies %v, want %v", bx, got, leaving)
+		}
+		if got := keys(s.Records(nil)); !slices.Equal(got, staying) {
+			t.Fatalf("bodies %v stayed, want %v", got, staying)
+		}
+		left := blockCells(bx, 0)
+		for y := range w.Height() {
+			for x := range w.Width() {
+				c, _ := w.At(x, y)
+				if s.kinds[c.Mat] != material.Solid {
+					continue
+				}
+				if x >= left.x0 && x < left.x1 {
+					t.Fatalf("cell (%d, %d) of the block that leaves shows a body's pixel", x, y)
+				}
+				if b, _ := c.Body(); int(b) >= len(s.bodies) || !slices.Contains(staying, s.bodies[b].key) {
+					t.Fatalf("cell (%d, %d) shows a pixel of a body that left", x, y)
+				}
 			}
 		}
+		return recs
 	}
-	// The body that stayed comes back where it is: what lies in the block
-	// that left is not written.
-	tick(t, s, w)
-	if n, r := owned(w, id.wood, 0); n == 0 || r.x1 > world.BlockSize {
-		t.Fatalf("the body that stayed shows %d pixels in %+v", n, r)
+	recs := check(1, []uint32{0, 1, 2, 4, 5}, []uint32{3})
+	if err := s.Load(1, 0, recs); err != nil {
+		t.Fatal(err)
 	}
+	s.Write()
+	check(0, []uint32{0, 1, 2, 3, 4}, []uint32{5})
 }
 
 // A body that sat on a body that left is woken, as Box2D wakes the bodies

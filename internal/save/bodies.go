@@ -17,7 +17,8 @@ import (
 
 // Block is what a block of a big world holds while it is out of memory:
 // its cells, the cells taken from them that wait in the world's queue to
-// go back (world.TakeQueued), and the rigid bodies it owns (Body). A block
+// go back (world.TakeQueued), and the rigid bodies that left with it
+// (Body). A block
 // saved before version 3 holds cells alone.
 type Block struct {
 	Cells  *world.Block
@@ -26,7 +27,7 @@ type Block struct {
 }
 
 // Body is a rigid body out of memory (internal/rigid): what a block keeps
-// of each body it owns, enough to make the same body again. Lengths are
+// of each body that left with it, enough to make the same body again. Lengths are
 // in cells and pixels, positions and speeds in Box2D's meters, seconds and
 // radians.
 type Body struct {
