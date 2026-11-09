@@ -154,9 +154,9 @@ func TestReinsertSearchesUp(t *testing.T) {
 					w.Put(x, y-k, Cell{Mat: id})
 				}
 			}
-			w.fresh = append(w.fresh, queued{c: Cell{Mat: tab.MustLookup(tt.mover)}, x: x, y: y})
+			w.fresh = append(w.fresh, Queued{Cell: Cell{Mat: tab.MustLookup(tt.mover)}, X: x, Y: y})
 			s := rng.New(1)
-			var pushed []queued
+			var pushed []Queued
 			got := w.reinsert(w.fresh[0], &s, &pushed)
 			if got != (tt.want >= 0) {
 				t.Fatalf("reinsert reported %v", got)
@@ -169,7 +169,7 @@ func TestReinsertSearchesUp(t *testing.T) {
 			switch {
 			case tt.pushed == "" && len(pushed) != 0:
 				t.Fatalf("pushed %v", pushed)
-			case tt.pushed != "" && (len(pushed) != 1 || pushed[0].c.Mat != tab.MustLookup(tt.pushed) || pushed[0].x != x || pushed[0].y != y-int32(tt.want)):
+			case tt.pushed != "" && (len(pushed) != 1 || pushed[0].Cell.Mat != tab.MustLookup(tt.pushed) || pushed[0].X != x || pushed[0].Y != y-int32(tt.want)):
 				t.Fatalf("pushed %v, want the %s from where the mover landed", pushed, tt.pushed)
 			}
 		})
@@ -185,8 +185,8 @@ func TestReinsertLooks129Rows(t *testing.T) {
 		// stays on stone, with air just above them.
 		w.Fill(0, y-rows+1, 400, y+1, ids.stone)
 		s := rng.New(1)
-		var pushed []queued
-		got := w.reinsert(queued{c: Cell{Mat: ids.water}, x: x, y: y}, &s, &pushed)
+		var pushed []Queued
+		got := w.reinsert(Queued{Cell: Cell{Mat: ids.water}, X: x, Y: y}, &s, &pushed)
 		if want := rows < reinsertRows; got != want {
 			t.Fatalf("above %d rows of stone the search found a place: %v, want %v", rows, got, want)
 		}
@@ -200,7 +200,7 @@ func TestRetryBudget(t *testing.T) {
 	w, ids := newTestWorld(t, 600, 4, 1)
 	for x := range 501 {
 		w.Put(x, 2, BodyCell(ids.wood, 0, 0, 0, uint16(x)))
-		w.fresh = append(w.fresh, queued{c: Cell{Mat: ids.water}, x: int32(x), y: 2})
+		w.fresh = append(w.fresh, Queued{Cell: Cell{Mat: ids.water}, X: int32(x), Y: 2})
 	}
 	w.Step()
 	if len(w.retry) != 501 || len(w.fresh) != 0 || w.retryBudget != retryFull {

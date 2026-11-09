@@ -2,6 +2,7 @@ package game
 
 import (
 	"hash/fnv"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -86,14 +87,26 @@ func TestStreamFollowsTheCamera(t *testing.T) {
 	}
 }
 
-// A block that leaves memory comes back exactly as it left: the camera goes
-// far away and returns.
+// A block that leaves memory comes back exactly as it left, with its
+// bodies: the camera goes far away and returns. The bodies leave with the
+// blocks, and come back with the same keys, images, transforms, velocities
+// and sleep, to cover the same cells.
 func TestLeavingAndComingBackKeepsTheBlocks(t *testing.T) {
-	g := newTerrainGame(t, 2)
+	g := newTerrainBodyGame(t, 2)
 	x, y := g.Spawn()
-	for range 60 {
-		step(t, g, Input{CameraX: x, CameraY: y})
+	for i := range 240 {
+		in := Input{CameraX: x, CameraY: y}
+		if i < 40 && i%8 == 0 {
+			in.CursorX, in.CursorY, in.Drop = x+120+10*i, y+60, true
+		}
+		step(t, g, in)
 	}
+	if g.Bodies() != 5 {
+		t.Fatalf("%d bodies; the test needs the 5 dropped", g.Bodies())
+	}
+	// Written where Box2D's last Step left them, as the next tick would.
+	g.bodies.Write()
+	bodies := g.BodyRecords(nil)
 	before := map[[2]int]uint64{}
 	for _, b := range g.resident {
 		before[b] = blockSum(g, b)
@@ -101,9 +114,10 @@ func TestLeavingAndComingBackKeepsTheBlocks(t *testing.T) {
 	// Room for no more than the camera's area, and a check every tick, so
 	// the blocks left behind go.
 	g.limits.Target = 1
+	base := g.world.Tick()
 	for now := range uint32(30) {
 		g.streaming.Interval = 1
-		if err := g.streamAt(now+1, 0, 4096-270); err != nil {
+		if err := g.streamAt(base+now+1, 0, 4096-270); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -116,14 +130,36 @@ func TestLeavingAndComingBackKeepsTheBlocks(t *testing.T) {
 	if gone != len(before) {
 		t.Fatalf("%d of %d blocks left memory when the camera went to the far corner", gone, len(before))
 	}
-	if err := g.streamAt(31, x, y); err != nil {
+	if g.Bodies() != 0 {
+		t.Fatalf("%d bodies stayed in memory without their blocks", g.Bodies())
+	}
+	if err := g.streamAt(base+31, x, y); err != nil {
 		t.Fatal(err)
 	}
+	if got := g.BodyRecords(nil); !reflect.DeepEqual(got, bodies) {
+		t.Fatalf("the bodies came back as\n%+v\nwant\n%+v", got, bodies)
+	}
+	g.bodies.Write()
 	for b, sum := range before {
 		if got := blockSum(g, b); got != sum {
 			t.Fatalf("block %v came back different", b)
 		}
 	}
+}
+
+// newTerrainBodyGame is newTerrainGame with the body tool.
+func newTerrainBodyGame(t *testing.T, workers int) *Game {
+	t.Helper()
+	g, err := New(&Config{
+		Width: 4096, Height: 4096, Seed: 3, Workers: workers, Materials: testTable(t),
+		Slots: []string{"sand", "water", "stone"}, Tool: testTool, Body: BodyTool{Material: "wood", Width: 16, Height: 12},
+		Scene: SceneTerrain, ViewWidth: 480, ViewHeight: 270, Stream: testStream,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(g.Close)
+	return g
 }
 
 // blockSum hashes the cells of block b, which must be in memory.

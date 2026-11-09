@@ -25,6 +25,11 @@
 //     buoyancy of liquid under it (C41). Then it advances Box2D by one
 //     tick.
 //
+// In a big world kept in memory by blocks, a body belongs to the block that
+// holds its center of mass and leaves memory with it (Unload, Load), and a
+// body that may reach a block not in memory waits, frozen, until it is
+// back (save.go).
+//
 // Cells are 0.1 m on a side and the y axis points down, in the grid and in
 // Box2D alike. Everything here runs on the caller's goroutine, in an order
 // fixed by the bodies' keys and the chunks' indexes, so the result does
@@ -114,6 +119,8 @@ type System struct {
 	// freed lists the cells each body erased in the last Write covered,
 	// for that Write and the Collide after it.
 	freed []rect
+	// cold is freeze's scratch list of the bodies it stops, by slot.
+	cold []int32
 }
 
 // New returns a System for the bodies of w, whose cells are of mats. It
@@ -286,7 +293,9 @@ func (s *System) sync() {
 			if b.written {
 				s.freed = append(s.freed, b.box)
 			}
-		} else {
+		} else if !b.frozen {
+			// A frozen body keeps the shift it froze with: where it would
+			// go is what it waits to reach (freeze).
 			b.shiftX, b.shiftY = 0, 0
 		}
 	}
@@ -310,12 +319,16 @@ func (s *System) sync() {
 	}
 }
 
-// Step pushes each body with what liquid does to it (push), then advances
-// Box2D by one tick.
+// Step stops the bodies that may reach a block not in memory and lets go
+// of those that no longer may (freeze), pushes each other body with what
+// liquid does to it (push), then advances Box2D by one tick.
 func (s *System) Step() error {
+	s.freeze()
 	for i := range s.bodies {
 		b := &s.bodies[i]
-		if err := s.push(b); err != nil {
+		if b.frozen {
+			b.dragN, b.dragX, b.dragY, b.dragR2 = 0, 0, 0, 0
+		} else if err := s.push(b); err != nil {
 			return err
 		}
 		b.haveV = false

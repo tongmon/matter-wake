@@ -8,6 +8,7 @@ import (
 
 	"github.com/tongmon/matter-wake/internal/game"
 	"github.com/tongmon/matter-wake/internal/material"
+	"github.com/tongmon/matter-wake/internal/save"
 	"github.com/tongmon/matter-wake/internal/scene"
 	"github.com/tongmon/matter-wake/internal/world"
 )
@@ -48,21 +49,30 @@ func TestPrefetchStoreKeepsWhatWasSaved(t *testing.T) {
 	mats := testMaterials(t)
 	dir := t.TempDir()
 	s, _ := newTestPrefetch(t, dir, mats)
-	b := new(world.Block)
-	b[7] = world.Cell{Mat: mats.MustLookup("sand"), Tone: 3, Last: 9}
+	b := &save.Block{
+		Cells:  new(world.Block),
+		Queued: []world.Queued{{Cell: world.Cell{Mat: mats.MustLookup("water")}, X: 1030, Y: 1540}},
+		Bodies: []save.Body{{Key: 4, Mat: mats.MustLookup("wood"), W: 1, H: 1, Pixels: []save.Pixel{{Tone: 3, OK: true}}, C: 1}},
+	}
+	b.Cells[7] = world.Cell{Mat: mats.MustLookup("sand"), Tone: 3, Last: 9}
 	if err := s.Save(2, 3, b); err != nil {
 		t.Fatal(err)
 	}
-	b[7].Tone = 100 // the store keeps its own copy
+	// The store keeps its own copy.
+	b.Cells[7].Tone, b.Queued[0].X, b.Bodies[0].Pixels[0].Tone = 100, 0, 100
+	same := func(got *save.Block) bool {
+		return got != nil && got.Cells[7].Tone == 3 && len(got.Queued) == 1 && got.Queued[0].X == 1030 &&
+			len(got.Bodies) == 1 && got.Bodies[0].Pixels[0].Tone == 3
+	}
 	got, err := s.Load(2, 3)
-	if err != nil || got == nil || got[7].Tone != 3 {
+	if err != nil || !same(got) {
 		t.Fatalf("Load right after Save = %v, %v; want the saved copy", got, err)
 	}
 	if err := s.Flush(); err != nil {
 		t.Fatal(err)
 	}
 	onDisk, err := (&diskStore{dir: dir, mats: mats}).Load(2, 3)
-	if err != nil || onDisk == nil || onDisk[7].Tone != 3 {
+	if err != nil || !same(onDisk) {
 		t.Fatalf("the file holds %v, %v; want the saved copy", onDisk, err)
 	}
 }
@@ -79,14 +89,14 @@ func TestPrefetchStoreGetsBlocksReady(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got == nil || *got != *tr.Block(made[0], made[1]) {
+	if got == nil || *got.Cells != *tr.Block(made[0], made[1]) || got.Queued != nil || got.Bodies != nil {
 		t.Fatal("the block got ready differs from the terrain's")
 	}
 
 	saved := [2]int{5, 2}
 	old := new(world.Block)
 	old[0].Tone = 1
-	if err := s.Save(saved[0], saved[1], old); err != nil {
+	if err := s.Save(saved[0], saved[1], &save.Block{Cells: old}); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.Flush(); err != nil {
@@ -96,10 +106,10 @@ func TestPrefetchStoreGetsBlocksReady(t *testing.T) {
 	waitReady(t, s, saved)
 	newer := new(world.Block)
 	newer[0].Tone = 2
-	if err := s.Save(saved[0], saved[1], newer); err != nil {
+	if err := s.Save(saved[0], saved[1], &save.Block{Cells: newer}); err != nil {
 		t.Fatal(err)
 	}
-	if got, err := s.Load(saved[0], saved[1]); err != nil || got == nil || got[0].Tone != 2 {
+	if got, err := s.Load(saved[0], saved[1]); err != nil || got == nil || got.Cells[0].Tone != 2 {
 		t.Fatalf("Load after a newer save = %v, %v; want the newer save", got, err)
 	}
 }
@@ -113,7 +123,7 @@ func TestPrefetchStoreReportsWriteErrors(t *testing.T) {
 	if err := os.RemoveAll(filepath.Join(dir, blocksDir)); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.Save(0, 0, new(world.Block)); err != nil {
+	if err := s.Save(0, 0, &save.Block{Cells: new(world.Block)}); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.Flush(); err == nil {
@@ -122,7 +132,7 @@ func TestPrefetchStoreReportsWriteErrors(t *testing.T) {
 	if _, err := s.Load(1, 1); err == nil {
 		t.Fatal("Load after a failed write gave no error")
 	}
-	if err := s.Save(1, 1, new(world.Block)); err == nil {
+	if err := s.Save(1, 1, &save.Block{Cells: new(world.Block)}); err == nil {
 		t.Fatal("Save after a failed write gave no error")
 	}
 }
@@ -186,7 +196,7 @@ func TestPrefetchStoreWritesAfterReads(t *testing.T) {
 	key := [2]int{3, 1}
 	v1 := new(world.Block)
 	v1[0].Tone = 1
-	if err := s.Save(key[0], key[1], v1); err != nil {
+	if err := s.Save(key[0], key[1], &save.Block{Cells: v1}); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.Flush(); err != nil {
@@ -202,7 +212,7 @@ func TestPrefetchStoreWritesAfterReads(t *testing.T) {
 	s.mu.Unlock()
 	v2 := new(world.Block)
 	v2[0].Tone = 2
-	if err := s.Save(key[0], key[1], v2); err != nil {
+	if err := s.Save(key[0], key[1], &save.Block{Cells: v2}); err != nil {
 		t.Fatal(err)
 	}
 	time.Sleep(50 * time.Millisecond)
@@ -214,7 +224,7 @@ func TestPrefetchStoreWritesAfterReads(t *testing.T) {
 		t.Fatalf("saving a block a worker was reading: %v", err)
 	}
 	got, err := s.disk.Load(key[0], key[1])
-	if err != nil || got == nil || got[0].Tone != 2 {
+	if err != nil || got == nil || got.Cells[0].Tone != 2 {
 		t.Fatalf("the file holds %v, %v; want the second save", got, err)
 	}
 }

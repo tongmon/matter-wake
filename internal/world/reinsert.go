@@ -1,6 +1,8 @@
 package world
 
 import (
+	"fmt"
+
 	"github.com/tongmon/matter-wake/internal/material"
 	"github.com/tongmon/matter-wake/internal/rng"
 )
@@ -25,27 +27,69 @@ const (
 // reinsertSalt keys the queue's random numbers apart from the chunks'.
 const reinsertSalt = 0xbb67ae8584caa73b
 
-// queued is a cell out of the grid waiting to go back, and where it was
-// taken from.
-type queued struct {
-	c    Cell
-	x, y int32
+// Queued is a cell out of the grid waiting to go back (Displace), and the
+// cell (X, Y) it was taken from.
+type Queued struct {
+	Cell Cell
+	X, Y int32
 }
 
 // Queued adds to n[id], for every material id, how many cells of it wait
 // in the queue to be put back. n must have an entry for every material.
 func (w *World) Queued(n []int) {
 	for _, q := range w.fresh {
-		n[q.c.Mat]++
+		n[q.Cell.Mat]++
 	}
 	for _, q := range w.retry {
-		n[q.c.Mat]++
+		n[q.Cell.Mat]++
 	}
 }
 
 // QueueLen returns how many cells wait in the queue to be put back.
 func (w *World) QueueLen() int {
 	return len(w.fresh) + len(w.retry)
+}
+
+// TakeQueued takes out of the queue the cells taken from block (bx, by),
+// which wait to go back there, and appends them to out: those that failed
+// before first, then the new ones, each in the queue's order. The rest of
+// the queue keeps its order. A block about to leave memory takes its cells
+// with it: left in the queue, they could only fail until it came back,
+// using up the tries of the others.
+func (w *World) TakeQueued(bx, by int, out []Queued) []Queued {
+	r := rect{bx * BlockSize, by * BlockSize, (bx + 1) * BlockSize, (by + 1) * BlockSize}
+	take := func(q []Queued) []Queued {
+		kept := q[:0]
+		for _, c := range q {
+			if r.has(int(c.X), int(c.Y)) {
+				out = append(out, c)
+			} else {
+				kept = append(kept, c)
+			}
+		}
+		clear(q[len(kept):])
+		return kept
+	}
+	w.retry = take(w.retry)
+	w.fresh = take(w.fresh)
+	return out
+}
+
+// Requeue puts cells TakeQueued took back into the queue, after the block
+// they came from is in memory again. They wait as new cells: the next tick
+// tries each. It fails, and queues none, if one was taken from a cell
+// outside the world or not in memory.
+func (w *World) Requeue(q []Queued) error {
+	for _, c := range q {
+		if !w.has(int(c.X), int(c.Y)) {
+			return fmt.Errorf("world: a queued cell from (%d, %d), which is not in memory", c.X, c.Y)
+		}
+		if int(c.Cell.Mat) >= len(w.mats) {
+			return fmt.Errorf("world: a queued cell of material %d, which the table does not have", c.Cell.Mat)
+		}
+	}
+	w.fresh = append(w.fresh, q...)
+	return nil
 }
 
 // reinsertQueued tries to put the queued cells back, after a tick's cell
@@ -117,9 +161,9 @@ func (w *World) retryCells(s *rng.Stream) {
 // static ones are passed, and once the search is reinsertDrift rows up
 // each one passed may move it a column aside. Rows outside the grid or
 // memory are skipped. It reports whether q went back.
-func (w *World) reinsert(q queued, s *rng.Stream, pushed *[]queued) bool {
-	x, y0 := int(q.x), int(q.y)
-	mover := &w.mats[q.c.Mat]
+func (w *World) reinsert(q Queued, s *rng.Stream, pushed *[]Queued) bool {
+	x, y0 := int(q.X), int(q.Y)
+	mover := &w.mats[q.Cell.Mat]
 	for y := y0; y > y0-reinsertRows; y-- {
 		if !w.has(x, y) {
 			continue
@@ -128,13 +172,13 @@ func (w *World) reinsert(q queued, s *rng.Stream, pushed *[]queued) bool {
 		t := &w.mats[o.Mat]
 		switch {
 		case t.kind == material.Empty:
-			w.put(o, q.c, x, y)
+			w.put(o, q.Cell, x, y)
 			return true
 		case t.kind == material.Solid:
 			return false
 		case t.kind != material.Static && t.density < mover.density:
-			*pushed = append(*pushed, queued{c: *o, x: int32(x), y: int32(y)})
-			w.put(o, q.c, x, y)
+			*pushed = append(*pushed, Queued{Cell: *o, X: int32(x), Y: int32(y)})
+			w.put(o, q.Cell, x, y)
 			return true
 		}
 		if y <= y0-reinsertDrift && s.IntN(101) < 20 {

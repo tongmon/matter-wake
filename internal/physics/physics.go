@@ -111,6 +111,19 @@ static void physicsSetVelocity( b2BodyId body, b2Vec2 v, float w )
 	b2Body_SetLinearVelocity( body, v );
 	b2Body_SetAngularVelocity( body, w );
 }
+
+// Gives a body without shapes a box centered on its origin, made the way
+// a box body is, and its mass.
+static void physicsSetBox( b2BodyId body, float halfW, float halfH, float density, float friction,
+						   float restitution )
+{
+	b2ShapeDef def = b2DefaultShapeDef();
+	def.density = density;
+	def.material.friction = friction;
+	def.material.restitution = restitution;
+	b2Polygon polygon = b2MakeBox( halfW, halfH );
+	b2CreatePolygonShape( body, &def, &polygon );
+}
 */
 import "C"
 
@@ -452,6 +465,44 @@ func (s Surface) check() error {
 		return fmt.Errorf("physics: surface %+v needs a positive density and friction and restitution of 0 or more", s)
 	}
 	return nil
+}
+
+// SetBox gives dynamic body b, which must have no shapes yet, a box of
+// half size halfW × halfH meters centered on its origin, made of s, and
+// the box's mass. The box, its mass and its inertia are those AddDynamicBox
+// makes, to the bit, so a box body can be made again where it was. A size
+// that is not positive or a surface that is not a dynamic body's is an
+// error, and nothing changes.
+func (w *World) SetBox(b Body, halfW, halfH float32, s Surface) error {
+	id := w.body(b)
+	if !finite(halfW) || !finite(halfH) || halfW <= 0 || halfH <= 0 {
+		return fmt.Errorf("physics: box half size %vx%v is not positive", halfW, halfH)
+	}
+	err := s.check()
+	if err != nil {
+		return err
+	}
+	C.physicsSetBox(id, C.float(halfW), C.float(halfH), C.float(s.Density), C.float(s.Friction), C.float(s.Restitution))
+	return nil
+}
+
+// Sleep puts the body to sleep, with the bodies it touches, if Box2D can:
+// a sleeping body stops until something wakes it, and Velocity reads 0.
+func (w *World) Sleep(b Body) {
+	C.b2Body_SetAwake(w.body(b), false)
+}
+
+// Disable takes the body out of the simulation where it is: it neither
+// moves nor collides, and bodies resting on it are woken. Its velocity is
+// lost; Enable puts it back awake and at rest.
+func (w *World) Disable(b Body) {
+	C.b2Body_Disable(w.body(b))
+}
+
+// Enable puts a body Disable took out back into the simulation, awake and
+// at rest, where it was.
+func (w *World) Enable(b Body) {
+	C.b2Body_Enable(w.body(b))
 }
 
 // LocalCenter returns the body's center of mass in its own frame, in

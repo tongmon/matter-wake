@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/tongmon/matter-wake/internal/save"
 	"github.com/tongmon/matter-wake/internal/world"
 )
 
@@ -165,13 +166,16 @@ func loadSceneBlocks(tb testing.TB) map[[2]int]*world.Block {
 // readyStore hands out blocks made beforehand, once each, and keeps none.
 type readyStore map[[2]int]*world.Block
 
-func (s readyStore) Load(bx, by int) (*world.Block, error) {
+func (s readyStore) Load(bx, by int) (*save.Block, error) {
 	b := s[[2]int{bx, by}]
 	delete(s, [2]int{bx, by})
-	return b, nil
+	if b == nil {
+		return nil, nil
+	}
+	return &save.Block{Cells: b}, nil
 }
 
-func (readyStore) Save(int, int, *world.Block) error { return nil }
+func (readyStore) Save(int, int, *save.Block) error { return nil }
 
 // Saving the blocks takes each out and puts it back, which wakes it
 // whole; the session must go on as if it had not been saved, also while

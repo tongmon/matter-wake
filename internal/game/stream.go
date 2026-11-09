@@ -51,14 +51,15 @@ type StreamState struct {
 }
 
 // Store keeps the blocks a big world unloads, so they come back as they
-// left.
+// left: their cells, the cells taken from them that wait to go back, and
+// the bodies they own.
 type Store interface {
 	// Load returns block (bx, by) as it was last saved, or nil if it never
-	// was.
-	Load(bx, by int) (*world.Block, error)
-	// Save keeps a copy of block (bx, by): it must not hold on to b,
-	// which the session may go on using.
-	Save(bx, by int, b *world.Block) error
+	// was. The session takes it over.
+	Load(bx, by int) (*save.Block, error)
+	// Save keeps a copy of block (bx, by): it must not hold on to b or what
+	// it points to, which the session may go on using.
+	Save(bx, by int, b *save.Block) error
 }
 
 // stream runs the stream for a tick with the camera at (camX, camY): it
@@ -214,12 +215,46 @@ func (g *Game) loadBlock(bx, by int) error {
 		return fmt.Errorf("game: block (%d, %d): %w", bx, by, err)
 	}
 	if b == nil {
-		b = g.terrain.Block(bx, by)
+		b = &save.Block{Cells: g.terrain.Block(bx, by)}
 	}
-	if err := g.world.LoadBlock(bx, by, b); err != nil {
+	if b.Cells == nil {
+		return fmt.Errorf("game: block (%d, %d) came from the store without cells", bx, by)
+	}
+	if err := g.world.LoadBlock(bx, by, b.Cells); err != nil {
 		return fmt.Errorf("game: %w", err)
 	}
 	g.resident = append(g.resident, [2]int{bx, by})
+	return g.restore(bx, by, b)
+}
+
+// restore puts back the cells taken from block (bx, by) that wait to go
+// back, and makes its bodies again, once its cells are in memory.
+func (g *Game) restore(bx, by int, b *save.Block) error {
+	if err := g.world.Requeue(b.Queued); err != nil {
+		return fmt.Errorf("game: block (%d, %d): %w", bx, by, err)
+	}
+	if err := g.bodies.Load(bx, by, b.Bodies); err != nil {
+		return fmt.Errorf("game: block (%d, %d): %w", bx, by, err)
+	}
+	return nil
+}
+
+// unload takes block (bx, by) out of memory into the store. Its bodies go
+// first, so none of their pixels is saved as a cell; then the cells taken
+// from it that wait to go back; then its cells.
+func (g *Game) unload(bx, by int) error {
+	out := save.Block{Bodies: g.bodies.Unload(bx, by, nil)}
+	out.Queued = g.world.TakeQueued(bx, by, nil)
+	cells, err := g.world.UnloadBlock(bx, by)
+	if err != nil {
+		return fmt.Errorf("game: %w", err)
+	}
+	out.Cells = cells
+	i := slices.Index(g.resident, [2]int{bx, by})
+	g.resident = slices.Delete(g.resident, i, i+1)
+	if err := g.store.Save(bx, by, &out); err != nil {
+		return fmt.Errorf("game: block (%d, %d): %w", bx, by, err)
+	}
 	return nil
 }
 
@@ -255,13 +290,8 @@ func (g *Game) check(now uint32, camX, camY int) error {
 			return nil
 		}
 		b := g.resident[i]
-		blk, err := g.world.UnloadBlock(b[0], b[1])
-		if err != nil {
-			return fmt.Errorf("game: %w", err)
-		}
-		g.resident = slices.Delete(g.resident, i, i+1)
-		if err := g.store.Save(b[0], b[1], blk); err != nil {
-			return fmt.Errorf("game: block (%d, %d): %w", b[0], b[1], err)
+		if err := g.unload(b[0], b[1]); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -360,7 +390,7 @@ func newMemoryStore(mats *material.Table) *memoryStore {
 	return &memoryStore{mats: mats, blocks: map[[2]int][]byte{}}
 }
 
-func (s *memoryStore) Load(bx, by int) (*world.Block, error) {
+func (s *memoryStore) Load(bx, by int) (*save.Block, error) {
 	data, ok := s.blocks[[2]int{bx, by}]
 	if !ok {
 		return nil, nil
@@ -374,7 +404,7 @@ func (s *memoryStore) Load(bx, by int) (*world.Block, error) {
 	return b, nil
 }
 
-func (s *memoryStore) Save(bx, by int, b *world.Block) error {
+func (s *memoryStore) Save(bx, by int, b *save.Block) error {
 	var buf bytes.Buffer
 	if err := save.EncodeBlock(&buf, b, s.mats); err != nil {
 		return fmt.Errorf("memory store: %w", err)

@@ -4,12 +4,14 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/tongmon/matter-wake/internal/game"
 	"github.com/tongmon/matter-wake/internal/material"
 	"github.com/tongmon/matter-wake/internal/replay"
+	"github.com/tongmon/matter-wake/internal/save"
 	"github.com/tongmon/matter-wake/internal/world"
 )
 
@@ -38,14 +40,14 @@ func TestDiskStoreRoundTrip(t *testing.T) {
 	}
 	b := new(world.Block)
 	b[100] = world.Cell{Mat: mats.MustLookup("sand"), Tone: 9, Falling: true, Last: 77, Damage: 5}
-	if err := s.Save(3, 4, b); err != nil {
+	if err := s.Save(3, 4, &save.Block{Cells: b}); err != nil {
 		t.Fatal(err)
 	}
 	got, err := s.Load(3, 4)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if *got != *b {
+	if *got.Cells != *b {
 		t.Fatal("the block came back different")
 	}
 	if err := os.WriteFile(s.path(5, 5), []byte("not a block"), 0o644); err != nil {
@@ -63,6 +65,7 @@ func terrainConfig(mats *material.Table) *game.Config {
 		Width: 4096, Height: 4096, Seed: 4, Workers: 2, Materials: mats,
 		Scene: game.SceneTerrain, ViewWidth: 480, ViewHeight: 270, Stream: stream, Budget: budget,
 		Slots: []string{"sand", "water", "stone"}, Tool: game.Tool{Power: 10, Rate: 2000, Radius: 4},
+		Body: game.BodyTool{Material: "wood", Width: 16, Height: 12},
 	}
 }
 
@@ -73,7 +76,10 @@ func terrainConfig(mats *material.Table) *game.Config {
 // it left behind are still in memory and running. Keeping them was found
 // missing by the Codex review of the save folder (2026-11-06). The second
 // stream checks every 7 ticks and keeps 4 blocks, so checks unload blocks
-// on both sides of the save, and the save lands between two checks.
+// on both sides of the save, and the save lands between two checks. The
+// player drops bodies as the camera goes, which leave with the blocks and
+// are saved with them; the bodies must go on as they would have too, to
+// the bit (design.md 8절).
 func TestSavedSessionGoesOnTheSame(t *testing.T) {
 	for _, s := range []game.Stream{stream, {Grid: 64, Lead: 4, LeadMax: 512, Target: 4, Check: 7}} {
 		t.Run(fmt.Sprintf("target %d check %d", s.Target, s.Check), func(t *testing.T) {
@@ -100,20 +106,34 @@ func checkSavedSessionGoesOn(t *testing.T, s game.Stream) {
 	}
 	defer played.Close()
 	camX, camY := played.Spawn()
-	inputs := func(from, to int) []game.Input {
-		var in []game.Input
-		for i := from; i < to; i++ {
-			x := camX + 16*i
-			in = append(in, game.Input{CameraX: x, CameraY: camY, CursorX: x + 240, CursorY: camY + 160, Dig: i%2 == 0, Select: 1 + i%3})
+	// The input of tick i: the camera goes right, the tool digs, and every
+	// fifth tick a body drops just above the ground, so bodies lie on the
+	// ground and on each other at the save, where what Box2D carries from
+	// tick to tick matters.
+	input := func(i int) game.Input {
+		x := camX + 16*i
+		in := game.Input{CameraX: x, CameraY: camY, CursorX: x + 240, CursorY: camY + 160, Dig: i%2 == 0, Select: 1 + i%3}
+		if i%5 != 1 {
+			return in
+		}
+		dx := x + 200 + (i/5%3)*6
+		for y := camY; y < camY+270; y++ {
+			if c, ok := played.World().At(dx, y); ok && c.Mat != 0 {
+				in.Drop, in.CursorX, in.CursorY = true, dx, y-16
+				break
+			}
 		}
 		return in
 	}
-	for _, in := range inputs(0, 50) {
-		if err := played.Step(in); err != nil {
+	for i := range 50 {
+		if err := played.Step(input(i)); err != nil {
 			t.Fatal(err)
 		}
 	}
-	last := inputs(49, 50)[0]
+	last := input(49)
+	if played.Bodies() == 0 || played.Dropped() == 0 {
+		t.Fatalf("%d bodies in memory of %d dropped; the test needs bodies at the save", played.Bodies(), played.Dropped())
+	}
 	// Blocks the view left behind, and more than Target, so checks after
 	// the save have blocks to unload.
 	if n := len(played.ResidentBlocks()); n <= min(6, s.Target) {
@@ -141,7 +161,8 @@ func checkSavedSessionGoesOn(t *testing.T, s game.Stream) {
 	if x, y := resumed.Spawn(); x != last.CameraX || y != last.CameraY {
 		t.Fatalf("the resumed camera is at (%d, %d), want (%d, %d)", x, y, last.CameraX, last.CameraY)
 	}
-	for _, in := range inputs(50, 100) {
+	for i := 50; i < 100; i++ {
+		in := input(i)
 		for _, g := range []*game.Game{played, resumed} {
 			if err := g.Step(in); err != nil {
 				t.Fatal(err)
@@ -150,6 +171,12 @@ func checkSavedSessionGoesOn(t *testing.T, s game.Stream) {
 		if a, b := played.World().Checksum(), resumed.World().Checksum(); a != b {
 			t.Fatalf("tick %d: the resumed session's checksum %#x, the saved one's %#x", played.World().Tick(), b, a)
 		}
+		if a, b := played.BodyRecords(nil), resumed.BodyRecords(nil); !reflect.DeepEqual(a, b) {
+			t.Fatalf("tick %d: the resumed session's bodies\n%+v\ndiffer from the saved one's\n%+v", played.World().Tick(), b, a)
+		}
+	}
+	if played.Bodies() == 0 {
+		t.Fatal("no body is in memory at the end; the test needs some to go on with")
 	}
 	for id := range mats.Len() {
 		if a, b := played.Inventory(material.ID(id)), resumed.Inventory(material.ID(id)); a != b {
@@ -402,6 +429,9 @@ func TestSavedSessionGoesOnOverTheBudget(t *testing.T) {
 		}
 		if a, b := played.World().Checksum(), resumed.World().Checksum(); a != b {
 			t.Fatalf("tick %d: the resumed session's checksum %#x, the saved one's %#x", played.World().Tick(), b, a)
+		}
+		if a, b := played.BodyRecords(nil), resumed.BodyRecords(nil); !reflect.DeepEqual(a, b) {
+			t.Fatalf("tick %d: the resumed session's bodies\n%+v\ndiffer from the saved one's\n%+v", played.World().Tick(), b, a)
 		}
 	}
 }

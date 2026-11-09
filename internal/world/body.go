@@ -54,7 +54,7 @@ func (w *World) Displace(x, y int) {
 		return
 	}
 	c := w.cell(w.pos(x, y))
-	w.fresh = append(w.fresh, queued{c: *c, x: int32(x), y: int32(y)})
+	w.fresh = append(w.fresh, Queued{Cell: *c, X: int32(x), Y: int32(y)})
 	*c = Cell{}
 	w.pending.add(rect{x, y, x + 1, y + 1})
 }

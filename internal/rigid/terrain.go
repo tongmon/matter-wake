@@ -145,6 +145,14 @@ func (s *System) version(i int) uint64 {
 // terrain already (keepOut).
 func (s *System) refresh(i int) error {
 	ch := &s.terrain[i]
+	if !s.w.Resident(i%s.cols*world.ChunkSize/world.BlockSize, i/s.cols*world.ChunkSize/world.BlockSize) {
+		// Only frozen bodies reach a block not in memory (freeze); its
+		// collision would be of cells that are not there.
+		if ch.built {
+			s.dropChunk(i)
+		}
+		return nil
+	}
 	v := s.version(i)
 	if ch.built && ch.version == v && (!ch.keptOut || !s.movedNear(i)) {
 		return nil
@@ -161,12 +169,16 @@ func (s *System) refresh(i int) error {
 		return nil
 	}
 	ch.cls = append(ch.cls[:0], t.cls...)
+	if ch.built {
+		// A body may sleep on what is gone. A chunk built for the first
+		// time had no collision a body could sleep on.
+		s.rebuilt = append(s.rebuilt, i)
+	}
 	ch.built = true
 	if ch.body != 0 {
 		s.phys.DestroyBody(ch.body)
 		ch.body = 0
 	}
-	s.rebuilt = append(s.rebuilt, i)
 	chains := t.outline(c.x0, c.y0, w, h)
 	if len(chains) == 0 {
 		return nil
