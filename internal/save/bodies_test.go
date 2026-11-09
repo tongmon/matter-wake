@@ -189,3 +189,49 @@ func TestBlockRefusesBadBodies(t *testing.T) {
 		t.Fatal("a block whose head misstates the extras' size read")
 	}
 }
+
+// BenchmarkEncodeBlockWithBodies and BenchmarkDecodeBlockWithBodies time
+// the typical block with 450 bodies of 16×12 pixels and 400 cells waiting
+// to go back, the heavy scene's count in one block.
+func BenchmarkEncodeBlockWithBodies(b *testing.B) {
+	mats := woodTable(b, "stone", "sand", "water")
+	blk := &Block{Cells: typicalBlock(mats), Queued: randomQueued(1, 400, 4), Bodies: bodiesOf(450, mats.MustLookup("wood"))}
+	var buf bytes.Buffer
+	b.ReportAllocs()
+	for range b.N {
+		buf.Reset()
+		if err := EncodeBlock(&buf, blk, mats); err != nil {
+			b.Fatal(err)
+		}
+	}
+	b.ReportMetric(float64(buf.Len()), "bytes/block")
+}
+
+func BenchmarkDecodeBlockWithBodies(b *testing.B) {
+	mats := woodTable(b, "stone", "sand", "water")
+	data := encodeAll(b, &Block{Cells: typicalBlock(mats), Queued: randomQueued(1, 400, 4), Bodies: bodiesOf(450, mats.MustLookup("wood"))}, mats)
+	b.ReportAllocs()
+	for range b.N {
+		if _, err := DecodeBlock(bytes.NewReader(data), mats); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+// bodiesOf returns n whole boxes of 16×12 pixels of material m in a row,
+// as the body tool drops them, with tones of their own.
+func bodiesOf(n int, m material.ID) []Body {
+	s := rng.New(9)
+	bodies := make([]Body, n)
+	for i := range bodies {
+		px := make([]Pixel, 16*12)
+		for k := range px {
+			px[k] = Pixel{Tone: uint8(s.Uint32()), OK: true}
+		}
+		bodies[i] = Body{
+			Key: uint32(i), Mat: m, W: 16, H: 12, Left: -8, Top: -6, Pixels: px, Whole: true,
+			X: float32(i%30) * 1.6, Y: float32(i/30) * 1.2, C: 1, Awake: i%3 == 0,
+		}
+	}
+	return bodies
+}

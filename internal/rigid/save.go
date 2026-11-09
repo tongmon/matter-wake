@@ -98,13 +98,11 @@ func (s *System) motion(b *body) (physics.Vec2, float32) {
 // stay but have pixels in the block are erased too and written again by
 // the next Write, outside it, so no body's pixel leaves with the block as
 // a cell. 🔶 A body goes with its owner, though it reaches into a block
-// that stays. Bodies near those that left are woken: Box2D does not wake
-// what rested on a body it removes. The block's terrain collision is
-// dropped.
+// that stays; Box2D wakes the bodies that touched it. The block's terrain
+// collision is dropped.
 func (s *System) Unload(bx, by int, out []save.Body) []save.Body {
 	area := blockCells(bx, by)
 	at := [2]int{bx, by}
-	start := len(s.gone)
 	dead := false
 	for i := range s.bodies {
 		b := &s.bodies[i]
@@ -124,15 +122,6 @@ func (s *System) Unload(bx, by int, out []save.Body) []save.Body {
 	}
 	if dead {
 		s.compact()
-	}
-	for i := range s.bodies {
-		b := &s.bodies[i]
-		for _, r := range s.gone[start:] {
-			if b.written && !b.frozen && b.near.overlaps(r) {
-				s.phys.Wake(b.id)
-				break
-			}
-		}
 	}
 	s.dropTerrain(area)
 	return out

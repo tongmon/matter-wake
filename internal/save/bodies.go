@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"slices"
 
 	"github.com/tongmon/matter-wake/internal/material"
 	"github.com/tongmon/matter-wake/internal/world"
@@ -114,24 +115,28 @@ func writeExtras(w io.Writer, b *Block, mats *material.Table) error {
 	}
 	bw := bufio.NewWriter(zw)
 	writeUint(bw, uint64(len(b.Queued)), 4)
-	cell := make([]byte, 0, 16)
+	width := 0
+	for _, f := range fields {
+		width += f.width
+	}
+	buf := make([]byte, queuedBytes+width)
 	for _, q := range b.Queued {
 		if int(q.Cell.Mat) >= mats.Len() {
 			return fmt.Errorf("a queued cell is of material %d, which the table does not have", q.Cell.Mat)
 		}
-		writeUint(bw, uint64(uint32(q.X)), 4)
-		writeUint(bw, uint64(uint32(q.Y)), 4)
-		cell = cell[:0]
+		binary.LittleEndian.PutUint32(buf, uint32(q.X))
+		binary.LittleEndian.PutUint32(buf[4:], uint32(q.Y))
+		at := queuedBytes
 		for _, f := range fields {
-			n := len(cell)
-			cell = append(cell, make([]byte, f.width)...)
-			f.put(cell[n:], &q.Cell)
+			f.put(buf[at:], &q.Cell)
+			at += f.width
 		}
-		_, _ = bw.Write(cell)
+		_, _ = bw.Write(buf)
 	}
 	writeUint(bw, uint64(len(b.Bodies)), 4)
 	for i := range b.Bodies {
-		if err := writeBody(bw, &b.Bodies[i], mats); err != nil {
+		var err error
+		if buf, err = writeBody(bw, &b.Bodies[i], mats, buf); err != nil {
 			return err
 		}
 	}
@@ -141,34 +146,38 @@ func writeExtras(w io.Writer, b *Block, mats *material.Table) error {
 	return zw.Close()
 }
 
-// writeBody writes one body.
-func writeBody(w *bufio.Writer, b *Body, mats *material.Table) error {
+// bodyHead is how many bytes a body takes before its pixels.
+const bodyHead = 6*4 + 1 + 9*4
+
+// writeBody writes one body, packed in buf, which it grows as it needs and
+// returns.
+func writeBody(w *bufio.Writer, b *Body, mats *material.Table, buf []byte) ([]byte, error) {
 	if err := b.check(mats); err != nil {
-		return err
+		return buf, err
 	}
-	writeUint(w, uint64(b.Key), 4)
-	writeUint(w, uint64(b.Mat), 4)
-	writeUint(w, uint64(b.W), 4)
-	writeUint(w, uint64(b.H), 4)
-	writeUint(w, uint64(b.CX), 4)
-	writeUint(w, uint64(b.CY), 4)
-	flags := 0
+	n := bodyHead + 4*len(b.Pixels)
+	buf = slices.Grow(buf[:0], n)[:n]
+	for i, v := range [...]uint32{b.Key, uint32(b.Mat), uint32(b.W), uint32(b.H), uint32(b.CX), uint32(b.CY)} {
+		binary.LittleEndian.PutUint32(buf[4*i:], v)
+	}
+	flags := byte(0)
 	if b.Whole {
 		flags |= flagWhole
 	}
 	if b.Awake {
 		flags |= flagAwake
 	}
-	writeUint(w, uint64(flags), 1)
-	for _, f := range [...]float32{b.Left, b.Top, b.X, b.Y, b.C, b.S, b.VX, b.VY, b.Spin} {
-		writeUint(w, uint64(math.Float32bits(f)), 4)
+	buf[24] = flags
+	for i, f := range [...]float32{b.Left, b.Top, b.X, b.Y, b.C, b.S, b.VX, b.VY, b.Spin} {
+		binary.LittleEndian.PutUint32(buf[25+4*i:], math.Float32bits(f))
 	}
-	for _, p := range b.Pixels {
-		writeUint(w, uint64(boolByte(p.OK)), 1)
-		writeUint(w, uint64(p.Tone), 1)
-		writeUint(w, uint64(p.Damage), 2)
+	for k, p := range b.Pixels {
+		at := buf[bodyHead+4*k:]
+		at[0], at[1] = boolByte(p.OK), p.Tone
+		binary.LittleEndian.PutUint16(at[2:], p.Damage)
 	}
-	return nil
+	_, _ = w.Write(buf)
+	return buf, nil
 }
 
 // readExtras reads what writeExtras wrote, from the size bytes of r,
@@ -270,7 +279,7 @@ func (e *extras) read(b *Block, fields []field) error {
 }
 
 func (e *extras) body() (Body, error) {
-	var head [6 * 4]byte
+	var head [6 * 4]byte // the integers of bodyHead
 	if _, err := io.ReadFull(e.r, head[:]); err != nil {
 		return Body{}, noEOF(err)
 	}

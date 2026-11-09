@@ -175,8 +175,8 @@ func TestBodyLeavesWithTheBlockOfItsCenter(t *testing.T) {
 	}
 }
 
-// A body that sat on a body that left is woken, since Box2D does not wake
-// what rested on a body it removes, and falls.
+// A body that sat on a body that left is woken, as Box2D wakes the bodies
+// touching one it removes, and falls.
 func TestBodiesOnALeavingBodyFall(t *testing.T) {
 	s, w, id := newStreamedSystem(t, 2, 1)
 	floor := w.Height() - 4
