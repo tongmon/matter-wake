@@ -376,8 +376,9 @@ func (a *app) Update() error {
 	}
 	if a.live {
 		a.ui = input.ReadUI()
-		a.dash.handle(&a.ui, a.game)
+		a.dash.handle(&a.ui, a.game, a.width)
 		if a.dash.open {
+			// Again, to show what the update changed.
 			a.dash.build(a.game, a.width)
 		}
 	}

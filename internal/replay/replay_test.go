@@ -558,7 +558,10 @@ func TestRecordableNeedsOneWordNames(t *testing.T) {
 	slot := cfg(material.Def{Name: "wet sand", Kind: material.Powder, Density: 30})
 	slot.Slots = append(slot.Slots, "wet sand")
 	solid := cfg(material.Def{Name: "dry wood", Kind: material.Solid, Density: 6})
-	for _, c := range []*game.Config{slot, solid} {
+	// none is the body line's word for no body tool (the second Codex
+	// review).
+	none := cfg(material.Def{Name: "none", Kind: material.Solid, Density: 6})
+	for _, c := range []*game.Config{slot, solid, none} {
 		if err := Recordable(c); err == nil || !strings.Contains(err.Error(), c.Materials.Def(material.ID(c.Materials.Len()-1)).Name) {
 			t.Fatalf("Recordable = %v, want an error naming the material with a space", err)
 		}

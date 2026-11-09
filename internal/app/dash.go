@@ -144,10 +144,16 @@ func parseDash(s string) (open bool, views render.Views, err error) {
 	return open, views, nil
 }
 
-// handle takes what the devices did in an update: the dashboard's keys,
-// and the mouse on the panel or, with the wheel, on the brush.
-func (d *dash) handle(ui *input.UI, g *game.Game) {
+// handle takes what the devices did in an update on a screen width
+// pixels wide: the dashboard's keys, and the mouse on the panel or, with
+// the wheel, on the brush. The panel is laid out before the mouse is
+// tested on it, so the update that opens it already finds the mouse there
+// (the second Codex review).
+func (d *dash) handle(ui *input.UI, g *game.Game, width int) {
 	d.keys(ui.Keys)
+	if d.open {
+		d.build(g, width)
+	}
 	d.over = d.open && d.panel.Contains(ui.X, ui.Y)
 	notch := d.notch(ui.Wheel)
 	switch {
