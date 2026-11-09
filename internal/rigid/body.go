@@ -109,10 +109,12 @@ type body struct {
 	// frozen is set while the body waits, out of Box2D's simulation, for a
 	// block not in memory that it may reach (freeze); fv, fspin and fawake
 	// are the velocity it had then and whether it was awake, which it gets
-	// back when it goes on. cold marks the bodies freeze finds this tick.
+	// back when it goes on. cold marks the bodies freeze finds this tick,
+	// and reach the cells it found the body may touch.
 	frozen, fawake, cold bool
 	fv                   physics.Vec2
 	fspin                float32
+	reach                rect
 }
 
 // pixel is a pixel of a body's image: the damage it has taken
@@ -251,7 +253,8 @@ func (s *System) write(b *body, slot uint16) {
 		// Written for the first time, the body has not moved yet, but may
 		// already be moving: made again with its velocity, or broken off
 		// a moving body. Where its velocity takes it in a tick stands for
-		// the shift, so its reach covers its first Step (Codex review).
+		// the shift, so the terrain is made collision where its first Step
+		// takes it (Codex review).
 		s.velocity(b)
 		b.shiftX = float32(b.v.X*tickSeconds) * cellsPerMeter
 		b.shiftY = float32(b.v.Y*tickSeconds) * cellsPerMeter

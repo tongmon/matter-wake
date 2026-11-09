@@ -399,20 +399,34 @@ func (s *System) Frozen() int {
 // in it: Box2D disables them where they are, keeping their pixels in the
 // grid, and they keep their velocity here. A body that no longer reaches
 // one goes on with the velocity it had. 🔶 The cells do the same: a chunk
-// whose updates may reach a block not in memory does not run. It needs
-// the reach of each body (near) and the bodies near each chunk, which
-// Collide lists.
+// whose updates may reach a block not in memory does not run. With every
+// block in memory, as in the rooms, nothing freezes.
 func (s *System) freeze() {
 	s.cold = s.cold[:0]
+	whole := s.w.AllResident()
 	for i := range s.bodies {
 		b := &s.bodies[i]
-		b.cold = b.written && s.reachesOut(b.near)
-		if b.cold {
+		b.cold = false
+		if whole || !b.written {
+			continue
+		}
+		b.reach = s.reach(b)
+		if s.reachesOut(b.reach) {
+			b.cold = true
 			s.cold = append(s.cold, int32(i))
 		}
 	}
+	// Spread to the bodies whose reach meets a frozen one's. It looks at
+	// every body for each frozen one; few freeze, and only at the edge of
+	// what is in memory.
 	for k := 0; k < len(s.cold); k++ {
-		s.chill(s.bodies[s.cold[k]].near)
+		f := s.bodies[s.cold[k]].reach
+		for i := range s.bodies {
+			if o := &s.bodies[i]; !o.cold && o.written && o.reach.overlaps(f) {
+				o.cold = true
+				s.cold = append(s.cold, int32(i))
+			}
+		}
 	}
 	for i := range s.bodies {
 		b := &s.bodies[i]
@@ -432,29 +446,33 @@ func (s *System) freeze() {
 	}
 }
 
-// chill marks cold, for freeze, the bodies whose reach overlaps f, the
-// reach of a body freeze stops, and lists them to look at next. It finds
-// them among the bodies Collide listed near the chunks f covers.
-func (s *System) chill(f rect) {
-	x0, y0 := max(f.x0, 0), max(f.y0, 0)
-	x1, y1 := min(f.x1, s.w.Width()), min(f.y1, s.w.Height())
-	if x0 >= x1 || y0 >= y1 {
-		return
+// reach returns the cells b may touch in the coming Step: its box, where it
+// was last written, widened by nearCells and by as far as any point of its
+// image can go in a tick, moving with its velocity and turning about its
+// center of mass. A frozen body has the velocity it froze with. The
+// products are converted one by one, so the result is the same on every
+// CPU (docs/pitfalls.md).
+func (s *System) reach(b *body) rect {
+	v, spin := b.fv, b.fspin
+	if !b.frozen {
+		s.velocity(b)
+		v, spin = b.v, b.spin
 	}
-	for cy := y0 / world.ChunkSize; cy <= (y1-1)/world.ChunkSize; cy++ {
-		for cx := x0 / world.ChunkSize; cx <= (x1-1)/world.ChunkSize; cx++ {
-			c := cy*s.cols + cx
-			if s.stamp[c] != s.ticks {
-				continue
-			}
-			for j := s.nearHead[c]; j >= 0; j = s.nearNext[j] {
-				if o := &s.bodies[s.nearBody[j]]; !o.cold && o.near.overlaps(f) {
-					o.cold = true
-					s.cold = append(s.cold, s.nearBody[j])
-				}
-			}
-		}
-	}
+	// The farthest a point of the image lies from the center of mass, in
+	// cells: from the center of mass to the middle of the image, and from
+	// there to a corner.
+	mx := b.left + float32(b.cx) + float32(b.w)/2 - float32(b.lc.X*cellsPerMeter)
+	my := b.top + float32(b.cy) + float32(b.h)/2 - float32(b.lc.Y*cellsPerMeter)
+	hw, hh := float32(b.w)/2, float32(b.h)/2
+	r := hypot32(mx, my) + hypot32(hw, hh)
+	d := float32(float32(speed(v)*cellsPerMeter)+float32(abs32(spin)*r)) * tickSeconds
+	m := nearCells + int(math.Ceil(float64(d)))
+	return rect{b.box.x0 - m, b.box.y0 - m, b.box.x1 + m, b.box.y1 + m}
+}
+
+// hypot32 returns √(x² + y²).
+func hypot32(x, y float32) float32 {
+	return float32(math.Sqrt(float64(float32(x*x) + float32(y*y))))
 }
 
 // reachesOut reports whether r reaches a block of the world not in memory.

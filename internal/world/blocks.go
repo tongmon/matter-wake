@@ -26,6 +26,9 @@ type Block [blockCells]Cell
 // of blocks it has.
 func (w *World) Blocks() (cols, rows int) { return w.bcols, w.brows }
 
+// AllResident reports whether every block of the world is in memory.
+func (w *World) AllResident() bool { return len(w.resident) == len(w.blocks) }
+
 // Resident reports whether block (bx, by) is in memory.
 func (w *World) Resident(bx, by int) bool {
 	return w.blockInWorld(bx, by) && w.blocks[by*w.bcols+bx] != nil

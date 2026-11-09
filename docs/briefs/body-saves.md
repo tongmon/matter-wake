@@ -110,7 +110,7 @@ TPT(The Powder Toy)에는 강체도 월드 스트리밍도 없습니다(스킬�
 |---|---|---|---|---|---|
 | 몸체가 어느 블록 것인가(소유) | C137이 답함: 블록에 닿는 몸체를 모두(AABB, 1픽셀 수집·2픽셀 미수집, BODY_BLOCK_RESIDENCY 3.2). 움직이는 몸체의 AABB 여유는 OPEN | 없음 | 🔶 Noita처럼 소유가 없습니다. 내려가는 블록이 지금 닿는 몸체를 모두 가져갑니다(`rigid.leavesWith`, 🧪 `unloadMargin` 1칸). 처음에는 질량 중심이 든 블록으로 정했다가 C137 뒤 바꿨습니다 | `TestBodiesLeaveWithEveryBlockTheyTouch`, `TestLoadedBodiesTakeTheirKeysPlaces` | 아니오 (답을 받음) |
 | 남는 블록에 걸친 몸체 | C137이 답함: 통째로 먼저 내려가는 블록과, 남는 블록의 칸은 즉시 공기(4절) | 없음 | 🔶 Noita와 같음. 그 위에 놓였던 몸체는 Box2D가 깨웁니다(동적 몸체를 지우면 닿아 있던 몸체를 깨움, 임시 측정으로 확인) | `TestBodiesLeaveWithEveryBlockTheyTouch`, `TestBodiesOnALeavingBodyFall` | 아니오 |
-| 메모리에 없는 블록으로 움직이는 몸체(가장자리) | C137이 답함: 계속 Step, 픽셀을 못 써 놓인 칸 0, 청소로 영영 사라짐(5절). 아래로 떨어지는 경우는 OPEN | 없음 | 🔶 일부러 다르게: 근처 범위(다음 Step에 닿을 칸)가 메모리에 없는 블록에 닿는 몸체와, 그런 몸체의 근처 범위에 닿는 몸체는 얼립니다(Box2D disable). 속도는 우리 쪽에 두었다가 블록이 돌아오면 풀며 돌려줍니다. 셀 갱신이 비상주 블록에 닿는 청크를 돌리지 않는 것과 같은 규칙이고, 얼린 몸체도 상주 블록에 닿아 있어 그 블록이 내려가면 함께 저장됩니다. Noita처럼 하면 재질이 사라져 셀 보존이 깨지고, 청소는 전역 난수라 결정적이지 않습니다(`rigid.reachesOut` 하나) | `TestBodyFreezesAtTheEdgeOfMemory`, 골든 `terrain_bodies.rpl`의 여섯째 상자 | 아니오 |
+| 메모리에 없는 블록으로 움직이는 몸체(가장자리) | C137이 답함: 계속 Step, 픽셀을 못 써 놓인 칸 0, 청소로 영영 사라짐(5절). 아래로 떨어지는 경우는 OPEN | 없음 | 🔶 일부러 다르게: 근처 범위(다음 Step에 닿을 칸)가 메모리에 없는 블록에 닿는 몸체와, 그런 몸체의 근처 범위에 닿는 몸체는 얼립니다(Box2D disable). 범위는 속도와 회전으로 이미지의 어느 점이든 한 틱에 갈 수 있는 거리만큼 넓힙니다(`rigid.reach`, Codex 리뷰). 속도는 우리 쪽에 두었다가 블록이 돌아오면 풀며 돌려줍니다. 셀 갱신이 비상주 블록에 닿는 청크를 돌리지 않는 것과 같은 규칙이고, 얼린 몸체도 상주 블록에 닿아 있어 그 블록이 내려가면 함께 저장됩니다. Noita처럼 하면 재질이 사라져 셀 보존이 깨지고, 청소는 전역 난수라 결정적이지 않습니다(`rigid.reachesOut` 하나) | `TestBodyFreezesAtTheEdgeOfMemory`, 골든 `terrain_bodies.rpl`의 여섯째 상자 | 아니오 |
 | 그 블록에서 꺼낸 재삽입 대기열의 셀 | OPEN(C137 6.4: 그 장면에 대기열 셀이 없었음) | 없음 | 🔶 꺼낸 칸이 그 블록이면 블록과 함께 저장하고, 올릴 때 새 셀(fresh)로 다시 넣습니다(`world.TakeQueued` 하나) | `TestQueuedCellsLeaveWithTheirBlock` | 아니오 (셀 보존만 지키면 되는 우리 규칙) |
 | 다시 올린 몸체의 속도와 잠 | C137이 답함: Noita는 속도·각속도를 0으로, 잠든 몸체를 깨워 되돌림(6.1-6.2) | 없음 | 🔶 일부러 다르게(개발자 결정 대기): 속도를 그대로, 잠든 몸체는 잠든 채 만듭니다. 근처 범위가 그 블록 밖에 닿으면 그 칸은 그동안 바뀌었을 수 있어 깨워서 만듭니다. 떨어지던 몸체가 블록이 오가며 공중에서 멈추지 않고, 잠든 더미가 블록이 올 때마다 한꺼번에 깨지 않게 하려는 것입니다. Noita처럼 하려면 `rigid.restoreMotion` 하나를 바꿉니다 | `TestSleepingBodyComesBackAsleep`, `TestLoadedBodyIsTheSame` | 아니오 |
 | 저장한 세션이 계속 간 세션과 같게 | Noita는 왕복에서 속도를 버려 같지 않음(C137 9절) | 없음 | 저장 = 재구성 지점(위 Box2D 절) | `TestSavedSessionGoesOnTheSame`(몸체 포함) | 아니오 |
@@ -121,14 +121,14 @@ TPT(The Powder Toy)에는 강체도 월드 스트리밍도 없습니다(스킬�
 ## 검증 계획
 
 - 테스트(모두 구현보다 먼저 써서 실패를 확인함):
-  - `internal/rigid`: `TestLoadedBodyIsTheSame`(기록 → 다시 만들기 → 같은 기록, 질량·관성·질량 중심·덮는 픽셀 표가 비트까지 같음, 다시 쓴 칸이 같음), `TestBodiesLeaveWithEveryBlockTheyTouch`(1칸 떨어진 몸체는 가져가고 2칸은 남김, 양쪽 방향, 내려간 블록에 몸체 칸이 하나도 없음), `TestBodiesOnALeavingBodyFall`, `TestSleepingBodyComesBackAsleep`, `TestBodyFreezesAtTheEdgeOfMemory`, `TestLoadedBodiesTakeTheirKeysPlaces`, `TestLoadRefusesBadRecords`, `TestReset`, `TestFrozenTickDoesNotAllocate`
+  - `internal/rigid`: `TestLoadedBodyIsTheSame`(기록 → 다시 만들기 → 같은 기록, 질량·관성·질량 중심·덮는 픽셀 표가 비트까지 같음, 다시 쓴 칸이 같음), `TestBodiesLeaveWithEveryBlockTheyTouch`(1칸 떨어진 몸체는 가져가고 2칸은 남김, 양쪽 방향, 내려간 블록에 몸체 칸이 하나도 없음), `TestBodiesOnALeavingBodyFall`, `TestSleepingBodyComesBackAsleep`, `TestBodyFreezesAtTheEdgeOfMemory`, `TestLoadedBodiesTakeTheirKeysPlaces`, `TestLoadRefusesBadRecords`, `TestReset`, `TestFrozenTickDoesNotAllocate`, 그리고 Codex 리뷰가 찾은 것: `TestLoadTakesAPieceWhoseOriginIsOutside`, `TestFastLoadedBodyFreezesBeforeItMoves`, `TestDugFrozenBodyStaysFrozen`, `TestSpinningBodyFreezesBeforeItTurnsIn`
   - `internal/world`: `TestQueuedCellsLeaveWithTheirBlock`
   - `internal/physics`: `TestSetBoxMakesTheSameBox`, `TestDisableAndSleep`, `TestRebuildingChainsDoesNotAllocate`
   - `internal/save`: `TestBlockKeepsQueuedCellsAndBodies`(모든 필드 비트, 재질은 이름으로), `TestBlockReadsVersion2`, `TestBlockRefusesBadBodies`, 세션 형식 4
   - `internal/game`: `TestLeavingAndComingBackKeepsTheBlocks`(몸체 다섯 개가 떠났다 같은 기록으로 돌아오고 같은 칸에 씀), `TestBodyToolWorksInTheTerrain`, `TestTerrainStepWithBodiesDoesNotAllocate`
   - `internal/app`: `TestSavedSessionGoesOnTheSame`(몸체를 땅 바로 위에 떨어뜨려 저장 때 서로 기대게 하고, 매 틱 체크섬과 몸체 기록 비교). 저장할 때 Box2D 월드를 새로 만들지 않게 바꾸면 실패하는 것을 확인함
   - `internal/replay`: 골든 `terrain_bodies.rpl`. 다른 골든은 그대로
-- 측정 결과(design.md 8절, references.md 3절): 몸체 450개 내리기 0.34 ms, 다시 만들기 0.45 ms, 그 뒤 쓰기 0.20 ms. 블록 저장·읽기 5.9·6.2 ms(셀만 4.3·4.4 ms). `BenchmarkBodies` 몸체 몫 552 → 564 µs(+2%). `terrain_bodies.rpl` 틱 중앙값 0.8 → 0.9 ms, 16.7 ms를 넘은 틱 없음
+- 측정 결과(design.md 8절, references.md 3절): 몸체 450개 내리기 0.34 ms, 다시 만들기 0.45 ms, 그 뒤 쓰기 0.20 ms. 블록 저장·읽기 5.9·6.2 ms(셀만 4.3·4.4 ms). `BenchmarkBodies` 몸체 몫 551 → 559 µs(+1.5%, 방은 얼리기를 건너뜀). `terrain_bodies.rpl` 틱 중앙값 0.8 → 0.9 ms, 16.7 ms를 넘은 틱 없음
 - 저장이 몸체를 바꾸는지(임시 측정): 몸체가 공중에 있을 때 저장하면 저장하지 않은 세션과 끝까지 같고, 바닥과 서로에 닿아 깨어 있을 때 저장하면 다음 틱부터 다릅니다. 접촉의 누적 충격량을 새로 시작하기 때문입니다
 - 비교 화면: `go run ./cmd/matter-wake -replay internal/replay/testdata/terrain_bodies.rpl -shots ... -shots-dir out/shots`
 - 직접 플레이로 볼 점: 지형에서 `B`로 떨어뜨린 상자가 멀리 갔다 돌아왔을 때 그대로인지, 종료 뒤 다시 열었을 때 그대로인지, 화면 밖으로 떨어진 상자가 돌아왔을 때 어색하지 않은지

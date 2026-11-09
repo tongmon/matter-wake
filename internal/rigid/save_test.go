@@ -272,9 +272,9 @@ func TestBodyFreezesAtTheEdgeOfMemory(t *testing.T) {
 	if p, _ := s.phys.Transform(b.id); p != frozenAt {
 		t.Fatalf("the frozen body moved from %v to %v", frozenAt, p)
 	}
-	if b.near.y1 <= world.BlockSize || b.box.y1 > world.BlockSize {
+	if b.reach.y1 <= world.BlockSize || b.box.y1 > world.BlockSize {
 		t.Fatalf("the body froze with its reach %+v and its cells %+v; it should reach row %d with its reach only",
-			b.near, b.box, world.BlockSize)
+			b.reach, b.box, world.BlockSize)
 	}
 	// A body dropped on top freezes before it touches the frozen one.
 	drop(t, s, id.wood, 200, 400, 16, 12)
@@ -486,5 +486,59 @@ func TestFastLoadedBodyFreezesBeforeItMoves(t *testing.T) {
 	}
 	if b.box.y1 > world.BlockSize {
 		t.Fatalf("the fast body reached row %d, into the block not in memory, before it froze", b.box.y1)
+	}
+}
+
+// fastBody sets up a world of two blocks, one over the other, with the
+// lower one not in memory and a body made again 8 cells over it, moving
+// as edit says: what a block coming back with a moving body looks like.
+func fastBody(t *testing.T, w, h int, edit func(r *save.Body)) (*System, *world.World) {
+	t.Helper()
+	s, wd, id := newStreamedSystem(t, 1, 2)
+	drop(t, s, id.wood, 256-w/2, world.BlockSize-8-h, w, h)
+	s.Write()
+	recs := s.Unload(0, 0, nil)
+	s.Unload(0, 1, nil)
+	if _, err := wd.UnloadBlock(0, 1); err != nil {
+		t.Fatal(err)
+	}
+	edit(&recs[0])
+	if err := s.Load(0, 0, recs); err != nil {
+		t.Fatal(err)
+	}
+	return s, wd
+}
+
+// A frozen body dug while it waits is written again where it is, and stays
+// frozen: what it may reach is where its velocity takes it, not how far it
+// moved since it was last written. Found by the second Codex review of
+// body saves (2026-11-09).
+func TestDugFrozenBodyStaysFrozen(t *testing.T) {
+	s, w := fastBody(t, 16, 12, func(r *save.Body) { r.VY = 60 })
+	tick(t, s, w)
+	b := &s.bodies[0]
+	if !b.frozen {
+		t.Fatal("the fast body did not freeze")
+	}
+	breakOff(t, s, [2]int{b.box.x0 + 3, b.box.y0 + 3})
+	for range 3 {
+		tick(t, s, w)
+	}
+	b = &s.bodies[0]
+	if !b.frozen || b.box.y1 > world.BlockSize {
+		t.Fatalf("the dug body is frozen %v and reaches row %d; the block below is not in memory", b.frozen, b.box.y1)
+	}
+}
+
+// A spinning body's reach covers how far its ends turn in a tick, so a
+// long plank turning fast freezes before an end swings into a block not in
+// memory. Found by the second Codex review of body saves (2026-11-09).
+func TestSpinningBodyFreezesBeforeItTurnsIn(t *testing.T) {
+	s, w := fastBody(t, 200, 6, func(r *save.Body) { r.Spin = 6 })
+	tick(t, s, w)
+	tick(t, s, w)
+	b := &s.bodies[0]
+	if !b.frozen || b.box.y1 > world.BlockSize {
+		t.Fatalf("the spinning plank is frozen %v and reaches row %d; the block below is not in memory", b.frozen, b.box.y1)
 	}
 }

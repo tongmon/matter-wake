@@ -293,9 +293,7 @@ func (s *System) sync() {
 			if b.written {
 				s.freed = append(s.freed, b.box)
 			}
-		} else if !b.frozen {
-			// A frozen body keeps the shift it froze with: where it would
-			// go is what it waits to reach (freeze).
+		} else {
 			b.shiftX, b.shiftY = 0, 0
 		}
 	}
