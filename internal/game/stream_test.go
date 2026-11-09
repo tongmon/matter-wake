@@ -89,8 +89,8 @@ func TestStreamFollowsTheCamera(t *testing.T) {
 
 // A block that leaves memory comes back exactly as it left, with its
 // bodies: the camera goes far away and returns. The bodies leave with the
-// blocks, and come back with the same keys, images, transforms, velocities
-// and sleep, to cover the same cells.
+// blocks, and come back with the same keys, images, transforms and
+// velocities, awake, to cover the same cells.
 func TestLeavingAndComingBackKeepsTheBlocks(t *testing.T) {
 	g := newTerrainBodyGame(t, 2)
 	x, y := g.Spawn()
@@ -107,6 +107,11 @@ func TestLeavingAndComingBackKeepsTheBlocks(t *testing.T) {
 	// Written where Box2D's last Step left them, as the next tick would.
 	g.bodies.Write()
 	bodies := g.BodyRecords(nil)
+	// They come back awake, as in Noita, though some slept
+	// (rigid.restoreMotion).
+	for i := range bodies {
+		bodies[i].Awake = true
+	}
 	before := map[[2]int]uint64{}
 	for _, b := range g.resident {
 		before[b] = blockSum(g, b)

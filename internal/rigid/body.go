@@ -115,10 +115,6 @@ type body struct {
 	fv                   physics.Vec2
 	fspin                float32
 	reach                rect
-	// slept is, for a body made again asleep and not yet written, the
-	// world's Version then: a change near it since means what held it up
-	// may be gone (wakeLoaded). 0 for any other body.
-	slept uint64
 }
 
 // pixel is a pixel of a body's image: the damage it has taken

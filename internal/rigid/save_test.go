@@ -205,36 +205,33 @@ func TestBodiesOnALeavingBodyFall(t *testing.T) {
 	}
 }
 
-// A body asleep comes back asleep; a body whose reach goes past its own
-// block comes back awake, since what lies there may have changed while it
-// was away.
-func TestSleepingBodyComesBackAsleep(t *testing.T) {
-	s, w, id := newStreamedSystem(t, 2, 1)
+// A body asleep when it left comes back awake, as in Noita (C137), and
+// falls asleep again; it was recorded asleep.
+func TestLoadedBodiesComeBackAwake(t *testing.T) {
+	s, w, id := newStreamedSystem(t, 1, 1)
 	floor := w.Height() - 4
 	drop(t, s, id.wood, 200, floor-12, 16, 12)
-	drop(t, s, id.wood, 497, floor-12, 12, 12) // center x = 503, 5 cells from block 1
 	for range 300 {
 		tick(t, s, w)
 	}
-	for i := range s.bodies {
-		if s.phys.Awake(s.bodies[i].id) {
-			t.Fatalf("body %d did not fall asleep", i)
-		}
+	if s.phys.Awake(s.bodies[0].id) {
+		t.Fatal("the body did not fall asleep")
 	}
 	recs := s.Unload(0, 0, nil)
-	for _, r := range recs {
-		if r.Awake {
-			t.Fatalf("body of key %d recorded awake", r.Key)
-		}
+	if recs[0].Awake {
+		t.Fatal("the sleeping body was recorded awake")
 	}
 	if err := s.Load(0, 0, recs); err != nil {
 		t.Fatal(err)
 	}
-	if s.phys.Awake(s.bodies[0].id) {
-		t.Fatal("the body in the middle of its block came back awake")
+	if !s.phys.Awake(s.bodies[0].id) {
+		t.Fatal("the body came back asleep")
 	}
-	if !s.phys.Awake(s.bodies[1].id) {
-		t.Fatal("the body that reaches the next block came back asleep")
+	for range 120 {
+		tick(t, s, w)
+	}
+	if s.phys.Awake(s.bodies[0].id) {
+		t.Fatal("the body did not fall asleep again")
 	}
 }
 
@@ -685,10 +682,10 @@ func TestUnloadBlocksKeepsSleepAcrossBlocks(t *testing.T) {
 	}
 }
 
-// A body made again asleep on another falls when the one under it is dug
-// away whole: made asleep, the two have no touching contact for Box2D to
-// wake the upper one by, so the bodies next to one that is removed are
-// woken. Found by the sixth Codex review of body saves (2026-11-09).
+// A stack made again falls back asleep as one, so the upper body falls
+// when the one under it is dug away whole. Made asleep, the two had no
+// touching contact for Box2D to wake the upper one by. Found by the sixth
+// Codex review of body saves (2026-11-09).
 func TestRestoredStackFallsWhenTheBottomIsDugAway(t *testing.T) {
 	s, w, id := newStreamedSystem(t, 1, 1)
 	floor := w.Height() - 4
@@ -704,11 +701,11 @@ func TestRestoredStackFallsWhenTheBottomIsDugAway(t *testing.T) {
 	if err := s.Load(0, 0, recs); err != nil {
 		t.Fatal(err)
 	}
-	for range 3 {
+	for range 300 {
 		tick(t, s, w)
 	}
 	if s.phys.Awake(s.bodies[1].id) {
-		t.Fatal("the upper box woke by itself; the test needs it asleep")
+		t.Fatal("the upper box did not fall asleep again; the test needs it asleep")
 	}
 	_, r := owned(w, id.wood, 0)
 	var cells [][2]int
@@ -731,5 +728,54 @@ func TestRestoredStackFallsWhenTheBottomIsDugAway(t *testing.T) {
 	}
 	if b := &s.bodies[0]; b.box.y0 <= top {
 		t.Fatalf("the upper box stays at row %d with nothing under it", b.box.y0)
+	}
+}
+
+// A stack made again falls back asleep as one, so digging away the top
+// rows of the bottom body, which leaves it but takes away what holds the
+// upper one up, wakes the upper one too. Found by the seventh Codex review
+// of body saves (2026-11-09).
+func TestRestoredStackFallsWhenTheBottomIsCut(t *testing.T) {
+	s, w, id := newStreamedSystem(t, 1, 1)
+	floor := w.Height() - 4
+	drop(t, s, id.wood, 200, floor-12, 16, 12)
+	drop(t, s, id.wood, 202, floor-24, 12, 12)
+	for range 300 {
+		tick(t, s, w)
+	}
+	recs := s.Unload(0, 0, nil)
+	if err := s.Reset(); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Load(0, 0, recs); err != nil {
+		t.Fatal(err)
+	}
+	for range 300 {
+		tick(t, s, w)
+	}
+	for i := range s.bodies {
+		if s.phys.Awake(s.bodies[i].id) {
+			t.Fatalf("body %d of the stack did not fall asleep again", i)
+		}
+	}
+	// The bottom box's top four rows.
+	_, r := owned(w, id.wood, 0)
+	var cells [][2]int
+	for y := r.y0; y < r.y0+4; y++ {
+		for x := r.x0; x < r.x1; x++ {
+			if c, _ := w.At(x, y); s.kinds[c.Mat] == material.Solid {
+				if b, _ := c.Body(); b == 0 {
+					cells = append(cells, [2]int{x, y})
+				}
+			}
+		}
+	}
+	breakOff(t, s, cells...)
+	top := s.bodies[1].box.y0
+	for range 60 {
+		tick(t, s, w)
+	}
+	if b := &s.bodies[1]; b.box.y0 <= top {
+		t.Fatalf("the upper box stays at row %d over the cut", b.box.y0)
 	}
 }

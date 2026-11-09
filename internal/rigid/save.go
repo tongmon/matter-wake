@@ -191,9 +191,8 @@ func (s *System) dropChunk(i int) {
 
 // Load makes again, as they were recorded, the bodies of block (bx, by),
 // which has come back into memory, in key order among the bodies there
-// are. Their pixels go into the grid at the next Write. A body asleep when
-// it left comes back asleep, unless the cells it may touch in a Step reach
-// past its block: those may have changed while it was away. A body whose
+// are. Their pixels go into the grid at the next Write. They come back
+// awake, with the velocities they left with (restoreMotion). A body whose
 // key is already in memory is left out: only a save mixed by a crash
 // holds one twice. Load fails, adding no body, if a record is not one a
 // body can be made of or the keys are not in increasing order. New bodies
@@ -210,14 +209,13 @@ func (s *System) Load(bx, by int, recs []save.Body) error {
 	if len(s.bodies)+len(recs) > maxBodies {
 		return fmt.Errorf("rigid: %d bodies in memory and %d more coming, at most %d", len(s.bodies), len(recs), maxBodies)
 	}
-	home := blockCells(bx, by)
 	made := make([]body, 0, len(recs))
 	for i := range recs {
 		r := &recs[i]
 		if _, held := s.slotOf(r.Key); held {
 			continue
 		}
-		b, err := s.remake(r, home)
+		b, err := s.remake(r)
 		if err != nil {
 			for k := range made {
 				s.phys.DestroyBody(made[k].id)
@@ -331,9 +329,8 @@ func finite(f float32) bool {
 
 // remake makes the body of record r, which checkRecord passed, in Box2D,
 // as it was: a whole body is the box it was made as, a body that lost
-// pixels gets shapes from them, both to the bit as before. It is asleep
-// if r is, unless the cells it may touch reach past home, its block.
-func (s *System) remake(r *save.Body, home rect) (body, error) {
+// pixels gets shapes from them, both to the bit as before.
+func (s *System) remake(r *save.Body) (body, error) {
 	b := body{
 		key: r.Key, mat: r.Mat, w: r.W, h: r.H, left: r.Left, top: r.Top, cx: r.CX, cy: r.CY,
 		px: make([]pixel, len(r.Pixels)), buoyancy: pieceBuoyancy(s.mats.Def(r.Mat)),
@@ -365,60 +362,23 @@ func (s *System) remake(r *save.Body, home rect) (body, error) {
 		s.phys.DestroyBody(id)
 		return body{}, err
 	}
-	v, spin, asleep := restoreMotion(r)
+	v, spin := restoreMotion(r)
 	s.phys.SetVelocity(id, v, spin)
-	box := boxAt(&b, at, rot)
-	// Past the world's edge there is nothing to change.
-	reach := rect{
-		max(box.x0-nearCells, 0), max(box.y0-nearCells, 0),
-		min(box.x1+nearCells, s.w.Width()), min(box.y1+nearCells, s.w.Height()),
-	}
-	if asleep && reach.x0 >= home.x0 && reach.y0 >= home.y0 && reach.x1 <= home.x1 && reach.y1 <= home.y1 {
-		s.phys.Sleep(id)
-		b.slept = s.w.Version()
-	}
 	return b, nil
 }
 
-// wakeLoaded wakes each body made again asleep, before it is first
-// written, if a cell near it changed since it was made: dug away, say, on
-// the first tick after a save was opened. Box2D does not notice that what
-// a sleeping body rests on is gone, and the terrain near it, made for the
-// first time, wakes no one (Codex review).
-func (s *System) wakeLoaded() {
-	for i := range s.bodies {
-		b := &s.bodies[i]
-		if b.slept == 0 {
-			continue
-		}
-		r := boxAt(b, b.p, b.q)
-		x0, y0 := max(r.x0-nearCells, 0), max(r.y0-nearCells, 0)
-		x1, y1 := min(r.x1+nearCells, s.w.Width()), min(r.y1+nearCells, s.w.Height())
-		changed := false
-		for cy := y0 / world.ChunkSize; cy <= (y1-1)/world.ChunkSize && !changed && x0 < x1 && y0 < y1; cy++ {
-			for cx := x0 / world.ChunkSize; cx <= (x1-1)/world.ChunkSize; cx++ {
-				if s.w.ChunkVersion(cx, cy) > b.slept {
-					changed = true
-					break
-				}
-			}
-		}
-		if changed {
-			s.phys.Wake(b.id)
-		}
-		b.slept = 0
-	}
-}
-
 // restoreMotion returns the velocity of its center of mass and the angular
-// velocity a body made again from r starts with, and whether it may start
-// asleep. 🔶 It keeps what r holds, so a body that left falling goes on
-// falling and a pile that slept does not all wake when its block comes
-// back. Noita keeps neither: its bodies come back at rest and awake (C137,
-// BODY_BLOCK_RESIDENCY 6.1-6.2). To do as Noita does, return zeros and
-// false.
-func restoreMotion(r *save.Body) (physics.Vec2, float32, bool) {
-	return physics.Vec2{X: r.VX, Y: r.VY}, r.Spin, !r.Awake
+// velocity a body made again from r starts with. 🔶 It keeps what r holds,
+// so a body that left falling goes on falling. Noita's come back at rest
+// (C137, BODY_BLOCK_RESIDENCY 6.1-6.2); to do as Noita does, return zeros.
+//
+// Every body comes back awake, as Noita's do, though r says whether it
+// slept: a body made asleep in Box2D sleeps alone, with no touching contact
+// to the bodies beside it, so Box2D would not wake it when what holds it
+// up is dug away or cut (three Codex reviews). Awake, the bodies settle
+// and fall asleep together again within a second.
+func restoreMotion(r *save.Body) (physics.Vec2, float32) {
+	return physics.Vec2{X: r.VX, Y: r.VY}, r.Spin
 }
 
 // Reset starts Box2D anew, as New does: a world with only the walls, and

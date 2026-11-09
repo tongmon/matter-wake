@@ -274,7 +274,6 @@ func (s *System) Write() {
 		b := &s.bodies[i]
 		b.p, b.q = s.phys.Transform(b.id)
 	}
-	s.wakeLoaded()
 	s.sync()
 }
 
@@ -284,7 +283,6 @@ func (s *System) Write() {
 // cells near it: they may be its cells again. So a cell covered by bodies
 // that move away comes back, even while its body sleeps.
 func (s *System) sync() {
-	s.wakeNextToGone()
 	s.freed = append(s.freed[:0], s.gone...)
 	s.gone = s.gone[:0]
 	for i := range s.bodies {
@@ -315,22 +313,6 @@ func (s *System) sync() {
 		b := &s.bodies[i]
 		if b.moved || b.force {
 			s.write(b, uint16(i))
-		}
-	}
-}
-
-// wakeNextToGone wakes the bodies whose cells lie within a cell of a body
-// removed since the last Write, dug away or gone with its block: they may
-// have rested on it. Box2D wakes the bodies touching a body it removes,
-// but bodies made again asleep have no touching contact until one of them
-// moves (Codex review).
-func (s *System) wakeNextToGone() {
-	for _, g := range s.gone {
-		g = rect{g.x0 - 1, g.y0 - 1, g.x1 + 1, g.y1 + 1}
-		for i := range s.bodies {
-			if b := &s.bodies[i]; b.written && !b.frozen && b.box.overlaps(g) {
-				s.phys.Wake(b.id)
-			}
 		}
 	}
 }
