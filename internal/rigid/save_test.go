@@ -658,3 +658,29 @@ func TestThawedSpinningBodyHasItsTerrainFirst(t *testing.T) {
 		t.Fatal("the plank stays frozen with the block back")
 	}
 }
+
+// Taking out every block at once, as a save does, records each body as it
+// was before any left: a sleeping box on a plank that leaves with the first
+// block is saved asleep with the second. Found by the fifth Codex review of
+// body saves (2026-11-09).
+func TestUnloadBlocksKeepsSleepAcrossBlocks(t *testing.T) {
+	s, w, id := newStreamedSystem(t, 2, 1)
+	floor := w.Height() - 4
+	drop(t, s, id.wood, 300, floor-6, 440, 6)  // touches both blocks
+	drop(t, s, id.wood, 600, floor-18, 16, 12) // on it, in block 1 alone
+	for range 300 {
+		tick(t, s, w)
+	}
+	for i := range s.bodies {
+		if s.phys.Awake(s.bodies[i].id) {
+			t.Fatalf("body %d did not fall asleep", i)
+		}
+	}
+	out := s.UnloadBlocks([][2]int{{0, 0}, {1, 0}})
+	if len(out) != 2 || len(out[0]) != 1 || len(out[1]) != 1 || len(s.bodies) != 0 {
+		t.Fatalf("blocks took %v bodies, %d stayed; want the plank with block 0 and the box with block 1", out, len(s.bodies))
+	}
+	if out[0][0].Key != 0 || out[1][0].Key != 1 || out[0][0].Awake || out[1][0].Awake {
+		t.Fatalf("records %+v and %+v; want the plank and the box, both asleep", out[0][0], out[1][0])
+	}
+}

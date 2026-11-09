@@ -417,8 +417,8 @@ func (g *Game) SaveBlocks() error {
 	states := g.world.ChunkStates()
 	blocks := g.ResidentBlocks()
 	out := make([]save.Block, len(blocks))
-	for i, b := range blocks {
-		out[i].Bodies = g.bodies.Unload(b[0], b[1], nil)
+	for i, bodies := range g.bodies.UnloadBlocks(blocks) {
+		out[i].Bodies = bodies
 	}
 	if err := g.bodies.Reset(); err != nil {
 		return fmt.Errorf("game: %w", err)

@@ -130,6 +130,43 @@ func (s *System) Unload(bx, by int, out []save.Body) []save.Body {
 	return out
 }
 
+// UnloadBlocks takes every body out with blocks, as Unload would for each
+// block in turn, each body with the first block of them it touches, and
+// returns each block's records. It records every body before removing any,
+// so a body that rested on one leaving with an earlier block is recorded
+// as it was, not as Box2D woke it (Codex review). A save takes out all the
+// blocks in memory this way.
+func (s *System) UnloadBlocks(blocks [][2]int) [][]save.Body {
+	out := make([][]save.Body, len(blocks))
+	dead := false
+	for i := range s.bodies {
+		b := &s.bodies[i]
+		for k, at := range blocks {
+			if s.leavesWith(b, blockCells(at[0], at[1])) {
+				out[k] = append(out[k], s.record(b))
+				b.dead, dead = true, true
+				break
+			}
+		}
+	}
+	for i := range s.bodies {
+		if b := &s.bodies[i]; b.dead {
+			s.erase(b, uint16(i))
+			if b.written {
+				s.gone = append(s.gone, b.box)
+			}
+			s.phys.DestroyBody(b.id)
+		}
+	}
+	if dead {
+		s.compact()
+	}
+	for _, at := range blocks {
+		s.dropTerrain(blockCells(at[0], at[1]))
+	}
+	return out
+}
+
 // dropTerrain drops the terrain collision of the chunks in area: a block
 // that left memory.
 func (s *System) dropTerrain(area rect) {
