@@ -40,9 +40,6 @@ func TestGoldenReplays(t *testing.T) {
 	for _, path := range paths {
 		t.Run(filepath.Base(path), func(t *testing.T) {
 			r := load(t, path)
-			if r.Creative {
-				t.Fatal("a golden replay must be in play mode: creative mode makes cells, so nothing pins their conservation")
-			}
 			got, cov := trace(t, r, tab, 1)
 			// The result must not depend on the worker count.
 			if many, _ := trace(t, r, tab, 4); many != got {
@@ -61,16 +58,25 @@ func TestGoldenReplays(t *testing.T) {
 			all.placed, all.dug[material.Powder], all.dug[material.Static], all.dug[material.Solid], all.selected,
 			all.dropped, all.broken, all.queued)
 	}
+	if all.made == 0 || all.changed[0] == 0 || all.changed[1] == 0 || all.changed[2] == 0 || all.moving == 0 {
+		t.Fatalf("the replays make %d cells in creative mode, change the brush %d times, the mode %d times and the body "+
+			"tool %d times, and drop %d bodies turned or moving; each must happen",
+			all.made, all.changed[0], all.changed[1], all.changed[2], all.moving)
+	}
 }
 
 // coverage counts what a replay's inputs did: broken counts the bodies
-// that breaking added.
+// that breaking added, made the cells creative mode made and moving the
+// bodies dropped turned or moving.
 type coverage struct {
-	placed, selected, dropped, broken int
+	placed, selected, dropped, broken, made, moving int
 	// dug counts the cells dug out by their material's kind.
 	dug [material.Solid + 1]int
 	// queued counts the ticks that ended with cells in the queue.
 	queued int
+	// changed counts the ticks that changed the brush, the mode and the
+	// body tool to something new.
+	changed [3]int
 }
 
 func (c *coverage) add(o *coverage) {
@@ -78,9 +84,14 @@ func (c *coverage) add(o *coverage) {
 	c.selected += o.selected
 	c.dropped += o.dropped
 	c.broken += o.broken
+	c.made += o.made
+	c.moving += o.moving
 	c.queued += o.queued
 	for k, n := range o.dug {
 		c.dug[k] += n
+	}
+	for k, n := range o.changed {
+		c.changed[k] += n
 	}
 }
 
@@ -89,14 +100,15 @@ func (c *coverage) add(o *coverage) {
 // the bodies and the checksum at tick 0, every traceEvery ticks and at the
 // end. In the rooms, after every tick it checks that nothing made or
 // destroyed a cell: each material's cells in the world, in the queue and
-// in the inventory are what they were at the start. The tools only move
-// cells between the world and the inventory, the world's own tick neither
-// makes nor destroys them, and a body pushes cells into the queue. Solids
-// are counted in the bodies' images instead, since a turned body covers
-// more or fewer cells than it has pixels; they grow only by what the body
-// tool drops, and what is dug or broken off a body goes into the
-// inventory. In the terrain the counts cover the blocks in memory, which
-// come and go.
+// in the inventory are what they were at the start, plus what creative
+// mode made (game.Game.Made), from whichever tick it was turned on. The
+// tools only move cells between the world and the inventory, the world's
+// own tick neither makes nor destroys them, and a body pushes cells into
+// the queue. Solids are counted in the bodies' images instead, since a
+// turned body covers more or fewer cells than it has pixels; they grow
+// only by what the body tool drops, and what is dug or broken off a body
+// goes into the inventory. In the terrain the counts cover the blocks in
+// memory, which come and go.
 func trace(t *testing.T, r *Replay, tab *material.Table, workers int) (string, coverage) {
 	t.Helper()
 	g := newGame(t, r.Config(tab, workers))
@@ -117,21 +129,28 @@ func trace(t *testing.T, r *Replay, tab *material.Table, workers int) (string, c
 	}
 	line()
 	held := make([]int, tab.Len())
-	for i, in := range r.Inputs {
+	for i := range r.Inputs {
+		in := &r.Inputs[i]
 		if in.Select >= 1 && in.Select <= len(r.Slots) {
 			cov.selected++
 		}
 		for id := range held {
 			held[id] = g.Inventory(material.ID(id))
 		}
-		bodies, dropped := g.Bodies(), g.Dropped()
+		bodies, dropped, made := g.Bodies(), g.Dropped(), madeCells(g, tab)
+		was := settings{g.Tool(), g.Creative(), g.Body()}
 		if err := g.Step(in); err != nil {
 			t.Fatal(err)
 		}
+		cov.count(&was, &settings{g.Tool(), g.Creative(), g.Body()})
+		cov.made += madeCells(g, tab) - made
 		if n := g.Dropped() - dropped; n > 0 {
 			cov.dropped += n
-			m := tab.MustLookup(r.Body.Material)
-			start[m] += n * r.Body.Width * r.Body.Height
+			body := g.Body()
+			if body.Angle != 0 || body.VX != 0 || body.VY != 0 {
+				cov.moving += n
+			}
+			start[tab.MustLookup(body.Material)] += n * body.Width * body.Height
 		}
 		if n := g.Bodies() - bodies - (g.Dropped() - dropped); n > 0 {
 			cov.broken += n
@@ -161,19 +180,48 @@ func trace(t *testing.T, r *Replay, tab *material.Table, workers int) (string, c
 	return b.String(), cov
 }
 
+// settings are the settings a game.Change sets.
+type settings struct {
+	tool     game.Tool
+	creative bool
+	body     game.BodyTool
+}
+
+// count counts the settings that changed from was to now.
+func (c *coverage) count(was, now *settings) {
+	for k, changed := range [...]bool{was.tool != now.tool, was.creative != now.creative, was.body != now.body} {
+		if changed {
+			c.changed[k]++
+		}
+	}
+}
+
+// madeCells returns how many cells creative mode has made in all.
+func madeCells(g *game.Game, tab *material.Table) int {
+	n := make([]int, tab.Len())
+	g.Made(n)
+	sum := 0
+	for _, m := range n {
+		sum += m
+	}
+	return sum
+}
+
 // totals returns each material's cells in the world and in its queue plus
-// what the inventory holds of it, and for a solid the pixels of the
-// bodies' images instead of its cells. Air is left out: it is what digging
-// and bodies leave.
+// what the inventory holds of it, less what creative mode made, and for a
+// solid the pixels of the bodies' images instead of its cells. Air is
+// left out: it is what digging and bodies leave.
 func totals(g *game.Game, tab *material.Table) []int {
 	n := countCells(g, tab)
 	g.World().Queued(n)
 	n[material.Air] = 0
+	made := make([]int, len(n))
+	g.Made(made)
 	for id := 1; id < len(n); id++ {
 		if tab.Def(material.ID(id)).Kind == material.Solid {
 			n[id] = 0
 		}
-		n[id] += g.Inventory(material.ID(id))
+		n[id] += g.Inventory(material.ID(id)) - made[id]
 	}
 	g.BodyPixels(n)
 	return n

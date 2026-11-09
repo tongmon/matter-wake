@@ -82,7 +82,7 @@ func TestStreamFollowsTheCamera(t *testing.T) {
 			x -= 32
 		}
 		x, y = min(max(x, 0), 4096-480), min(max(y, 0), 4096-270)
-		step(t, g, Input{CameraX: x, CameraY: y})
+		step(t, g, &Input{CameraX: x, CameraY: y})
 		checkResidency(t, g, x, y)
 	}
 }
@@ -99,7 +99,7 @@ func TestLeavingAndComingBackKeepsTheBlocks(t *testing.T) {
 		if i < 40 && i%8 == 0 {
 			in.CursorX, in.CursorY, in.Drop = x+120+10*i, y+60, true
 		}
-		step(t, g, in)
+		step(t, g, &in)
 	}
 	if g.Bodies() != 5 {
 		t.Fatalf("%d bodies; the test needs the 5 dropped", g.Bodies())
@@ -187,7 +187,7 @@ func TestTerrainIsIndependentOfWorkers(t *testing.T) {
 		x, y := g.Spawn()
 		for i := range 90 {
 			in := Input{CameraX: x + 16*i, CameraY: y, CursorX: x + 16*i + 240, CursorY: y + 200, Dig: i%3 == 0}
-			step(t, g, in)
+			step(t, g, &in)
 		}
 		sums = append(sums, g.world.Checksum())
 	}

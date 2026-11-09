@@ -7,22 +7,24 @@
 // The format is line-based text, so replays diff well and can be written
 // by hand:
 //
-//	matter-wake-replay 6
+//	matter-wake-replay 7
 //	seed 1
 //	size 480 270
 //	scene sandbox
 //	view 480 270
 //	stream 64 4 512 12 60
 //	budget 300000
-//	tool 10 2000 4
-//	body wood 16 12
+//	tool 10 2000 4 circle
+//	body wood 16 12 0 0 0
 //	mode play
 //	slots sand water stone
 //	materials 3f2a9c0d1e4b5a67
 //	ticks 600
 //	20 240 60 - 3 0 0
-//	21 240 60 P 0 0 0
-//	50 240 60 - 0 0 0
+//	21 240 60 P 0 0 0 brush 8 square
+//	22 240 60 P 0 0 0
+//	50 240 60 B 0 0 0 body wood 8 4 30 50 0
+//	51 240 60 - 0 0 0
 //
 // The first line names the format and its version. The header follows in
 // this order: the world seed, the world size in cells, the scene (sandbox,
@@ -30,8 +32,10 @@
 // stream (the grid, the lead and its cap, the target and the ticks between
 // checks, as in game.Stream), the budget (how many cells a tick may scan, 0
 // for no limit, as in game.Config.Budget), the tool (its power, its damage
-// per tick and its brush radius, as in game.Tool), the body tool (the
-// solid its bodies are made of and their width and height in pixels, or
+// per tick, its brush radius and the brush's shape, circle or square, as
+// in game.Tool), the body tool (the solid its bodies are made of, their
+// width and height in pixels, their angle in degrees clockwise and the
+// velocity they start with in cells per second, rightward and downward, or
 // none, as in game.BodyTool), the mode (play, or creative for
 // game.Config.Creative), the materials the slots hold in key order, the
 // fingerprint of the material table (material.Table.Fingerprint) and the
@@ -41,9 +45,17 @@
 // where the input changes: the cursor's x and y in cells, the buttons (P
 // to place, D to dig, B to drop a body, in that order, as many as are
 // pressed, or - for none), the slot to select, 0 to keep the current one,
-// and the camera's x and y: the top-left cell of the view. Ticks before
-// the first line have no input. Blank lines and lines starting with # are
-// ignored.
+// and the camera's x and y: the top-left cell of the view. The settings
+// the input changes (game.Change) may follow, each at most once and in
+// this order: brush and its radius and shape, mode and the mode, body and
+// the body tool as the header writes it. Setting a value again changes
+// nothing, so a change in effect for several ticks does no harm. Ticks
+// before the first line have no input. Blank lines and lines starting
+// with # are ignored.
+//
+// Version 6 files are read too and mean the same: their tool line has no
+// shape (the brush is round), their body line no angle or velocity (0),
+// and their input lines no changes.
 //
 // The package reads and writes streams; the app layer opens the files.
 package replay
@@ -62,9 +74,14 @@ import (
 	"github.com/tongmon/matter-wake/internal/material"
 )
 
-// Version is the format version this build reads and writes. A change to
-// the format raises it, and older files are refused rather than misread.
-const Version = 6
+// Version is the format version this build writes. A change to the format
+// raises it. Files of this version and of oldVersion, the one before,
+// which means the same in this one, are read; other versions are refused
+// rather than misread.
+const Version = 7
+
+// oldVersion is the older format version this build still reads.
+const oldVersion = 6
 
 // magic is the first word of every replay.
 const magic = "matter-wake-replay"
@@ -123,7 +140,7 @@ func (r *Replay) Config(mats *material.Table, workers int) *game.Config {
 	}
 }
 
-// Write encodes r.
+// Write encodes r in the current version.
 func Write(w io.Writer, r *Replay) error {
 	if err := r.validate(); err != nil {
 		return err
@@ -134,14 +151,16 @@ func Write(w io.Writer, r *Replay) error {
 	_, _ = fmt.Fprintf(bw, "%s %d\nseed %d\nsize %d %d\nscene %s\nview %d %d\nstream %d %d %d %d %d\nbudget %d\n",
 		magic, Version, r.Seed, r.Width, r.Height, sceneWord(r.Scene), r.ViewWidth, r.ViewHeight,
 		s.Grid, s.Lead, s.LeadMax, s.Target, s.Check, r.Budget)
-	_, _ = fmt.Fprintf(bw, "tool %d %d %d\nbody %s\nmode %s\nslots %s\nmaterials %s\nticks %d\n",
-		r.Tool.Power, r.Tool.Rate, r.Tool.Radius, bodyWords(r.Body), mode(r.Creative), strings.Join(r.Slots, " "), r.Materials, len(r.Inputs))
+	_, _ = fmt.Fprintf(bw, "tool %d %d %d %s\nbody %s\nmode %s\nslots %s\nmaterials %s\nticks %d\n",
+		r.Tool.Power, r.Tool.Rate, r.Tool.Radius, r.Tool.Shape, bodyWords(&r.Body), mode(r.Creative),
+		strings.Join(r.Slots, " "), r.Materials, len(r.Inputs))
 	var prev game.Input
-	for i, in := range r.Inputs {
-		if in != prev {
-			_, _ = fmt.Fprintf(bw, "%d %d %d %s %d %d %d\n",
-				i, in.CursorX, in.CursorY, buttons(in), in.Select, in.CameraX, in.CameraY)
-			prev = in
+	for i := range r.Inputs {
+		in := &r.Inputs[i]
+		if *in != prev {
+			_, _ = fmt.Fprintf(bw, "%d %d %d %s %d %d %d%s\n",
+				i, in.CursorX, in.CursorY, buttons(in), in.Select, in.CameraX, in.CameraY, changeWords(&in.Change))
+			prev = *in
 		}
 	}
 	if err := bw.Flush(); err != nil {
@@ -162,10 +181,10 @@ func (r *Replay) validate() error {
 		return fmt.Errorf("replay: stream %+v needs a grid and leads of 0 or more, a target of 1 or more and checks 1 tick or more apart", r.Stream)
 	case r.Budget < 0:
 		return fmt.Errorf("replay: budget %d is negative", r.Budget)
-	case r.Tool.Rate == 0 || r.Tool.Radius < 0:
-		return fmt.Errorf("replay: tool %+v needs a rate of 1 or more and a radius of 0 or more", r.Tool)
-	case r.Body.Material != "" && (!isWord(r.Body.Material) || r.Body.Material == bodyNone || r.Body.Width < 1 || r.Body.Height < 1):
-		return fmt.Errorf("replay: body tool %+v needs a material of one word other than %q and a positive size", r.Body, bodyNone)
+	case r.Tool.Rate == 0 || !brushValid(r.Tool.Radius, r.Tool.Shape):
+		return fmt.Errorf("replay: tool %+v needs a rate of 1 or more, a radius of 0 to %d and a known shape", r.Tool, game.MaxRadius)
+	case !bodyValid(&r.Body):
+		return fmt.Errorf("replay: body tool %+v: %s", r.Body, bodyWant)
 	case len(r.Slots) == 0:
 		return errors.New("replay: no material slots")
 	case !isWord(r.Materials):
@@ -178,9 +197,13 @@ func (r *Replay) validate() error {
 			return fmt.Errorf("replay: slot %d names %q, which is not one word", i+1, name)
 		}
 	}
-	for i, in := range r.Inputs {
+	for i := range r.Inputs {
+		in := &r.Inputs[i]
 		if in.Select < 0 {
 			return fmt.Errorf("replay: tick %d selects slot %d", i, in.Select)
+		}
+		if err := checkChange(&in.Change); err != nil {
+			return fmt.Errorf("replay: tick %d: %w", i, err)
 		}
 	}
 	return nil
@@ -190,6 +213,61 @@ func (r *Replay) validate() error {
 // it reads back as one field.
 func isWord(s string) bool {
 	return s != "" && !strings.ContainsFunc(s, unicode.IsSpace)
+}
+
+// brushValid reports whether a brush of radius r and shape s is one the
+// game takes.
+func brushValid(r int, s game.Shape) bool {
+	return r >= 0 && r <= game.MaxRadius && (s == game.ShapeCircle || s == game.ShapeSquare)
+}
+
+// bodyWant says what a body tool needs, for errors.
+var bodyWant = fmt.Sprintf("want a material of one word other than %q, a positive size, an angle of %d to %d "+
+	"and a velocity of %d to %d either way, or %s", bodyNone, -game.MaxAngle, game.MaxAngle,
+	-game.MaxSpeed, game.MaxSpeed, bodyNone)
+
+// bodyValid reports whether t is a body tool a replay can hold: no tool,
+// or one whose numbers the game takes. Whether its material is a solid
+// depends on the material table, which the game checks.
+func bodyValid(t *game.BodyTool) bool {
+	if t.Material == "" {
+		return *t == game.BodyTool{}
+	}
+	return isWord(t.Material) && t.Material != bodyNone && t.Width >= 1 && t.Height >= 1 &&
+		t.Angle >= -game.MaxAngle && t.Angle <= game.MaxAngle &&
+		t.VX >= -game.MaxSpeed && t.VX <= game.MaxSpeed && t.VY >= -game.MaxSpeed && t.VY <= game.MaxSpeed
+}
+
+// allChanges are the changes a replay holds.
+const allChanges = game.ChangeBrush | game.ChangeMode | game.ChangeBody
+
+// checkChange reports why c cannot be written.
+func checkChange(c *game.Change) error {
+	switch {
+	case c.What&^allChanges != 0:
+		return fmt.Errorf("unknown changes %#x", c.What&^allChanges)
+	case c.What&game.ChangeBrush != 0 && !brushValid(c.Radius, c.Shape):
+		return fmt.Errorf("brush %d %s: want a radius of 0 to %d and a known shape", c.Radius, c.Shape, game.MaxRadius)
+	case c.What&game.ChangeBody != 0 && !bodyValid(&c.Body):
+		return fmt.Errorf("body tool %+v: %s", c.Body, bodyWant)
+	}
+	// What a change does not set must be zero, or it would not read back
+	// the same.
+	unset := *c
+	unset.What = 0
+	if c.What&game.ChangeBrush != 0 {
+		unset.Radius, unset.Shape = 0, 0
+	}
+	if c.What&game.ChangeMode != 0 {
+		unset.Creative = false
+	}
+	if c.What&game.ChangeBody != 0 {
+		unset.Body = game.BodyTool{}
+	}
+	if unset != (game.Change{}) {
+		return fmt.Errorf("change %+v holds values for settings it does not change", *c)
+	}
+	return nil
 }
 
 // The words of the mode line.
@@ -226,17 +304,40 @@ func mode(creative bool) string {
 // bodyNone is the body line's word for no body tool.
 const bodyNone = "none"
 
-func bodyWords(t game.BodyTool) string {
+func bodyWords(t *game.BodyTool) string {
 	if t.Material == "" {
 		return bodyNone
 	}
-	return fmt.Sprintf("%s %d %d", t.Material, t.Width, t.Height)
+	return fmt.Sprintf("%s %d %d %d %d %d", t.Material, t.Width, t.Height, t.Angle, t.VX, t.VY)
+}
+
+// The words that start the changes of an input line, in the order they
+// are written.
+var changeKeys = [...]string{"brush", "mode", "body"}
+
+// changeWords returns the words of the changes c makes, each after a
+// space, or "" for none.
+func changeWords(c *game.Change) string {
+	if c.What == 0 {
+		return ""
+	}
+	var b strings.Builder
+	if c.What&game.ChangeBrush != 0 {
+		fmt.Fprintf(&b, " %s %d %s", changeKeys[0], c.Radius, c.Shape)
+	}
+	if c.What&game.ChangeMode != 0 {
+		fmt.Fprintf(&b, " %s %s", changeKeys[1], mode(c.Creative))
+	}
+	if c.What&game.ChangeBody != 0 {
+		fmt.Fprintf(&b, " %s %s", changeKeys[2], bodyWords(&c.Body))
+	}
+	return b.String()
 }
 
 // The buttons of an input line, in the order they are written.
 var buttonLetters = [...]byte{'P', 'D', 'B'}
 
-func buttons(in game.Input) string {
+func buttons(in *game.Input) string {
 	var b []byte
 	for i, on := range [...]bool{in.Place, in.Dig, in.Drop} {
 		if on {
@@ -273,7 +374,7 @@ func parseButtons(s string, in *game.Input) error {
 // Read decodes a replay written by Write or by hand.
 func Read(rd io.Reader) (*Replay, error) {
 	p := &parser{sc: bufio.NewScanner(rd)}
-	if err := p.version(); err != nil {
+	if err := p.readVersion(); err != nil {
 		return nil, err
 	}
 	r := &Replay{}
@@ -294,6 +395,8 @@ func Read(rd io.Reader) (*Replay, error) {
 type parser struct {
 	sc   *bufio.Scanner
 	line int
+	// version is the file's format version.
+	version int
 }
 
 // next returns the next line that is neither blank nor a comment, without
@@ -315,7 +418,7 @@ func (p *parser) errorf(format string, args ...any) error {
 	return fmt.Errorf("replay: line %d: %s", p.line, fmt.Sprintf(format, args...))
 }
 
-func (p *parser) version() error {
+func (p *parser) readVersion() error {
 	s, _ := p.next()
 	f := strings.Fields(s)
 	if len(f) != 2 || f[0] != magic {
@@ -325,9 +428,10 @@ func (p *parser) version() error {
 	switch {
 	case err != nil:
 		return p.errorf("bad format version %q", f[1])
-	case v != Version:
-		return p.errorf("format version %d; this build reads version %d", v, Version)
+	case v != Version && v != oldVersion:
+		return p.errorf("format version %d; this build reads versions %d and %d", v, oldVersion, Version)
 	}
+	p.version = v
 	return nil
 }
 
@@ -364,17 +468,8 @@ func (p *parser) header(r *Replay) (int, error) {
 	if err := p.view(r); err != nil {
 		return 0, err
 	}
-	if f, err = p.field("tool", "tool <power> <rate> <radius>", 3); err != nil {
+	if err := p.tools(r); err != nil {
 		return 0, err
-	}
-	if r.Tool, err = parseTool(f); err != nil {
-		return 0, p.errorf("%v", err)
-	}
-	if f, err = p.field("body", "body <material> <width> <height> | body none", 0); err != nil {
-		return 0, err
-	}
-	if r.Body, err = parseBody(f); err != nil {
-		return 0, p.errorf("%v", err)
 	}
 	if f, err = p.field("mode", "mode play|creative", 1); err != nil {
 		return 0, err
@@ -453,37 +548,85 @@ func (p *parser) view(r *Replay) error {
 	return nil
 }
 
+// tools reads the tool and body lines into r.
+func (p *parser) tools(r *Replay) error {
+	toolWant, toolFields := "tool <power> <rate> <radius> <shape>", 4
+	bodyWantLine := "body <material> <width> <height> <angle> <vx> <vy> | body none"
+	if p.version == oldVersion {
+		toolWant, toolFields = "tool <power> <rate> <radius>", 3
+		bodyWantLine = "body <material> <width> <height> | body none"
+	}
+	f, err := p.field("tool", toolWant, toolFields)
+	if err != nil {
+		return err
+	}
+	if r.Tool, err = parseTool(f); err != nil {
+		return p.errorf("%v", err)
+	}
+	if f, err = p.field("body", bodyWantLine, 0); err != nil {
+		return err
+	}
+	if r.Body, err = p.parseBody(f); err != nil {
+		return p.errorf("%v", err)
+	}
+	return nil
+}
+
 // streamValid reports whether s describes a stream the game takes.
 func streamValid(s game.Stream) bool {
 	return s.Grid >= 0 && s.Lead >= 0 && s.LeadMax >= 0 && s.Target >= 1 && s.Check >= 1
 }
 
-// parseTool parses the power, rate and radius fields of the tool line.
+// parseTool parses the power, rate, radius and, in version 7, shape fields
+// of the tool line.
 func parseTool(f []string) (game.Tool, error) {
 	power, perr := strconv.ParseUint(f[0], 10, 8)
 	rate, rerr := strconv.ParseUint(f[1], 10, 32)
 	radius, aerr := strconv.Atoi(f[2])
-	if perr != nil || rerr != nil || aerr != nil || rate == 0 || radius < 0 {
-		return game.Tool{}, fmt.Errorf("tool %s: want a power of 0 to 255, a rate of 1 or more and a radius of 0 or more",
-			strings.Join(f, " "))
+	shape, sok := game.ShapeCircle, true
+	if len(f) > 3 {
+		shape, sok = parseShape(f[3])
 	}
-	return game.Tool{Power: uint8(power), Rate: uint32(rate), Radius: radius}, nil
+	if perr != nil || rerr != nil || aerr != nil || !sok || rate == 0 || !brushValid(radius, shape) {
+		return game.Tool{}, fmt.Errorf("tool %s: want a power of 0 to 255, a rate of 1 or more, a radius of 0 to %d and a shape, %s or %s",
+			strings.Join(f, " "), game.MaxRadius, game.ShapeCircle, game.ShapeSquare)
+	}
+	return game.Tool{Power: uint8(power), Rate: uint32(rate), Radius: radius, Shape: shape}, nil
 }
 
-// parseBody parses the fields of the body line.
-func parseBody(f []string) (game.BodyTool, error) {
+// parseShape parses a brush's shape.
+func parseShape(s string) (game.Shape, bool) {
+	for _, shape := range [...]game.Shape{game.ShapeCircle, game.ShapeSquare} {
+		if s == shape.String() {
+			return shape, true
+		}
+	}
+	return 0, false
+}
+
+// parseBody parses the fields of a body tool: none, or its material, its
+// size and, in version 7, its angle and velocity.
+func (p *parser) parseBody(f []string) (game.BodyTool, error) {
 	if len(f) == 1 && f[0] == bodyNone {
 		return game.BodyTool{}, nil
 	}
-	if len(f) == 3 {
-		w, werr := strconv.Atoi(f[1])
-		h, herr := strconv.Atoi(f[2])
-		if werr == nil && herr == nil && w >= 1 && h >= 1 {
-			return game.BodyTool{Material: f[0], Width: w, Height: h}, nil
+	numbers := 5
+	if p.version == oldVersion {
+		numbers = 2
+	}
+	if len(f) == numbers+1 {
+		var v [5]int
+		ok := true
+		for i := range numbers {
+			n, err := strconv.Atoi(f[i+1])
+			v[i], ok = n, ok && err == nil
+		}
+		t := game.BodyTool{Material: f[0], Width: v[0], Height: v[1], Angle: v[2], VX: v[3], VY: v[4]}
+		if ok && bodyValid(&t) {
+			return t, nil
 		}
 	}
-	return game.BodyTool{}, fmt.Errorf("body %s: want a material and a positive width and height, or %s",
-		strings.Join(f, " "), bodyNone)
+	return game.BodyTool{}, fmt.Errorf("body %s: %s", strings.Join(f, " "), bodyWant)
 }
 
 // inputs reads the input lines into dst, which holds one input per tick.
@@ -497,21 +640,24 @@ func (p *parser) inputs(dst []game.Input) error {
 			break
 		}
 		f := strings.Fields(s)
-		if len(f) != 7 {
-			return p.errorf("want %q, got %q", "<tick> <x> <y> <buttons> <slot> <camera x> <camera y>", s)
+		if len(f) < 7 || len(f) > 7 && p.version == oldVersion {
+			return p.errorf("want %q, got %q", "<tick> <x> <y> <buttons> <slot> <camera x> <camera y> [<changes>]", s)
 		}
 		tick, err := strconv.Atoi(f[0])
 		if err != nil || tick <= last || tick >= len(dst) {
 			return p.errorf("tick %q must increase from line to line and be below %d", f[0], len(dst))
 		}
-		in, err := parseInput(f[1:])
+		in, err := parseInput(f[1:7])
 		if err != nil {
 			return p.errorf("%v", err)
 		}
-		fill(dst[from:tick], cur)
+		if in.Change, err = p.parseChange(f[7:]); err != nil {
+			return p.errorf("%v", err)
+		}
+		fill(dst[from:tick], &cur)
 		cur, from, last = in, tick, tick
 	}
-	fill(dst[from:], cur)
+	fill(dst[from:], &cur)
 	return nil
 }
 
@@ -542,8 +688,67 @@ func parseInput(f []string) (game.Input, error) {
 	return in, nil
 }
 
-func fill(dst []game.Input, in game.Input) {
+// parseChange parses the changes at the end of an input line: brush, mode
+// and body, in that order, each at most once.
+func (p *parser) parseChange(f []string) (game.Change, error) {
+	var c game.Change
+	next := 0
+	for len(f) > 0 {
+		k := slices.Index(changeKeys[:], f[0])
+		if k < next {
+			return c, fmt.Errorf("changes %q: want %s, %s and %s in that order, each at most once",
+				strings.Join(f, " "), changeKeys[0], changeKeys[1], changeKeys[2])
+		}
+		next = k + 1
+		var err error
+		switch k {
+		case 0:
+			f, err = parseBrush(f[1:], &c)
+		case 1:
+			f, err = parseMode(f[1:], &c)
+		default:
+			// The body tool's words run to the end of the line.
+			if c.Body, err = p.parseBody(f[1:]); err == nil {
+				c.What |= game.ChangeBody
+			}
+			f = nil
+		}
+		if err != nil {
+			return c, err
+		}
+	}
+	return c, nil
+}
+
+// parseBrush parses the radius and shape of a brush change into c and
+// returns the words after them.
+func parseBrush(f []string, c *game.Change) ([]string, error) {
+	if len(f) >= 2 {
+		radius, err := strconv.Atoi(f[0])
+		shape, ok := parseShape(f[1])
+		if err == nil && ok && brushValid(radius, shape) {
+			c.What |= game.ChangeBrush
+			c.Radius, c.Shape = radius, shape
+			return f[2:], nil
+		}
+	}
+	return nil, fmt.Errorf("brush %s: want a radius of 0 to %d and a shape, %s or %s",
+		strings.Join(f, " "), game.MaxRadius, game.ShapeCircle, game.ShapeSquare)
+}
+
+// parseMode parses the mode of a mode change into c and returns the words
+// after it.
+func parseMode(f []string, c *game.Change) ([]string, error) {
+	if len(f) == 0 || f[0] != modePlay && f[0] != modeCreative {
+		return nil, fmt.Errorf("mode %s: want %s or %s", strings.Join(f, " "), modePlay, modeCreative)
+	}
+	c.What |= game.ChangeMode
+	c.Creative = f[0] == modeCreative
+	return f[1:], nil
+}
+
+func fill(dst []game.Input, in *game.Input) {
 	for i := range dst {
-		dst[i] = in
+		dst[i] = *in
 	}
 }

@@ -169,7 +169,7 @@ func TestPrefetchingChangesNothing(t *testing.T) {
 		x := camX + 12*min(i, 300-i)
 		in := game.Input{CameraX: x, CameraY: camY, CursorX: x + 240, CursorY: camY + 160, Dig: i%5 == 0}
 		for _, g := range []*game.Game{plain, fast} {
-			if err := g.Step(in); err != nil {
+			if err := g.Step(&in); err != nil {
 				t.Fatal(err)
 			}
 		}

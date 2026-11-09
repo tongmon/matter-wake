@@ -1,0 +1,43 @@
+matter-wake-replay 7
+# The sandbox played with the test dashboard's changes: the brush's size
+# and shape, creative mode turned on and off, and bodies of other sizes
+# dropped turned and thrown. Creative mode places a square of stone in the
+# air and a ball of sand, which it makes from nothing; the conservation
+# check takes off what it made. Then three wooden bodies go in: one thrown
+# right at 5 m/s onto the sand on the left ledge, one turned 45° and
+# thrown down at 10 m/s onto the floor, and one thrown up and left at
+# 8 and 12 m/s against the stone square. A square brush digs a hole in
+# the square, and creative mode pours water over the floor's body.
+seed 1
+size 480 270
+scene sandbox
+view 480 270
+stream 64 4 512 12 60
+budget 250000
+tool 10 2000 4 circle
+body wood 16 12 0 0 0
+mode play
+slots sand water stone
+materials cbe9996c5ef09a49
+ticks 720
+
+# A square of stone in the air, then a ball of sand, in creative mode.
+60 240 40 P 3 0 0 brush 6 square mode creative
+62 240 40 - 0 0 0
+90 200 30 P 1 0 0 brush 3 circle
+94 200 30 - 0 0 0 mode play
+# Thrown right at 5 m/s, turned 30°.
+150 60 110 B 0 0 0 body wood 10 6 30 50 0
+151 60 110 - 0 0 0
+# Turned 45° and thrown down at 10 m/s.
+200 240 200 B 0 0 0 body wood 8 8 45 0 100
+201 240 200 - 0 0 0
+# Thrown up and left, flat but for 20° back.
+260 400 150 B 0 0 0 body wood 12 4 -20 -80 -120
+261 400 150 - 0 0 0
+# A square brush of radius 1 digs a 3×3 hole in the stone square.
+330 240 40 D 0 0 0 brush 1 square
+430 240 40 - 0 0 0
+# Water over the floor, in creative mode again.
+480 240 180 P 2 0 0 brush 5 circle mode creative
+490 240 180 - 0 0 0 mode play

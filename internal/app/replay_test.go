@@ -143,7 +143,7 @@ func TestRecordingStopsAtTheLimit(t *testing.T) {
 	a := &app{record: testReplay(), recordLimit: 4}
 	a.record.Inputs = nil
 	for i := range 6 {
-		a.recordInput(game.Input{CursorX: i})
+		a.recordInput(&game.Input{CursorX: i})
 	}
 	if n := len(a.record.Inputs); n != 4 {
 		t.Fatalf("recorded %d inputs, want the limit of 4", n)

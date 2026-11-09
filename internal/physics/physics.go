@@ -112,6 +112,59 @@ static void physicsSetVelocity( b2BodyId body, b2Vec2 v, float w )
 	b2Body_SetAngularVelocity( body, w );
 }
 
+// Writes the edges of the body's polygons and chain segments into out, in
+// world coordinates, four floats an edge: as many as fit in cap edges. ids
+// has room for n shapes. Returns how many edges there are, which may be
+// more than cap.
+static int physicsEdges( b2BodyId body, b2ShapeId* ids, int n, float* out, int cap )
+{
+	n = b2Body_GetShapes( body, ids, n );
+	b2Transform xf = b2Body_GetTransform( body );
+	int edges = 0;
+	for ( int k = 0; k < n; ++k )
+	{
+		b2Vec2 a[B2_MAX_POLYGON_VERTICES], b[B2_MAX_POLYGON_VERTICES];
+		int m = 0;
+		switch ( b2Shape_GetType( ids[k] ) )
+		{
+			case b2_polygonShape:
+			{
+				b2Polygon p = b2Shape_GetPolygon( ids[k] );
+				for ( int i = 0; i < p.count; ++i )
+				{
+					a[m] = p.vertices[i];
+					b[m] = p.vertices[( i + 1 ) % p.count];
+					m += 1;
+				}
+				break;
+			}
+			case b2_chainSegmentShape:
+			{
+				b2ChainSegment c = b2Shape_GetChainSegment( ids[k] );
+				a[0] = c.segment.point1;
+				b[0] = c.segment.point2;
+				m = 1;
+				break;
+			}
+			default:
+				break;
+		}
+		for ( int i = 0; i < m; ++i, ++edges )
+		{
+			if ( edges < cap )
+			{
+				b2Vec2 p = b2TransformPoint( xf, a[i] );
+				b2Vec2 q = b2TransformPoint( xf, b[i] );
+				out[4 * edges] = p.x;
+				out[4 * edges + 1] = p.y;
+				out[4 * edges + 2] = q.x;
+				out[4 * edges + 3] = q.y;
+			}
+		}
+	}
+	return edges;
+}
+
 // Gives a body without shapes a box centered on its origin, made the way
 // a box body is, and its mass.
 static void physicsSetBox( b2BodyId body, float halfW, float halfH, float density, float friction,
@@ -150,6 +203,14 @@ type Rot struct {
 	C, S float32
 }
 
+// MakeRot returns the rotation by angle radians, counterclockwise, as Box2D
+// makes it for a body turned by that angle: its own cosine and sine, the
+// same on every CPU.
+func MakeRot(angle float32) Rot {
+	r := C.b2MakeRot(C.float(angle))
+	return Rot{C: float32(r.c), S: float32(r.s)}
+}
+
 // Config sets up a World.
 type Config struct {
 	// Gravity in meters per second squared, for example {0, -10} for down
@@ -170,6 +231,10 @@ type World struct {
 	points []C.b2Vec2
 	counts []C.int
 	def    *C.b2BodyDef
+	// ids and edges are Edges's buffers: the body's shapes, and four
+	// floats an edge.
+	ids   []C.b2ShapeId
+	edges []C.float
 }
 
 // NewWorld makes a World. Close it when done: its memory is C memory.
@@ -551,6 +616,42 @@ func (w *World) Rotation(b Body) Rot {
 func (w *World) Transform(b Body) (Vec2, Rot) {
 	t := C.b2Body_GetTransform(w.body(b))
 	return Vec2{float32(t.p.x), float32(t.p.y)}, Rot{float32(t.q.c), float32(t.q.s)}
+}
+
+// Edge is a line from (X0, Y0) to (X1, Y1), in meters.
+type Edge struct {
+	X0, Y0, X1, Y1 float32
+}
+
+// Edges appends to out the edges of b's shapes where b is now: each side
+// of each polygon and each segment of each chain. It is for drawing them;
+// the order is Box2D's.
+func (w *World) Edges(b Body, out []Edge) []Edge {
+	id := w.body(b)
+	shapes := int(C.b2Body_GetShapeCount(id))
+	if shapes == 0 {
+		return out
+	}
+	if len(w.ids) < shapes {
+		w.ids = make([]C.b2ShapeId, shapes)
+	}
+	for {
+		capacity := len(w.edges) / 4
+		var buf *C.float
+		if capacity > 0 {
+			buf = &w.edges[0]
+		}
+		ids := &w.ids[0]
+		n := int(C.physicsEdges(id, ids, C.int(shapes), buf, C.int(capacity)))
+		if n <= capacity {
+			for k := range n {
+				e := w.edges[4*k : 4*k+4]
+				out = append(out, Edge{X0: float32(e[0]), Y0: float32(e[1]), X1: float32(e[2]), Y1: float32(e[3])})
+			}
+			return out
+		}
+		w.edges = make([]C.float, 4*n)
+	}
 }
 
 // Velocity returns the velocity of the body's center of mass in meters per

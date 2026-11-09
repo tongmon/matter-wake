@@ -81,9 +81,9 @@ Module path: `github.com/tongmon/matter-wake`.
 | Path | Role | Ebitengine |
 |---|---|---|
 | `cmd/matter-wake/` | Entry point. Parses flags and calls `app.Run`. | via app |
-| `internal/app/` | Window, fixed-step loop, `-shots` capture, replay files (`-record`, `-replay`), the terrain's save folder (`-save`). | yes |
-| `internal/render/` | Draws a session: uploads cell colors, overlay. | yes |
-| `internal/input/` | Maps devices to `game.Input`. | yes |
+| `internal/app/` | Window, fixed-step loop, `-shots` capture, replay files (`-record`, `-replay`), the terrain's save folder (`-save`), the test dashboard's state, panel layout and time controls (`dash.go`, `-dash`). | yes |
+| `internal/render/` | Draws a session: uploads cell colors, overlay, the dashboard's panel and views. | yes |
+| `internal/input/` | Maps devices to `game.Input` and the dashboard's keys. | yes |
 | `internal/game/` | A play session: the world plus the player's tools and bodies, stepped by `Input`; in the big world it keeps the blocks around the camera in memory, with the bodies they own. | **no** |
 | `internal/world/` | The cell grid, kept in 512×512 blocks that can be loaded and unloaded, and its tick, including the queue of cells to put back that bodies push out. | **no** |
 | `internal/material/` | Material kinds and the data loader. | **no** |
@@ -140,6 +140,7 @@ Choose checks in proportion to the change:
 - **Visual and render changes:** capture PNGs at chosen ticks and inspect them:
   - `go run ./cmd/matter-wake -seed 1 -shots 0,60,300 -shots-dir out/shots` (the sandbox; add `-scene terrain` for the big world, shot from where the camera starts)
   - The game saves `out/shots/tick_000060.png` etc. at the logical resolution, without the overlay, ignores the mouse and keyboard, and exits after the last tick. A window opens briefly while it runs.
+  - `-dash panel,cell,bodies,chains,chunks,queue` draws those parts of the test dashboard into the shots too: the panel and the views (design.md 5절). The cell view shows the cell under the replay's cursor.
 - **Feel:** whether digging or the falling sand *feels* right needs the developer's playtest. Say so instead of claiming it.
 - **Docs and config-only changes:** proofread and check links.
 
