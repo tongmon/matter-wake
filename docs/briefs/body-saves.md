@@ -44,7 +44,7 @@
 | 블록의 몸체를 모아 저장 | internal/rigid/save.go `Unload`, `leavesWith`, internal/game/stream.go `unload` | 같음 | C137 전에는 "블록 안"의 기준이 자료에 없어 질량 중심이 든 블록으로 정했습니다. C137 뒤 Noita처럼 바꿈: 지금 변환의 돌린 사각형 범위를 1칸(🧪 `unloadMargin`) 넓혀 블록에 닿으면 함께 나감. Box2D AABB 대신 이미지 사각형의 범위를 씀(조각은 형상보다 조금 큼). 조인트가 없어 재귀 수집도 없음 |
 | 걸친 몸체는 통째로, 남는 블록의 칸도 비움 | internal/rigid/save.go `Unload`(`erase`) | 같음 | `TestBodiesLeaveWithEveryBlockTheyTouch`가 양쪽 방향을 확인 |
 | 비상주 블록으로 들어가는 몸체 | internal/rigid/save.go `freeze` | 다름(의도) | Noita는 계속 Step되다 청소로 사라짐(재질을 잃고, 청소는 전역 난수). 셀 보존과 결정성 때문에 얼립니다. references.md에 적음 |
-| 왕복에서 속도·수면을 버림 | internal/rigid/save.go `restoreMotion` | 속도는 다름(개발자 결정 대기), 수면은 같음 | 속도는 저장하고 되돌립니다. 수면은 기록하지만 깨워 되돌립니다(아래 빈칸) |
+| 왕복에서 속도·수면을 버림 | internal/rigid/save.go `restoreMotion` | 속도는 다름(개발자 결정, 2026-11-09), 수면은 같음 | 속도는 저장하고 되돌립니다. 수면은 기록하지만 깨워 되돌립니다(아래 빈칸) |
 | 저장하는 필드 | internal/save/bodies.go `Body` | 같음(뜻) | 픽셀마다 있음·색조·손상, key, 재질, 원점의 위치와 회전(cos, sin), 질량 중심의 속도와 각속도, 깨어 있는지, 처음 상자 그대로인지. 화면 좌표 대신 Box2D의 미터. 각도 대신 cos·sin이라 다시 만든 회전이 비트까지 같음 |
 | 몸체 → 블록 표에서 빼기 → 저장 순서 | internal/game/stream.go `unload` | 같음 | 몸체를 지우고 기록 → 대기열의 셀 → 셀 → 저장소. 저장소가 쓰기를 백그라운드에서 하는 것도 같음(`internal/app` prefetch.go) |
 | 질량·관성이 남음 | internal/rigid/save.go `Load` | 같음 | 같은 형상을 같은 순서로 다시 만들어 질량, 관성, 질량 중심이 비트까지 같음(`TestLoadedBodyIsTheSame`) |
@@ -91,12 +91,12 @@
   - 비상주 칸에는 몸체 픽셀을 쓰지 않고 지우지도 않습니다 (Noita 관측, 이미 있음)
   - 몸체는 블록을 요청하거나 붙잡지 않습니다 (Noita 관측, C137 5절)
 - 바꿔서 씀:
-  - 닿음의 기준은 Box2D AABB 대신 지금 변환에서 이미지의 돌린 사각형이 차지하는 범위를 🧪 1칸 넓힌 것 (Noita 관측의 1픽셀 수집·2픽셀 미수집을 맞춤. 조각은 형상보다 조금 넓게 봄)
+  - 닿음의 기준은 Box2D AABB 대신 지금 변환에서 이미지의 돌린 사각형이 차지하는 범위를 🧪 1칸 넓힌 것 (Noita 관측의 1픽셀 수집·2픽셀 미수집을 맞춤. 조각은 형상보다 조금 넓게 봄. 방식은 개발자 결정 2026-11-09, 칸 수는 🧪)
   - 위치는 화면 좌표 대신 Box2D 원점의 미터, 각도는 float32 각도 대신 cos·sin으로. 다시 만든 몸체가 비트까지 같게 (자체 설계)
-  - 비상주 블록에 닿을 수 있는 몸체는 얼림. Noita는 계속 Step되다 픽셀을 쓰지 못하고 청소로 지워져 재질을 잃음 (자체 설계, 셀 보존과 결정성)
-  - 왕복에서 속도를 지킴. Noita는 버림 (자체 설계, 개발자 결정 대기, `restoreMotion` 하나로 바꿀 수 있음). 잠은 Noita처럼 깨워 되돌림 (Noita 관측, Codex 리뷰가 찾은 Box2D 문제로 바꿈)
+  - 비상주 블록에 닿을 수 있는 몸체는 얼림. Noita는 계속 Step되다 픽셀을 쓰지 못하고 청소로 지워져 재질을 잃음 (자체 설계, 셀 보존과 결정성, 개발자 결정 2026-11-09)
+  - 왕복에서 속도를 지킴. Noita는 버림 (자체 설계, 개발자 결정 2026-11-09, `restoreMotion` 하나로 바꿀 수 있음). 잠은 Noita처럼 깨워 되돌림 (Noita 관측, Codex 리뷰가 찾은 Box2D 문제로 바꿈)
   - 세션 저장은 Box2D 스냅샷 대신 재구성 지점 (자체 설계, 위 Box2D 절)
-  - 대기열의 셀을 블록과 함께 저장 (자체 설계, Noita의 처리는 OPEN)
+  - 대기열의 셀을 블록과 함께 저장 (자체 설계, Noita의 처리는 OPEN, 개발자 결정 2026-11-09)
 - 쓰지 않음:
   - 조인트 재귀 수집 (조인트 없음)
   - 작은 몸체 청소 (C135 때 정한 대로)
@@ -108,15 +108,15 @@ TPT(The Powder Toy)에는 강체도 월드 스트리밍도 없습니다(스킬�
 
 | 빈칸 | 자료 상태 | TPT 방식 (파일:함수) | 우리 설계 (우리 제약에 맞춘 방법) | 측정 방법 | 추가 분석 제안 |
 |---|---|---|---|---|---|
-| 몸체가 어느 블록 것인가(소유) | C137이 답함: 블록에 닿는 몸체를 모두(AABB, 1픽셀 수집·2픽셀 미수집, BODY_BLOCK_RESIDENCY 3.2). 움직이는 몸체의 AABB 여유는 OPEN | 없음 | 🔶 Noita처럼 소유가 없습니다. 내려가는 블록이 지금 닿는 몸체를 모두 가져갑니다(`rigid.leavesWith`, 🧪 `unloadMargin` 1칸). 처음에는 질량 중심이 든 블록으로 정했다가 C137 뒤 바꿨습니다 | `TestBodiesLeaveWithEveryBlockTheyTouch`, `TestLoadedBodiesTakeTheirKeysPlaces` | 아니오 (답을 받음) |
+| 몸체가 어느 블록 것인가(소유) | C137이 답함: 블록에 닿는 몸체를 모두(AABB, 1픽셀 수집·2픽셀 미수집, BODY_BLOCK_RESIDENCY 3.2). 움직이는 몸체의 AABB 여유는 OPEN | 없음 | ✅ 2026-11-09(방식, 개발자 결정) Noita처럼 소유가 없습니다. 내려가는 블록이 지금 닿는 몸체를 모두 가져갑니다(`rigid.leavesWith`, 🧪 `unloadMargin` 1칸). 처음에는 질량 중심이 든 블록으로 정했다가 C137 뒤 바꿨습니다 | `TestBodiesLeaveWithEveryBlockTheyTouch`, `TestLoadedBodiesTakeTheirKeysPlaces` | 아니오 (답을 받음) |
 | 남는 블록에 걸친 몸체 | C137이 답함: 통째로 먼저 내려가는 블록과, 남는 블록의 칸은 즉시 공기(4절) | 없음 | 🔶 Noita와 같음. 그 위에 놓였던 몸체는 Box2D가 깨웁니다(동적 몸체를 지우면 닿아 있던 몸체를 깨움, 임시 측정으로 확인) | `TestBodiesLeaveWithEveryBlockTheyTouch`, `TestBodiesOnALeavingBodyFall` | 아니오 |
-| 메모리에 없는 블록으로 움직이는 몸체(가장자리) | C137이 답함: 계속 Step, 픽셀을 못 써 놓인 칸 0, 청소로 영영 사라짐(5절). 아래로 떨어지는 경우는 OPEN | 없음 | 🔶 일부러 다르게: 근처 범위(다음 Step에 닿을 칸)가 메모리에 없는 블록에 닿는 몸체와, 그런 몸체의 근처 범위에 닿는 몸체는 얼립니다(Box2D disable). 범위는 속도와 회전으로 이미지의 어느 점이든 한 틱에 갈 수 있는 거리만큼 넓힙니다(`rigid.reach`, Codex 리뷰). 속도는 우리 쪽에 두었다가 블록이 돌아오면 풀며 돌려줍니다. 셀 갱신이 비상주 블록에 닿는 청크를 돌리지 않는 것과 같은 규칙이고, 얼린 몸체도 상주 블록에 닿아 있어 그 블록이 내려가면 함께 저장됩니다. Noita처럼 하면 재질이 사라져 셀 보존이 깨지고, 청소는 전역 난수라 결정적이지 않습니다(`rigid.reachesOut` 하나) | `TestBodyFreezesAtTheEdgeOfMemory`, 골든 `terrain_bodies.rpl`의 여섯째 상자 | 아니오 |
-| 그 블록에서 꺼낸 재삽입 대기열의 셀 | OPEN(C137 6.4: 그 장면에 대기열 셀이 없었음) | 없음 | 🔶 꺼낸 칸이 그 블록이면 블록과 함께 저장하고, 올릴 때 새 셀(fresh)로 다시 넣습니다(`world.TakeQueued` 하나) | `TestQueuedCellsLeaveWithTheirBlock` | 아니오 (셀 보존만 지키면 되는 우리 규칙) |
-| 다시 올린 몸체의 속도와 잠 | C137이 답함: Noita는 속도·각속도를 0으로, 잠든 몸체를 깨워 되돌림(6.1-6.2) | 없음 | 🔶 속도는 일부러 다르게 그대로 되돌립니다(개발자 결정 대기, 떨어지던 몸체가 공중에서 멈추지 않게). 잠은 Noita처럼 깨워 되돌립니다. 처음에는 잠도 되돌렸으나, Box2D에서 잠든 채 만든 몸체는 이웃과 닿은 접촉이 없어 받침이 없어져도 깨지 않았습니다(Codex 리뷰 세 번). Noita처럼 하려면 `rigid.restoreMotion` 하나를 바꿉니다 | `TestLoadedBodiesComeBackAwake`, `TestLoadedBodyIsTheSame`, `TestRestoredStackFallsWhenTheBottomIsCut` | 아니오 |
+| 메모리에 없는 블록으로 움직이는 몸체(가장자리) | C137이 답함: 계속 Step, 픽셀을 못 써 놓인 칸 0, 청소로 영영 사라짐(5절). 아래로 떨어지는 경우는 OPEN | 없음 | ✅ 2026-11-09(개발자 결정) 일부러 다르게: 근처 범위(다음 Step에 닿을 칸)가 메모리에 없는 블록에 닿는 몸체와, 그런 몸체의 근처 범위에 닿는 몸체는 얼립니다(Box2D disable). 범위는 속도와 회전으로 이미지의 어느 점이든 한 틱에 갈 수 있는 거리만큼 넓힙니다(`rigid.reach`, Codex 리뷰). 속도는 우리 쪽에 두었다가 블록이 돌아오면 풀며 돌려줍니다. 셀 갱신이 비상주 블록에 닿는 청크를 돌리지 않는 것과 같은 규칙이고, 얼린 몸체도 상주 블록에 닿아 있어 그 블록이 내려가면 함께 저장됩니다. Noita처럼 하면 재질이 사라져 셀 보존이 깨지고, 청소는 전역 난수라 결정적이지 않습니다(`rigid.reachesOut` 하나) | `TestBodyFreezesAtTheEdgeOfMemory`, 골든 `terrain_bodies.rpl`의 여섯째 상자 | 아니오 |
+| 그 블록에서 꺼낸 재삽입 대기열의 셀 | OPEN(C137 6.4: 그 장면에 대기열 셀이 없었음) | 없음 | ✅ 2026-11-09(개발자 결정) 꺼낸 칸이 그 블록이면 블록과 함께 저장하고, 올릴 때 새 셀(fresh)로 다시 넣습니다(`world.TakeQueued` 하나) | `TestQueuedCellsLeaveWithTheirBlock` | 아니오 (셀 보존만 지키면 되는 우리 규칙) |
+| 다시 올린 몸체의 속도와 잠 | C137이 답함: Noita는 속도·각속도를 0으로, 잠든 몸체를 깨워 되돌림(6.1-6.2) | 없음 | ✅ 2026-11-09(개발자 결정, 선택지 A) 속도는 일부러 다르게 그대로 되돌립니다(떨어지던 몸체가 공중에서 멈추지 않게). 잠은 Noita처럼 깨워 되돌립니다. 처음에는 잠도 되돌렸으나, Box2D에서 잠든 채 만든 몸체는 이웃과 닿은 접촉이 없어 받침이 없어져도 깨지 않았습니다(Codex 리뷰 세 번). Noita처럼 하려면 `rigid.restoreMotion` 하나를 바꿉니다 | `TestLoadedBodiesComeBackAwake`, `TestLoadedBodyIsTheSame`, `TestRestoredStackFallsWhenTheBottomIsCut` | 아니오 |
 | 저장한 세션이 계속 간 세션과 같게 | Noita는 왕복에서 속도를 버려 같지 않음(C137 9절) | 없음 | 저장 = 재구성 지점(위 Box2D 절) | `TestSavedSessionGoesOnTheSame`(몸체 포함) | 아니오 |
 | key | Noita는 매 프레임 우선도로 key를 다시 매김(BODY_GRID_COUPLING:103) | 없음 | 만든 순서. 세션 파일에 다음 key를 저장해 다시 연 세션도 같은 key를 줍니다 | `TestSavedSessionGoesOnTheSame` | 아니오 |
 
-추가 분석 C137은 이 작업과 함께 개발자가 승인해(2026-11-09) 분석 폴더의 별도 세션이 했고, 결과(BODY_BLOCK_RESIDENCY)를 위 표에 반영했습니다. 소유와 걸침은 Noita를 따르게 바꿨고, 가장자리와 왕복의 속도·수면은 일부러 다르게 두었습니다. 남은 OPEN(대기열 셀, 아래로 떨어지는 몸체, 움직이는 몸체의 AABB 여유, 조인트)은 지금 추가 분석을 제안하지 않습니다. 대기열과 가장자리는 셀 보존을 지키는 우리 규칙이 이미 측정을 통과하고, 조인트는 아직 없습니다.
+추가 분석 C137은 이 작업과 함께 개발자가 승인해(2026-11-09) 분석 폴더의 별도 세션이 했고, 결과(BODY_BLOCK_RESIDENCY)를 위 표에 반영했습니다. 소유와 걸침은 Noita를 따르게 바꿨고, 가장자리와 왕복의 속도는 일부러 다르게 두었습니다(수면은 뒤에 Codex 리뷰로 Noita처럼 깨워 되돌리게 바꿈). 개발자가 2026-11-09에 소유(닿음 방식), 가장자리, 대기열, 속도와 잠을 추천안대로 정했습니다("나머지 부분들은 추천안으로 가는 것이 좋겠어"). 세션 저장의 재구성은 아직 🔶입니다. 남은 OPEN(대기열 셀, 아래로 떨어지는 몸체, 움직이는 몸체의 AABB 여유, 조인트)은 지금 추가 분석을 제안하지 않습니다. 대기열과 가장자리는 셀 보존을 지키는 우리 규칙이 이미 측정을 통과하고, 조인트는 아직 없습니다.
 
 ## 검증 계획
 

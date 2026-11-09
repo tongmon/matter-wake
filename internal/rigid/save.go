@@ -368,9 +368,10 @@ func (s *System) remake(r *save.Body) (body, error) {
 }
 
 // restoreMotion returns the velocity of its center of mass and the angular
-// velocity a body made again from r starts with. 🔶 It keeps what r holds,
-// so a body that left falling goes on falling. Noita's come back at rest
-// (C137, BODY_BLOCK_RESIDENCY 6.1-6.2); to do as Noita does, return zeros.
+// velocity a body made again from r starts with. It keeps what r holds,
+// so a body that left falling goes on falling, as the developer chose
+// (2026-11-09). Noita's come back at rest (C137, BODY_BLOCK_RESIDENCY
+// 6.1-6.2); to do as Noita does, return zeros.
 //
 // Every body comes back awake, as Noita's do, though r says whether it
 // slept: a body made asleep in Box2D sleeps alone, with no touching contact
@@ -434,9 +435,10 @@ func (s *System) Frozen() int {
 // in memory in the coming Step, and every body that may touch such a body
 // in it: Box2D disables them where they are, keeping their pixels in the
 // grid, and they keep their velocity here. A body that no longer reaches
-// one goes on with the velocity it had. 🔶 The cells do the same: a chunk
-// whose updates may reach a block not in memory does not run. With every
-// block in memory, as in the rooms, nothing freezes.
+// one goes on with the velocity it had. Noita's go on and are lost (C137);
+// the developer chose to freeze them (2026-11-09). The cells do the same: a
+// chunk whose updates may reach a block not in memory does not run. With
+// every block in memory, as in the rooms, nothing freezes.
 func (s *System) freeze() {
 	s.cold = s.cold[:0]
 	whole := s.w.AllResident()
