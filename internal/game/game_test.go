@@ -407,6 +407,26 @@ func TestStepDoesNotAllocate(t *testing.T) {
 	}
 }
 
+// Nor does a tick of the terrain with bodies, while no block comes or
+// goes.
+func TestTerrainStepWithBodiesDoesNotAllocate(t *testing.T) {
+	g := newTerrainBodyGame(t, 2)
+	x, y := g.Spawn()
+	for i := range 600 {
+		in := Input{CameraX: x, CameraY: y}
+		if i < 40 && i%8 == 0 {
+			in.CursorX, in.CursorY, in.Drop = x+120+10*i, y+60, true
+		}
+		step(t, g, in)
+	}
+	if g.Bodies() == 0 {
+		t.Fatal("no bodies; the test needs some")
+	}
+	if n := testing.AllocsPerRun(20, func() { step(t, g, Input{CameraX: x, CameraY: y}) }); n != 0 {
+		t.Fatalf("a tick of the terrain with bodies allocates %v times", n)
+	}
+}
+
 // The collapse scene is the room scene.Collapse lays out, all of it in
 // memory, seen from the top left.
 func TestCollapseScene(t *testing.T) {

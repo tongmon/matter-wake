@@ -410,3 +410,23 @@ func TestReset(t *testing.T) {
 		t.Fatalf("after Reset the body shows %d pixels down to row %d, want %d down to the floor at %d", n, r.y1, 16*12, w.Height()-4)
 	}
 }
+
+// A tick with frozen bodies allocates nothing, as one without.
+func TestFrozenTickDoesNotAllocate(t *testing.T) {
+	s, w, id := newStreamedSystem(t, 1, 2)
+	s.Unload(0, 1, nil)
+	if _, err := w.UnloadBlock(0, 1); err != nil {
+		t.Fatal(err)
+	}
+	drop(t, s, id.wood, 200, 480, 16, 12)
+	drop(t, s, id.wood, 200, 440, 16, 12)
+	for range 60 {
+		tick(t, s, w)
+	}
+	if s.Frozen() != 2 {
+		t.Fatalf("%d bodies frozen; the test needs 2", s.Frozen())
+	}
+	if n := testing.AllocsPerRun(50, func() { tick(t, s, w) }); n != 0 {
+		t.Fatalf("a tick with frozen bodies allocates %v times", n)
+	}
+}

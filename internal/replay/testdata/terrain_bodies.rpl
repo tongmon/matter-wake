@@ -1,0 +1,54 @@
+matter-wake-replay 6
+# Bodies in the terrain of a 4096x4096 world, with a target of four
+# blocks in memory and a check every 60 ticks, as terrain_walk. Five wood
+# boxes drop onto the ground left of the spawn and come to rest, two on
+# the others. The camera walks two blocks to the right: the blocks with
+# the boxes leave memory, and the boxes with them, saved with their
+# blocks in the memory store. It walks back, the boxes come back where
+# they lay, and the tool digs through one of them, which breaks in two.
+# The trace pins the bodies' saves, their return and the freezing of
+# bodies that may reach a block not in memory. Cells come and go with
+# their blocks, so this replay is not checked for conservation.
+seed 1
+size 4096 4096
+scene terrain
+view 480 270
+stream 64 4 512 4 60
+budget 250000
+tool 10 2000 4
+body wood 16 12
+mode play
+slots sand water stone
+materials cbe9996c5ef09a49
+ticks 900
+
+# Drop five boxes high over the ground, two of them on the others.
+0 2100 1000 B 0 1808 955
+10 2130 1000 B 0 1808 955
+20 2160 1000 B 0 1808 955
+30 2110 960 B 0 1808 955
+40 2150 960 B 0 1808 955
+41 2150 960 - 0 1808 955
+# Walk two blocks to the right, 128 cells every 10 ticks.
+240 2336 1104 - 0 1936 955
+250 2464 1104 - 0 2064 955
+260 2592 1104 - 0 2192 955
+270 2720 1104 - 0 2320 955
+280 2848 1104 - 0 2448 955
+290 2976 1104 - 0 2576 955
+300 3104 1104 - 0 2704 955
+310 3232 1104 - 0 2832 955
+# Look around there, then walk back.
+500 3104 1104 - 0 2704 955
+510 2976 1104 - 0 2576 955
+520 2848 1104 - 0 2448 955
+530 2720 1104 - 0 2320 955
+540 2592 1104 - 0 2192 955
+550 2464 1104 - 0 2064 955
+560 2336 1104 - 0 1936 955
+570 2208 1104 - 0 1808 955
+# Dig a column through the box on the ledge, which breaks in two.
+600 2158 1077 D 0 1808 955
+604 2158 1081 D 0 1808 955
+608 2158 1085 D 0 1808 955
+612 2158 1085 - 0 1808 955

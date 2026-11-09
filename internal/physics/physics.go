@@ -163,9 +163,13 @@ type World struct {
 	closed bool
 	// points and counts are AddStaticChains's and SetShapes's buffers:
 	// points as Box2D takes them and how many make each polygon, in Go
-	// memory that holds no Go pointers.
+	// memory that holds no Go pointers. def is AddStaticChains's body
+	// definition, made once: a local one would move to the heap at every
+	// call, since C gets its address, and C may only get the address of
+	// memory that holds no Go pointers, which World does.
 	points []C.b2Vec2
 	counts []C.int
+	def    *C.b2BodyDef
 }
 
 // NewWorld makes a World. Close it when done: its memory is C memory.
@@ -183,7 +187,7 @@ func NewWorld(cfg Config) (*World, error) {
 	if id.index1 == 0 {
 		return nil, errors.New("physics: Box2D has no free world (it allows 128 at once)")
 	}
-	return &World{id: id}, nil
+	return &World{id: id, def: new(C.b2BodyDef)}, nil
 }
 
 // Close frees the world and its bodies. Their Body handles become invalid.
@@ -314,9 +318,8 @@ func (w *World) AddStaticChains(chains []Chain, friction float32) (Body, error) 
 	if err != nil {
 		return 0, err
 	}
-	bodyDef := C.b2DefaultBodyDef()
-	bodyp := &bodyDef
-	id := C.b2CreateBody(w.id, bodyp)
+	*w.def = C.b2DefaultBodyDef()
+	id := C.b2CreateBody(w.id, w.def)
 	if id.index1 == 0 {
 		return 0, errors.New("physics: Box2D rejected a static body")
 	}
