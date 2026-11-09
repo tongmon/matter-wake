@@ -427,3 +427,64 @@ func TestFrozenTickDoesNotAllocate(t *testing.T) {
 		t.Fatalf("a tick with frozen bodies allocates %v times", n)
 	}
 }
+
+// A piece keeps the frame of the body it broke from, so its origin can lie
+// outside the world while the piece is in it; Load takes such a record.
+// Found by the Codex review of body saves (2026-11-09).
+func TestLoadTakesAPieceWhoseOriginIsOutside(t *testing.T) {
+	s, w, id := newStreamedSystem(t, 1, 1)
+	drop(t, s, id.wood, 100, 300, 300, 6) // origin at x = 250
+	s.Write()
+	breakOff(t, s, column(349, 300, 306)...)
+	recs := s.Unload(0, 0, nil)
+	if len(recs) != 2 || recs[1].W != 50 {
+		t.Fatalf("%d records; the test needs the plank and a piece of 50 pixels", len(recs))
+	}
+	// The piece lies 100 to 150 cells right of its origin. Put the origin 5
+	// m left of the world: the piece is at x 50 to 100.
+	piece := recs[1]
+	piece.X = -5
+	if err := s.Load(0, 0, []save.Body{piece}); err != nil {
+		t.Fatalf("Load refused a piece inside the world whose origin is not: %v", err)
+	}
+	s.Write()
+	if n, r := owned(w, id.wood, 0); n != 50*6 || r.x0 != 50 {
+		t.Fatalf("the piece shows %d pixels from x %d, want %d from 50", n, r.x0, 50*6)
+	}
+	// One wholly outside the world is still refused.
+	piece.X = -20
+	piece.Key = 7
+	if err := s.Load(0, 0, []save.Body{piece}); err == nil {
+		t.Fatal("Load took a piece outside the world")
+	}
+}
+
+// A body made again with its velocity takes that velocity into account in
+// its reach from its first tick, so a fast body freezes before it can move
+// into a block not in memory. Found by the Codex review of body saves
+// (2026-11-09).
+func TestFastLoadedBodyFreezesBeforeItMoves(t *testing.T) {
+	s, w, id := newStreamedSystem(t, 1, 2)
+	drop(t, s, id.wood, 200, 492, 16, 12)
+	s.Write()
+	recs := s.Unload(0, 0, nil)
+	s.Unload(0, 1, nil)
+	if _, err := w.UnloadBlock(0, 1); err != nil {
+		t.Fatal(err)
+	}
+	// 60 m/s down: 10 cells a tick, more than the reach's margin. The box
+	// ends at row 504, 8 cells over block (0, 1).
+	recs[0].VY = 60
+	if err := s.Load(0, 0, recs); err != nil {
+		t.Fatal(err)
+	}
+	tick(t, s, w)
+	tick(t, s, w)
+	b := &s.bodies[0]
+	if !b.frozen {
+		t.Fatal("the fast body did not freeze")
+	}
+	if b.box.y1 > world.BlockSize {
+		t.Fatalf("the fast body reached row %d, into the block not in memory, before it froze", b.box.y1)
+	}
+}

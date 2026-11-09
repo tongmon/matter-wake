@@ -263,8 +263,15 @@ func (s *System) checkRecord(r *save.Body) error {
 	if qq := float32(r.C*r.C) + float32(r.S*r.S); qq <= 1-0.0006 || qq >= 1+0.0006 {
 		return fmt.Errorf("rigid: body %d is turned by (%v, %v), not a rotation", r.Key, r.C, r.S)
 	}
-	if r.X < 0 || r.Y < 0 || r.X >= wm || r.Y >= hm {
-		return fmt.Errorf("rigid: body %d is at (%v, %v) m, outside the world", r.Key, r.X, r.Y)
+	// A piece keeps the frame of the body it broke from, so its origin may
+	// lie outside the world; the middle of its image may not (Codex
+	// review).
+	mx := (r.Left + float32(r.CX) + float32(r.W)/2) / cellsPerMeter
+	my := (r.Top + float32(r.CY) + float32(r.H)/2) / cellsPerMeter
+	x := r.X + float32(r.C*mx) - float32(r.S*my)
+	y := r.Y + float32(r.S*mx) + float32(r.C*my)
+	if !(x >= 0 && y >= 0 && x <= wm && y <= hm) {
+		return fmt.Errorf("rigid: body %d lies at (%v, %v) m, outside the world", r.Key, x, y)
 	}
 	if r.Whole && (n != len(r.Pixels) || r.CX != 0 || r.CY != 0 || r.Left != -float32(r.W)/2 || r.Top != -float32(r.H)/2) {
 		return fmt.Errorf("rigid: body %d is recorded whole but is not the box it was made as", r.Key)

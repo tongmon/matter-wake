@@ -247,6 +247,14 @@ func (s *System) write(b *body, slot uint16) {
 	if b.written {
 		b.shiftX = float32(b.p.X-b.wp.X) * cellsPerMeter
 		b.shiftY = float32(b.p.Y-b.wp.Y) * cellsPerMeter
+	} else {
+		// Written for the first time, the body has not moved yet, but may
+		// already be moving: made again with its velocity, or broken off
+		// a moving body. Where its velocity takes it in a tick stands for
+		// the shift, so its reach covers its first Step (Codex review).
+		s.velocity(b)
+		b.shiftX = float32(b.v.X*tickSeconds) * cellsPerMeter
+		b.shiftY = float32(b.v.Y*tickSeconds) * cellsPerMeter
 	}
 	b.wp, b.wq, b.written, b.force, b.redraw = b.p, b.q, true, false, false
 	s.w.Flush()
