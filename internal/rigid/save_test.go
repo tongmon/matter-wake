@@ -684,3 +684,52 @@ func TestUnloadBlocksKeepsSleepAcrossBlocks(t *testing.T) {
 		t.Fatalf("records %+v and %+v; want the plank and the box, both asleep", out[0][0], out[1][0])
 	}
 }
+
+// A body made again asleep on another falls when the one under it is dug
+// away whole: made asleep, the two have no touching contact for Box2D to
+// wake the upper one by, so the bodies next to one that is removed are
+// woken. Found by the sixth Codex review of body saves (2026-11-09).
+func TestRestoredStackFallsWhenTheBottomIsDugAway(t *testing.T) {
+	s, w, id := newStreamedSystem(t, 1, 1)
+	floor := w.Height() - 4
+	drop(t, s, id.wood, 200, floor-12, 16, 12)
+	drop(t, s, id.wood, 202, floor-24, 12, 12)
+	for range 300 {
+		tick(t, s, w)
+	}
+	recs := s.Unload(0, 0, nil)
+	if err := s.Reset(); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Load(0, 0, recs); err != nil {
+		t.Fatal(err)
+	}
+	for range 3 {
+		tick(t, s, w)
+	}
+	if s.phys.Awake(s.bodies[1].id) {
+		t.Fatal("the upper box woke by itself; the test needs it asleep")
+	}
+	_, r := owned(w, id.wood, 0)
+	var cells [][2]int
+	for y := r.y0; y < r.y1; y++ {
+		for x := r.x0; x < r.x1; x++ {
+			if c, _ := w.At(x, y); s.kinds[c.Mat] == material.Solid {
+				if b, _ := c.Body(); b == 0 {
+					cells = append(cells, [2]int{x, y})
+				}
+			}
+		}
+	}
+	breakOff(t, s, cells...)
+	if len(s.bodies) != 1 {
+		t.Fatalf("%d bodies after digging the bottom one away", len(s.bodies))
+	}
+	top := s.bodies[0].box.y0
+	for range 60 {
+		tick(t, s, w)
+	}
+	if b := &s.bodies[0]; b.box.y0 <= top {
+		t.Fatalf("the upper box stays at row %d with nothing under it", b.box.y0)
+	}
+}
