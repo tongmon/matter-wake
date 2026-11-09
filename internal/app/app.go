@@ -270,6 +270,12 @@ func (s *saving) close() error {
 // session that does not: a saved world goes on from there.
 func openSession(cfg *Config, mats *material.Table, playback *replay.Replay) (*game.Config, *saving, error) {
 	sess := sessionConfig(cfg, mats, playback)
+	if cfg.RecordPath != "" {
+		// Fail now rather than at the save after the session.
+		if err := replay.Recordable(sess); err != nil {
+			return nil, nil, fmt.Errorf("app: -record: %w", err)
+		}
+	}
 	dir, err := saveFolder(cfg, playback)
 	if err != nil || dir == "" {
 		return sess, nil, err
