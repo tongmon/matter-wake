@@ -317,3 +317,18 @@ func TestWheelNotches(t *testing.T) {
 		t.Fatalf("notches %v, want %v", got, want)
 	}
 }
+
+// The creative switch turns creative mode off as well as on, also when
+// the session started in it (Codex review).
+func TestCreativeSwitchTurnsOff(t *testing.T) {
+	g, _, d := newDashGame(t)
+	click(t, d, g, actCreative, false)
+	tick(t, d, g, &game.Input{})
+	if !g.Creative() {
+		t.Fatal("the switch did not turn creative mode on")
+	}
+	click(t, d, g, actCreative, false)
+	if in := tick(t, d, g, &game.Input{}); in.Change != (game.Change{What: game.ChangeMode}) || g.Creative() {
+		t.Fatalf("the switch sent %+v and left creative %t; want it off", in.Change, g.Creative())
+	}
+}

@@ -532,3 +532,35 @@ func tryChange(s *rng.Stream) game.Change {
 	}
 	return c
 }
+
+// A session whose slots or solids a replay cannot name is not recordable,
+// so a recording stops before the session rather than at its save (Codex
+// review).
+func TestRecordableNeedsOneWordNames(t *testing.T) {
+	tab := loadTable(t)
+	cfg := func(defs ...material.Def) *game.Config {
+		all := make([]material.Def, tab.Len())
+		for id := range all {
+			all[id] = tab.Def(material.ID(id))
+		}
+		mats, err := material.NewTable(append(all, defs...))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return &game.Config{
+			Width: 64, Height: 32, ViewWidth: 64, ViewHeight: 32, Materials: mats,
+			Stream: game.Stream{Target: 1, Check: 1}, Tool: game.Tool{Rate: 1}, Slots: []string{"sand"},
+		}
+	}
+	if err := Recordable(cfg()); err != nil {
+		t.Fatalf("the testdata table is not recordable: %v", err)
+	}
+	slot := cfg(material.Def{Name: "wet sand", Kind: material.Powder, Density: 30})
+	slot.Slots = append(slot.Slots, "wet sand")
+	solid := cfg(material.Def{Name: "dry wood", Kind: material.Solid, Density: 6})
+	for _, c := range []*game.Config{slot, solid} {
+		if err := Recordable(c); err == nil || !strings.Contains(err.Error(), c.Materials.Def(material.ID(c.Materials.Len()-1)).Name) {
+			t.Fatalf("Recordable = %v, want an error naming the material with a space", err)
+		}
+	}
+}

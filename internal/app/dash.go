@@ -324,9 +324,12 @@ func (d *dash) do(a int, shift bool, g *game.Game) {
 		r, s := d.brush(g)
 		d.setBrush(r, 1-s)
 	case a == actCreative:
+		// Read the mode before marking it pending, which changes what
+		// creative reads (Codex review).
+		on := !d.creative(g)
 		c := &d.pending.Change
 		c.What |= game.ChangeMode
-		c.Creative = !d.creative(g)
+		c.Creative = on
 	default:
 		if f, up, ok := fieldOf(a); ok {
 			d.stepField(f, up, shift, g)
