@@ -98,18 +98,26 @@ func (s *System) motion(b *body) (physics.Vec2, float32) {
 // collision is dropped.
 func (s *System) Unload(bx, by int, out []save.Body) []save.Body {
 	area := blockCells(bx, by)
+	// Record every body that leaves before removing any: removing one
+	// wakes the bodies it touched, which would then be recorded awake
+	// (Codex review).
 	dead := false
 	for i := range s.bodies {
 		b := &s.bodies[i]
-		switch {
-		case s.leavesWith(b, area):
+		if b.dead = s.leavesWith(b, area); b.dead {
 			out = append(out, s.record(b))
+			dead = true
+		}
+	}
+	for i := range s.bodies {
+		b := &s.bodies[i]
+		switch {
+		case b.dead:
 			s.erase(b, uint16(i))
 			if b.written {
 				s.gone = append(s.gone, b.box)
 			}
 			s.phys.DestroyBody(b.id)
-			b.dead, dead = true, true
 		case b.written && b.box.overlaps(area):
 			s.erase(b, uint16(i))
 			b.redraw = true

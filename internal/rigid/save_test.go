@@ -599,3 +599,62 @@ func TestRestoredSleeperFallsWhenItsSupportGoes(t *testing.T) {
 		t.Fatalf("the box hangs at row %d with nothing under it", b.box.y0)
 	}
 }
+
+// Sleeping bodies that leave together are recorded asleep, though taking
+// out the first wakes the ones it touched. Found by the fourth Codex
+// review of body saves (2026-11-09).
+func TestSleepingStackLeavesAsleep(t *testing.T) {
+	s, w, id := newStreamedSystem(t, 1, 1)
+	floor := w.Height() - 4
+	drop(t, s, id.wood, 200, floor-12, 16, 12)
+	drop(t, s, id.wood, 202, floor-24, 12, 12)
+	for range 300 {
+		tick(t, s, w)
+	}
+	for i := range s.bodies {
+		if s.phys.Awake(s.bodies[i].id) {
+			t.Fatalf("body %d of the stack did not fall asleep", i)
+		}
+	}
+	for _, r := range s.Unload(0, 0, nil) {
+		if r.Awake {
+			t.Fatalf("body %d of the sleeping stack left awake", r.Key)
+		}
+	}
+}
+
+// A frozen spinning body's terrain is made collision as far as it turns
+// in a tick before it is let go: when the block below comes back with a
+// floor, the floor under the plank's ends is collision in the tick it
+// thaws. (Whether Box2D then catches an end swinging in within one step
+// is Box2D's: it finds contacts once a step.) Found by the fourth Codex
+// review of body saves (2026-11-09).
+func TestThawedSpinningBodyHasItsTerrainFirst(t *testing.T) {
+	s, w := fastBody(t, 200, 6, func(r *save.Body) { r.Spin = 6 })
+	tick(t, s, w)
+	if !s.bodies[0].frozen {
+		t.Fatal("the spinning plank did not freeze")
+	}
+	blk := new(world.Block)
+	for x := range world.BlockSize {
+		blk[1*world.BlockSize+x] = world.Cell{Mat: s.mats.MustLookup("stone")}
+	}
+	if err := w.LoadBlock(0, 1, blk); err != nil {
+		t.Fatal(err)
+	}
+	s.Write()
+	collide(t, s)
+	// The plank spans x 156 to 356; the floor is row 513, in chunk row 8.
+	for cx := 156 / world.ChunkSize; cx <= 355/world.ChunkSize; cx++ {
+		if ch := &s.terrain[8*s.cols+cx]; !ch.built || ch.body == 0 {
+			t.Fatalf("the floor in chunk (%d, 8) is not collision when the plank is let go", cx)
+		}
+	}
+	w.Step()
+	if err := s.Step(); err != nil {
+		t.Fatal(err)
+	}
+	if s.bodies[0].frozen {
+		t.Fatal("the plank stays frozen with the block back")
+	}
+}

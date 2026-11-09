@@ -92,16 +92,17 @@ func (s *System) want(b *body, slot int32) {
 	}
 	r := b.box
 	dx, dy := b.shiftX, b.shiftY
-	if b.frozen {
-		// Where it goes when it is let go: its terrain must be collision by
-		// then (Codex review).
-		dx, dy = float32(b.fv.X*tickSeconds)*cellsPerMeter, float32(b.fv.Y*tickSeconds)*cellsPerMeter
-	}
 	r.x0 = min(r.x0, r.x0+int(math.Floor(float64(dx))))
 	r.x1 = max(r.x1, r.x1+int(math.Ceil(float64(dx))))
 	r.y0 = min(r.y0, r.y0+int(math.Floor(float64(dy))))
 	r.y1 = max(r.y1, r.y1+int(math.Ceil(float64(dy))))
 	r = rect{r.x0 - nearCells, r.y0 - nearCells, r.x1 + nearCells, r.y1 + nearCells}
+	if b.frozen {
+		// It does not move, but when it is let go it goes as far as its
+		// velocity and spin take it (reach, the last freeze's): its
+		// terrain must be collision by then (Codex review).
+		r = b.reach
+	}
 	b.near = r
 	x0, y0 := max(r.x0, 0), max(r.y0, 0)
 	x1, y1 := min(r.x1, s.w.Width()), min(r.y1, s.w.Height())
