@@ -92,6 +92,11 @@ func (s *System) want(b *body, slot int32) {
 	}
 	r := b.box
 	dx, dy := b.shiftX, b.shiftY
+	if b.frozen {
+		// Where it goes when it is let go: its terrain must be collision by
+		// then (Codex review).
+		dx, dy = float32(b.fv.X*tickSeconds)*cellsPerMeter, float32(b.fv.Y*tickSeconds)*cellsPerMeter
+	}
 	r.x0 = min(r.x0, r.x0+int(math.Floor(float64(dx))))
 	r.x1 = max(r.x1, r.x1+int(math.Ceil(float64(dx))))
 	r.y0 = min(r.y0, r.y0+int(math.Floor(float64(dy))))

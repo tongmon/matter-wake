@@ -330,8 +330,39 @@ func (s *System) remake(r *save.Body, home rect) (body, error) {
 	}
 	if asleep && reach.x0 >= home.x0 && reach.y0 >= home.y0 && reach.x1 <= home.x1 && reach.y1 <= home.y1 {
 		s.phys.Sleep(id)
+		b.slept = s.w.Version()
 	}
 	return b, nil
+}
+
+// wakeLoaded wakes each body made again asleep, before it is first
+// written, if a cell near it changed since it was made: dug away, say, on
+// the first tick after a save was opened. Box2D does not notice that what
+// a sleeping body rests on is gone, and the terrain near it, made for the
+// first time, wakes no one (Codex review).
+func (s *System) wakeLoaded() {
+	for i := range s.bodies {
+		b := &s.bodies[i]
+		if b.slept == 0 {
+			continue
+		}
+		r := boxAt(b, b.p, b.q)
+		x0, y0 := max(r.x0-nearCells, 0), max(r.y0-nearCells, 0)
+		x1, y1 := min(r.x1+nearCells, s.w.Width()), min(r.y1+nearCells, s.w.Height())
+		changed := false
+		for cy := y0 / world.ChunkSize; cy <= (y1-1)/world.ChunkSize && !changed && x0 < x1 && y0 < y1; cy++ {
+			for cx := x0 / world.ChunkSize; cx <= (x1-1)/world.ChunkSize; cx++ {
+				if s.w.ChunkVersion(cx, cy) > b.slept {
+					changed = true
+					break
+				}
+			}
+		}
+		if changed {
+			s.phys.Wake(b.id)
+		}
+		b.slept = 0
+	}
 }
 
 // restoreMotion returns the velocity of its center of mass and the angular

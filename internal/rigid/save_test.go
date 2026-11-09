@@ -542,3 +542,60 @@ func TestSpinningBodyFreezesBeforeItTurnsIn(t *testing.T) {
 		t.Fatalf("the spinning plank is frozen %v and reaches row %d; the block below is not in memory", b.frozen, b.box.y1)
 	}
 }
+
+// A frozen body that goes on with its velocity when the block comes back
+// finds the terrain it moves into made collision first: a thin floor just
+// inside that block stops it. Found by the third Codex review of body
+// saves (2026-11-09).
+func TestThawedBodyStopsOnTheFloorBelow(t *testing.T) {
+	s, w := fastBody(t, 16, 12, func(r *save.Body) { r.VY = 120 })
+	tick(t, s, w)
+	if !s.bodies[0].frozen {
+		t.Fatal("the fast body did not freeze")
+	}
+	// The block comes back with a floor one row thick six rows into it,
+	// less than the 20 cells the body moves in a tick.
+	blk := new(world.Block)
+	for x := range world.BlockSize {
+		blk[6*world.BlockSize+x] = world.Cell{Mat: s.mats.MustLookup("stone")}
+	}
+	if err := w.LoadBlock(0, 1, blk); err != nil {
+		t.Fatal(err)
+	}
+	for range 60 {
+		tick(t, s, w)
+	}
+	if b := &s.bodies[0]; b.box.y1 > world.BlockSize+6 {
+		t.Fatalf("the body went through the floor at row %d: its cells reach row %d", world.BlockSize+6, b.box.y1)
+	}
+}
+
+// A body made again asleep wakes when what held it up is dug away before
+// it was first written, as when the player digs under it on the first
+// tick after opening a save. Found by the third Codex review of body saves
+// (2026-11-09).
+func TestRestoredSleeperFallsWhenItsSupportGoes(t *testing.T) {
+	s, w, id := newStreamedSystem(t, 1, 1)
+	w.Fill(180, 300, 240, 302, id.stone) // a ledge
+	drop(t, s, id.wood, 200, 288, 16, 12)
+	for range 300 {
+		tick(t, s, w)
+	}
+	if s.phys.Awake(s.bodies[0].id) {
+		t.Fatal("the box on the ledge did not fall asleep")
+	}
+	recs := s.Unload(0, 0, nil)
+	if err := s.Reset(); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Load(0, 0, recs); err != nil {
+		t.Fatal(err)
+	}
+	w.Fill(180, 300, 240, 302, 0) // dug away before the first tick
+	for range 60 {
+		tick(t, s, w)
+	}
+	if b := &s.bodies[0]; b.box.y0 <= 300 {
+		t.Fatalf("the box hangs at row %d with nothing under it", b.box.y0)
+	}
+}

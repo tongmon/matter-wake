@@ -423,6 +423,8 @@ func (g *Game) SaveBlocks() error {
 	if err := g.bodies.Reset(); err != nil {
 		return fmt.Errorf("game: %w", err)
 	}
+	// Block by block in row order, as opening the save loads them: each
+	// block's cells come back, and then its queued cells and bodies.
 	for i, b := range blocks {
 		out[i].Queued = g.world.TakeQueued(b[0], b[1], nil)
 		blk, err := g.world.UnloadBlock(b[0], b[1])
@@ -437,8 +439,6 @@ func (g *Game) SaveBlocks() error {
 		if saveErr != nil {
 			return fmt.Errorf("game: block (%d, %d): %w", b[0], b[1], saveErr)
 		}
-	}
-	for i, b := range blocks {
 		if err := g.restore(b[0], b[1], &out[i]); err != nil {
 			return err
 		}

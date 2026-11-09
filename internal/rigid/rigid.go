@@ -274,6 +274,7 @@ func (s *System) Write() {
 		b := &s.bodies[i]
 		b.p, b.q = s.phys.Transform(b.id)
 	}
+	s.wakeLoaded()
 	s.sync()
 }
 
