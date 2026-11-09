@@ -126,7 +126,8 @@ func checkSavedSessionGoesOn(t *testing.T, s game.Stream) {
 		return in
 	}
 	for i := range 50 {
-		if err := played.Step(input(i)); err != nil {
+		in := input(i)
+		if err := played.Step(&in); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -164,7 +165,7 @@ func checkSavedSessionGoesOn(t *testing.T, s game.Stream) {
 	for i := 50; i < 100; i++ {
 		in := input(i)
 		for _, g := range []*game.Game{played, resumed} {
-			if err := g.Step(in); err != nil {
+			if err := g.Step(&in); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -394,7 +395,7 @@ func TestSavedSessionGoesOnOverTheBudget(t *testing.T) {
 	x, y := played.Spawn()
 	step := func(g *game.Game, in game.Input) {
 		t.Helper()
-		if err := g.Step(in); err != nil {
+		if err := g.Step(&in); err != nil {
 			t.Fatal(err)
 		}
 	}

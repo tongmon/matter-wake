@@ -290,8 +290,8 @@ func (s *System) checkRecord(r *save.Body) error {
 	switch {
 	case int(r.Mat) >= len(s.kinds) || s.kinds[r.Mat] != material.Solid:
 		return fmt.Errorf("rigid: body %d is of material %d, not a solid", r.Key, r.Mat)
-	case r.W < 1 || r.H < 1 || r.W*r.H > maxPixels || len(r.Pixels) != r.W*r.H:
-		return fmt.Errorf("rigid: body %d has %d pixels for a %d×%d image; a body holds 1 to %d", r.Key, len(r.Pixels), r.W, r.H, maxPixels)
+	case r.W < 1 || r.H < 1 || r.W*r.H > MaxPixels || len(r.Pixels) != r.W*r.H:
+		return fmt.Errorf("rigid: body %d has %d pixels for a %d×%d image; a body holds 1 to %d", r.Key, len(r.Pixels), r.W, r.H, MaxPixels)
 	case n == 0:
 		return fmt.Errorf("rigid: body %d has no pixel left", r.Key)
 	case r.CX < 0 || r.CY < 0:

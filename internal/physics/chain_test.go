@@ -237,3 +237,31 @@ func TestPushWakesOnlyWhenTold(t *testing.T) {
 		t.Fatalf("a push with wake left the box awake %v moving %v, want awake and rising", w.Awake(b), v)
 	}
 }
+
+// Edges gives a box's sides and a chain's segments where they are.
+func TestEdges(t *testing.T) {
+	w := newDownWorld(t)
+	ground, err := w.AddStaticChains([]Chain{floor()}, 0.6)
+	if err != nil {
+		t.Fatal(err)
+	}
+	box, err := w.AddDynamicBox(Box{Center: Vec2{3, -2}, HalfW: 1, HalfH: 0.5, Density: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	edges := w.Edges(box, nil)
+	if len(edges) != 4 {
+		t.Fatalf("a box has %d edges, want 4", len(edges))
+	}
+	for _, e := range edges {
+		for _, p := range [][2]float32{{e.X0, e.Y0}, {e.X1, e.Y1}} {
+			if math.Abs(math.Abs(float64(p[0]-3))-1) > 1e-5 || math.Abs(math.Abs(float64(p[1]+2))-0.5) > 1e-5 {
+				t.Fatalf("a corner of the box is at %v, want (3±1, -2±0.5)", p)
+			}
+		}
+	}
+	chain := w.Edges(ground, edges[:0])
+	if len(chain) != 1 || chain[0] != (Edge{X0: -10, X1: 10}) {
+		t.Fatalf("the floor's edges are %+v, want one from (-10, 0) to (10, 0)", chain)
+	}
+}

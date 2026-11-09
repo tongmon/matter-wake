@@ -57,7 +57,7 @@ func floor(g *Game) (x, y int) {
 }
 
 // step runs one tick of g and fails the test on an error.
-func step(t testing.TB, g *Game, in Input) {
+func step(t testing.TB, g *Game, in *Input) {
 	t.Helper()
 	if err := g.Step(in); err != nil {
 		t.Fatal(err)
@@ -73,7 +73,7 @@ func matAt(t *testing.T, g *Game, x, y int) material.ID {
 	return c.Mat
 }
 
-func dig(x, y int) Input { return Input{CursorX: x, CursorY: y, Dig: true} }
+func dig(x, y int) *Input { return &Input{CursorX: x, CursorY: y, Dig: true} }
 
 func TestShippedTableWorks(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join("..", "..", "data", "materials.json"))
@@ -99,11 +99,11 @@ func TestSelect(t *testing.T) {
 	if got := g.Selected().Name; got != "sand" {
 		t.Fatalf("slot 1 is selected at the start, got %q, want sand", got)
 	}
-	step(t, g, Input{Select: 3})
+	step(t, g, &Input{Select: 3})
 	if got := g.Selected().Name; got != "stone" {
 		t.Fatalf("slot 3 selected %q, want stone", got)
 	}
-	step(t, g, Input{Select: 9})
+	step(t, g, &Input{Select: 9})
 	if got := g.Selected().Name; got != "stone" {
 		t.Fatalf("an out-of-range slot changed the selection to %q", got)
 	}
@@ -186,10 +186,10 @@ func TestDigSkipsLiquids(t *testing.T) {
 func TestPlaceTakesFromInventory(t *testing.T) {
 	g := newTestGame(t, Tool{Power: 10, Rate: 5000, Radius: 1})
 	stone := g.mats.MustLookup("stone")
-	step(t, g, Input{Select: 3})
+	step(t, g, &Input{Select: 3})
 	// Nothing to place yet.
 	before := g.world.Count(stone)
-	step(t, g, Input{CursorX: 64, CursorY: 20, Place: true})
+	step(t, g, &Input{CursorX: 64, CursorY: 20, Place: true})
 	if got := g.world.Count(stone); got != before {
 		t.Fatalf("placing from an empty inventory changed the stone cells from %d to %d", before, got)
 	}
@@ -204,7 +204,7 @@ func TestPlaceTakesFromInventory(t *testing.T) {
 	placeAt := func(x, y int) {
 		t.Helper()
 		before, inv := g.world.Count(stone), g.Inventory(stone)
-		step(t, g, Input{CursorX: x, CursorY: y, Place: true})
+		step(t, g, &Input{CursorX: x, CursorY: y, Place: true})
 		placed := g.world.Count(stone) - before
 		if want := min(inv, 5); placed != want {
 			t.Fatalf("with %d stone held, placing added %d cells, want %d", inv, placed, want)
@@ -232,9 +232,9 @@ func TestCreativePlacesWithoutInventory(t *testing.T) {
 	}
 	t.Cleanup(g.Close)
 	water, stone := g.mats.MustLookup("water"), g.mats.MustLookup("stone")
-	step(t, g, Input{Select: 2})
+	step(t, g, &Input{Select: 2})
 	before := g.world.Count(water)
-	step(t, g, Input{CursorX: 64, CursorY: 20, Place: true})
+	step(t, g, &Input{CursorX: 64, CursorY: 20, Place: true})
 	if got := g.world.Count(water); got <= before {
 		t.Fatalf("creative placing left %d water cells, want more than %d", got, before)
 	}
@@ -252,7 +252,7 @@ func TestCreativePlacesWithoutInventory(t *testing.T) {
 	if held == 0 {
 		t.Fatal("creative digging put no stone in the inventory")
 	}
-	step(t, g, Input{CursorX: 40, CursorY: 20, Place: true, Select: 3})
+	step(t, g, &Input{CursorX: 40, CursorY: 20, Place: true, Select: 3})
 	if got := g.Inventory(stone); got != held {
 		t.Fatalf("creative placing took stone from the inventory: %d left of %d", got, held)
 	}
@@ -262,10 +262,10 @@ func TestCreativePlacesWithoutInventory(t *testing.T) {
 func TestPlaceFillsFromTheBottom(t *testing.T) {
 	g := newTestGame(t, Tool{Power: 10, Rate: 1, Radius: 1})
 	stone := g.mats.MustLookup("stone")
-	step(t, g, Input{Select: 3})
+	step(t, g, &Input{Select: 3})
 	g.inventory[stone] = 2
 	// The static stone stays where it is put, in the air.
-	step(t, g, Input{CursorX: 64, CursorY: 20, Place: true})
+	step(t, g, &Input{CursorX: 64, CursorY: 20, Place: true})
 	for _, p := range [][2]int{{64, 21}, {63, 20}} {
 		if got := matAt(t, g, p[0], p[1]); got != stone {
 			t.Errorf("(%d, %d) holds %d, want stone", p[0], p[1], got)
@@ -284,7 +284,7 @@ func TestDigDamageLastsWhenDiggingStops(t *testing.T) {
 	g := newTestGame(t, testTool) // stone takes 4 ticks
 	stone := g.mats.MustLookup("stone")
 	x, y := floor(g)
-	pauses := []Input{{CursorX: x, CursorY: y}, dig(x-20, y), {CursorX: x, CursorY: y, Place: true}}
+	pauses := []*Input{{CursorX: x, CursorY: y}, dig(x-20, y), {CursorX: x, CursorY: y, Place: true}}
 	for _, pause := range pauses {
 		step(t, g, dig(x, y))
 		if got := matAt(t, g, x, y); got != stone {
@@ -355,7 +355,7 @@ func TestDigAndPlaceConserveCells(t *testing.T) {
 			}
 		}
 		held := carried(g)
-		step(t, g, in)
+		step(t, g, &in)
 		if got := totals(g); !slices.Equal(got, start) {
 			t.Fatalf("tick %d: cells plus inventory are %v, want %v", tick, got, start)
 		}
@@ -395,7 +395,7 @@ func carried(g *Game) int {
 func TestStepDoesNotAllocate(t *testing.T) {
 	g := newTestGame(t, Tool{Power: 10, Rate: 100, Radius: 4})
 	x, y := floor(g)
-	inputs := []Input{dig(x, y), dig(x+1, y), {CursorX: 40, CursorY: 20, Place: true, Select: 3}, {}}
+	inputs := []*Input{dig(x, y), dig(x+1, y), {CursorX: 40, CursorY: 20, Place: true, Select: 3}, {}}
 	for _, in := range inputs {
 		if n := testing.AllocsPerRun(20, func() {
 			if err := g.Step(in); err != nil {
@@ -417,12 +417,12 @@ func TestTerrainStepWithBodiesDoesNotAllocate(t *testing.T) {
 		if i < 40 && i%8 == 0 {
 			in.CursorX, in.CursorY, in.Drop = x+120+10*i, y+60, true
 		}
-		step(t, g, in)
+		step(t, g, &in)
 	}
 	if g.Bodies() == 0 {
 		t.Fatal("no bodies; the test needs some")
 	}
-	if n := testing.AllocsPerRun(20, func() { step(t, g, Input{CameraX: x, CameraY: y}) }); n != 0 {
+	if n := testing.AllocsPerRun(20, func() { step(t, g, &Input{CameraX: x, CameraY: y}) }); n != 0 {
 		t.Fatalf("a tick of the terrain with bodies allocates %v times", n)
 	}
 }
@@ -492,8 +492,8 @@ func TestBodyToolDropsBodies(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(g.Close)
-	step(t, g, Input{CursorX: 64, CursorY: 10, Drop: true})
-	step(t, g, Input{CursorX: 64, CursorY: 10, Drop: true}) // the first is still there
+	step(t, g, &Input{CursorX: 64, CursorY: 10, Drop: true})
+	step(t, g, &Input{CursorX: 64, CursorY: 10, Drop: true}) // the first is still there
 	if g.Bodies() != 1 {
 		t.Fatalf("%d bodies, want 1", g.Bodies())
 	}
@@ -501,7 +501,7 @@ func TestBodyToolDropsBodies(t *testing.T) {
 		t.Fatalf("the body's top-left pixel is not at (60, 7): %+v", c)
 	}
 	for range 120 {
-		step(t, g, Input{})
+		step(t, g, &Input{})
 	}
 	n := make([]int, tab.Len())
 	g.BodyPixels(n)
@@ -531,9 +531,9 @@ func TestDigBreaksBodies(t *testing.T) {
 			t.Fatal(err)
 		}
 		t.Cleanup(g.Close)
-		step(t, g, Input{CursorX: 64, CursorY: 10, Drop: true})
+		step(t, g, &Input{CursorX: 64, CursorY: 10, Drop: true})
 		for range 120 {
-			step(t, g, Input{})
+			step(t, g, &Input{})
 		}
 		// Dig down through the plank's middle, a cell a tick.
 		floorY := g.World().Height() - max(g.World().Width()/120, 2)
@@ -569,7 +569,7 @@ func TestBodyToolWorksInTheTerrain(t *testing.T) {
 	}
 	t.Cleanup(g.Close)
 	x, y := g.Spawn()
-	step(t, g, Input{CameraX: x, CameraY: y, CursorX: x + 32, CursorY: y + 2, Drop: true})
+	step(t, g, &Input{CameraX: x, CameraY: y, CursorX: x + 32, CursorY: y + 2, Drop: true})
 	if g.Bodies() != 1 || g.Dropped() != 1 {
 		t.Fatalf("the terrain holds %d bodies after a drop", g.Bodies())
 	}

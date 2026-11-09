@@ -18,7 +18,7 @@ func TestViewChunksRun(t *testing.T) {
 	sand := g.mats.MustLookup("sand")
 	// The camera's area ends at row 462, inside block row 0; the view's
 	// last chunk row, 448 to 511, reaches row 542 in block row 1.
-	step(t, g, Input{CameraX: 100, CameraY: 188})
+	step(t, g, &Input{CameraX: 100, CameraY: 188})
 	for y := 450; y < 520; y++ {
 		if c, _ := g.world.At(200, y); c.Mat != 0 {
 			t.Fatalf("cell (200, %d) holds material %d; the test needs sky below the sand", y, c.Mat)
@@ -26,7 +26,7 @@ func TestViewChunksRun(t *testing.T) {
 	}
 	g.world.Set(200, 450, sand)
 	for range 10 {
-		step(t, g, Input{CameraX: 100, CameraY: 188})
+		step(t, g, &Input{CameraX: 100, CameraY: 188})
 	}
 	if c, _ := g.world.At(200, 450); c.Mat == sand {
 		t.Fatal("the sand at (200, 450), on screen, has not fallen in 10 ticks")
@@ -39,7 +39,7 @@ func TestViewReachStaysInMemory(t *testing.T) {
 	g := newTerrainGame(t, 1)
 	for camY := 0; camY < 1200; camY += 37 {
 		for camX := 0; camX < 1400; camX += 53 {
-			step(t, g, Input{CameraX: camX, CameraY: camY})
+			step(t, g, &Input{CameraX: camX, CameraY: camY})
 			x0, y0 := camX/world.ChunkSize*world.ChunkSize-world.MaxReach, camY/world.ChunkSize*world.ChunkSize
 			x1 := (camX+480+world.ChunkSize-1)/world.ChunkSize*world.ChunkSize + world.MaxReach
 			y1 := (camY+270+world.ChunkSize-1)/world.ChunkSize*world.ChunkSize + world.MaxReach
@@ -136,14 +136,14 @@ func TestAreaBlocksIncludeTheFarEdge(t *testing.T) {
 func TestStreamRequestsAhead(t *testing.T) {
 	g := newViewGame(t, 431, 242, testStream)
 	_, y := g.Spawn()
-	step(t, g, Input{CameraX: 900, CameraY: y})
+	step(t, g, &Input{CameraX: 900, CameraY: y})
 	area := g.areaBlocks(g.requestArea(900, y))
 	for by := area.y0; by < area.y1; by++ {
 		if g.world.Resident(3, by) {
 			t.Fatalf("block (3, %d) is in memory before the camera moves toward it", by)
 		}
 	}
-	step(t, g, Input{CameraX: 1000, CameraY: y})
+	step(t, g, &Input{CameraX: 1000, CameraY: y})
 	for by := area.y0; by < area.y1; by++ {
 		for bx := 1; bx <= 3; bx++ {
 			if !g.world.Resident(bx, by) {
@@ -153,7 +153,7 @@ func TestStreamRequestsAhead(t *testing.T) {
 	}
 	// Standing still requests nothing more.
 	before := len(g.resident)
-	step(t, g, Input{CameraX: 1000, CameraY: y})
+	step(t, g, &Input{CameraX: 1000, CameraY: y})
 	if len(g.resident) != before {
 		t.Fatalf("%d blocks in memory after standing still, %d before", len(g.resident), before)
 	}
@@ -286,14 +286,14 @@ func TestStandingStillUnloadsDownToTarget(t *testing.T) {
 	x, y := g.Spawn()
 	for range 200 {
 		x = min(x+16, 8192-480)
-		step(t, g, Input{CameraX: x, CameraY: y})
+		step(t, g, &Input{CameraX: x, CameraY: y})
 	}
 	if len(g.resident) <= testStream.Target {
 		t.Fatalf("only %d blocks in memory after the walk; the test needs more than %d", len(g.resident), testStream.Target)
 	}
 	for range 3000 {
 		before := len(g.resident)
-		step(t, g, Input{CameraX: x, CameraY: y})
+		step(t, g, &Input{CameraX: x, CameraY: y})
 		if gone := before - len(g.resident); gone > 1 && before < 3*testStream.Target {
 			t.Fatalf("%d blocks left at one check with %d in memory", gone, before)
 		}

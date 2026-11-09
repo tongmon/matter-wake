@@ -48,14 +48,14 @@ func TestDropRefuses(t *testing.T) {
 	drop(t, s, id.wood, 60, 10, 10, 10)
 	s.Write() // a body is in the grid from the next Write on
 	for _, at := range [][2]int{{40, 45}, {10, 35}, {55, 5}, {-5, 10}, {95, 10}} {
-		if ok, err := s.Drop(id.wood, at[0], at[1], 10, 10); ok || err != nil {
+		if ok, err := s.Drop(id.wood, at[0], at[1], 10, 10, 0, 0, 0); ok || err != nil {
 			t.Errorf("Drop at %v: %v, %v; want refused", at, ok, err)
 		}
 	}
-	if _, err := s.Drop(id.water, 10, 10, 4, 4); err == nil {
+	if _, err := s.Drop(id.water, 10, 10, 4, 4, 0, 0, 0); err == nil {
 		t.Error("Drop made a body of water")
 	}
-	if _, err := s.Drop(id.wood, 10, 10, 0, 4); err == nil {
+	if _, err := s.Drop(id.wood, 10, 10, 0, 4, 0, 0, 0); err == nil {
 		t.Error("Drop made a body of no pixels")
 	}
 	if s.Bodies() != 1 {

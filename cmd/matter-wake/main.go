@@ -42,6 +42,7 @@ func run() error {
 	flag.BoolVar(&cfg.Creative, "creative", false, "place without taking from the inventory, to try materials out")
 	flag.StringVar(&cfg.SavePath, "save", "", "save folder of the terrain (default: matter-wake/saves/world in the user's config folder)")
 	flag.BoolVar(&cfg.Timing, "timing", false, "log how long ticks, draws and frames took, on exit")
+	flag.StringVar(&cfg.Dash, "dash", "", "test dashboard parts to start with, comma-separated: panel, cell, bodies, chains, chunks, queue (drawn into -shots too)")
 	profile := flag.String("cpuprofile", "", "write a CPU profile of the session to this file, for go tool pprof")
 	flag.Parse()
 

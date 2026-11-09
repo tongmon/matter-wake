@@ -44,7 +44,7 @@ func BenchmarkCollapseScene(b *testing.B) {
 					g = newSceneGame(b, &Config{Width: 480, Height: 270, Workers: workers, Scene: SceneCollapse}, nil)
 					b.StartTimer()
 				}
-				if err := g.Step(Input{}); err != nil {
+				if err := g.Step(&Input{}); err != nil {
 					b.Fatal(err)
 				}
 			}
@@ -66,7 +66,7 @@ func BenchmarkLoadScene(b *testing.B) {
 				b.StopTimer()
 				g := newLoadScene(b, workers, ready)
 				b.StartTimer()
-				step(b, g, Input{CameraX: loadX, CameraY: loadY})
+				step(b, g, &Input{CameraX: loadX, CameraY: loadY})
 				b.StopTimer()
 				g.Close()
 				b.StartTimer()
@@ -81,10 +81,10 @@ func BenchmarkLoadScene(b *testing.B) {
 						g.Close()
 					}
 					g = newLoadScene(b, workers, ready)
-					step(b, g, Input{CameraX: loadX, CameraY: loadY})
+					step(b, g, &Input{CameraX: loadX, CameraY: loadY})
 					b.StartTimer()
 				}
-				step(b, g, Input{CameraX: loadX, CameraY: loadY})
+				step(b, g, &Input{CameraX: loadX, CameraY: loadY})
 			}
 			g.Close()
 		})
@@ -97,7 +97,7 @@ func BenchmarkLoadScene(b *testing.B) {
 func TestLoadSceneWakesTheBlocks(t *testing.T) {
 	g := newLoadScene(t, 2, loadSceneBlocks(t))
 	defer g.Close()
-	step(t, g, Input{CameraX: loadX, CameraY: loadY})
+	step(t, g, &Input{CameraX: loadX, CameraY: loadY})
 	if n := g.World().Awake() + g.World().Waiting(); n < 128 {
 		t.Fatalf("%d chunks ran or waited after the load, want 128 or more", n)
 	}
@@ -105,7 +105,7 @@ func TestLoadSceneWakesTheBlocks(t *testing.T) {
 		t.Fatal("no chunk waited after the load: the scene does not reach the budget")
 	}
 	for range sceneTicks {
-		step(t, g, Input{CameraX: loadX, CameraY: loadY})
+		step(t, g, &Input{CameraX: loadX, CameraY: loadY})
 	}
 	if n := g.World().Awake(); n < 64 {
 		t.Fatalf("%d chunks awake %d ticks after the load, want 64 or more: the scene should stay busy", n, sceneTicks)
@@ -139,7 +139,7 @@ func newLoadScene(tb testing.TB, workers int, ready map[[2]int]*world.Block) *Ga
 	g := newSceneGame(tb, &Config{Width: loadWorld, Height: loadWorld, Workers: workers, Scene: SceneTerrain}, store)
 	x, y := g.Spawn()
 	for range loadWait {
-		step(tb, g, Input{CameraX: x, CameraY: y})
+		step(tb, g, &Input{CameraX: x, CameraY: y})
 	}
 	return g
 }
@@ -153,7 +153,7 @@ func loadSceneBlocks(tb testing.TB) map[[2]int]*world.Block {
 	for _, b := range g.ResidentBlocks() {
 		before[b] = true
 	}
-	step(tb, g, Input{CameraX: loadX, CameraY: loadY})
+	step(tb, g, &Input{CameraX: loadX, CameraY: loadY})
 	ready := map[[2]int]*world.Block{}
 	for _, b := range g.ResidentBlocks() {
 		if !before[b] {
@@ -187,8 +187,8 @@ func TestSavingBlocksChangesNothing(t *testing.T) {
 	defer kept.Close()
 	in := Input{CameraX: loadX, CameraY: loadY}
 	for range 10 {
-		step(t, saved, in)
-		step(t, kept, in)
+		step(t, saved, &in)
+		step(t, kept, &in)
 	}
 	if saved.World().Waiting() == 0 {
 		t.Fatal("no chunk waits at the save: the test needs a session over its budget")
@@ -197,8 +197,8 @@ func TestSavingBlocksChangesNothing(t *testing.T) {
 		t.Fatal(err)
 	}
 	for range 60 {
-		step(t, saved, in)
-		step(t, kept, in)
+		step(t, saved, &in)
+		step(t, kept, &in)
 		if a, b := saved.World().Checksum(), kept.World().Checksum(); a != b {
 			t.Fatalf("tick %d: checksum %#x after saving the blocks, %#x without", saved.World().Tick(), a, b)
 		}

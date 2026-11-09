@@ -57,10 +57,27 @@ type Config struct {
 	// Timing measures how long ticks, draws and frames take and logs it
 	// on exit.
 	Timing bool
+	// Dash names the parts of the test dashboard to start with,
+	// comma-separated: panel and the views (render.ViewNames). With Shots
+	// they are drawn into the shots.
+	Dash string
 }
 
-// Slots are the materials keys 1, 2, 3… select. 🧪 sandbox controls.
-var slots = []string{"sand", "water", "stone"}
+// slotsOf returns the materials the brush places, which keys 1, 2, 3…
+// and the dashboard select: every powder, liquid and static material of
+// mats, kind by kind in that order (🔶), each kind in the table's order.
+// With the shipped table they are sand, water and stone.
+func slotsOf(mats *material.Table) []string {
+	var names []string
+	for _, kind := range [...]material.Kind{material.Powder, material.Liquid, material.Static} {
+		for id := range mats.Len() {
+			if d := mats.Def(material.ID(id)); d.Kind == kind {
+				names = append(names, d.Name)
+			}
+		}
+	}
+	return names
+}
 
 // tool is the player's dig and place tool. 🧪 It digs stone (hardness
 // 10, hp 100000) in 50 ticks a cell and sand in one, with a brush of
@@ -96,23 +113,19 @@ func Run(cfg *Config) error {
 	if cfg.Scale < 1 {
 		return fmt.Errorf("app: window scale %d is not positive", cfg.Scale)
 	}
-	var playback *replay.Replay
-	if cfg.ReplayPath != "" {
-		var err error
-		if playback, err = loadReplay(cfg.ReplayPath); err != nil {
-			return err
-		}
-		if err := checkShots(cfg.Shots, len(playback.Inputs)); err != nil {
-			return err
-		}
-	} else if cfg.Width < 1 || cfg.Height < 1 {
-		return fmt.Errorf("app: world size %dx%d is not positive", cfg.Width, cfg.Height)
+	playback, err := loadPlayback(cfg)
+	if err != nil {
+		return err
 	}
 	if cfg.RecordPath != "" {
 		// Fail now rather than after the session, when the inputs would be lost.
 		if err := prepareRecording(cfg.RecordPath); err != nil {
 			return err
 		}
+	}
+	open, views, err := parseDash(cfg.Dash)
+	if err != nil {
+		return err
 	}
 	var tm *timing
 	if cfg.Timing {
@@ -136,6 +149,7 @@ func Run(cfg *Config) error {
 	defer g.Close()
 
 	a := newApp(cfg, g, sess, mats, playback)
+	a.dash.open, a.dash.views = open, views
 	a.timing = tm
 	if sv != nil {
 		a.prefetch = sv.store
@@ -165,10 +179,32 @@ func Run(cfg *Config) error {
 	return runErr
 }
 
+// loadPlayback loads the replay cfg plays, nil for none, and checks that
+// it has the ticks cfg shoots; without one, it checks the world size.
+func loadPlayback(cfg *Config) (*replay.Replay, error) {
+	if cfg.ReplayPath == "" {
+		if cfg.Width < 1 || cfg.Height < 1 {
+			return nil, fmt.Errorf("app: world size %dx%d is not positive", cfg.Width, cfg.Height)
+		}
+		return nil, nil
+	}
+	playback, err := loadReplay(cfg.ReplayPath)
+	if err != nil {
+		return nil, err
+	}
+	if err := checkShots(cfg.Shots, len(playback.Inputs)); err != nil {
+		return nil, err
+	}
+	return playback, nil
+}
+
 // newApp returns the app that runs session g, started from sess, as cfg
 // asks: playing the replay if there is one, recording and taking shots.
 func newApp(cfg *Config, g *game.Game, sess *game.Config, mats *material.Table, playback *replay.Replay) *app {
-	a := &app{game: g, rend: render.New(mats), width: sess.ViewWidth, height: sess.ViewHeight}
+	a := &app{
+		game: g, rend: render.New(mats), width: sess.ViewWidth, height: sess.ViewHeight,
+		dash: newDash(playback == nil), live: len(cfg.Shots) == 0,
+	}
 	camX, camY := g.Spawn()
 	// Until the first tick, draw what the session starts with.
 	a.in = game.Input{CameraX: camX, CameraY: camY}
@@ -194,7 +230,7 @@ func sessionConfig(cfg *Config, mats *material.Table, playback *replay.Replay) *
 		sess := &game.Config{
 			Width: cfg.Width, Height: cfg.Height, Seed: cfg.Seed, Workers: cfg.Workers,
 			Scene: cfg.Scene, ViewWidth: cfg.Width, ViewHeight: cfg.Height, Stream: stream, Budget: budget,
-			Materials: mats, Slots: slots, Tool: tool, Body: body, Creative: cfg.Creative,
+			Materials: mats, Slots: slotsOf(mats), Tool: tool, Body: body, Creative: cfg.Creative,
 		}
 		if cfg.Scene == game.SceneTerrain {
 			sess.ViewWidth, sess.ViewHeight = min(viewWidth, cfg.Width), min(viewHeight, cfg.Height)
@@ -314,11 +350,17 @@ type app struct {
 	prefetch *prefetchStore
 	// timing, if set, measures the ticks and draws.
 	timing *timing
+	// dash is the test dashboard. live is set when the devices drive it,
+	// which they do unless shots are taken; ui is what they did in the
+	// last update.
+	dash *dash
+	live bool
+	ui   input.UI
 }
 
 func (a *app) Update() error {
 	if a.shots != nil {
-		done, err := a.shots.capture(a.game, a.rend, a.in.CameraX, a.in.CameraY)
+		done, err := a.shots.capture(a.game.World().Tick(), a.drawShot)
 		if err != nil {
 			return err
 		}
@@ -326,19 +368,34 @@ func (a *app) Update() error {
 			return ebiten.Termination
 		}
 	}
+	if a.live {
+		a.ui = input.ReadUI()
+		a.dash.handle(&a.ui, a.game)
+		if a.dash.open {
+			a.dash.build(a.game, a.width)
+		}
+	}
+	if !a.dash.ticks() {
+		if a.live && !a.replaying {
+			// Keep what was pressed for the tick that comes.
+			in := input.Read(a.camera)
+			a.dash.latch(&in)
+		}
+		return nil
+	}
 	in, ok := a.nextInput()
 	if !ok {
 		return ebiten.Termination
 	}
 	if a.record != nil {
-		a.recordInput(in)
+		a.recordInput(&in)
 	}
 	a.in = in
 	var start time.Duration
 	if a.timing != nil {
 		start = a.timing.clock.now()
 	}
-	if err := a.game.Step(in); err != nil {
+	if err := a.game.Step(&in); err != nil {
 		return err
 	}
 	// Getting blocks ready is cheap to ask for but needs no asking every
@@ -354,9 +411,9 @@ func (a *app) Update() error {
 
 // recordInput keeps in for the replay. At the limit it stops recording
 // rather than make the whole replay too long to save.
-func (a *app) recordInput(in game.Input) {
+func (a *app) recordInput(in *game.Input) {
 	if len(a.record.Inputs) < a.recordLimit {
-		a.record.Inputs = append(a.record.Inputs, in)
+		a.record.Inputs = append(a.record.Inputs, *in)
 		return
 	}
 	if !a.recordFull {
@@ -381,6 +438,11 @@ func (a *app) nextInput() (game.Input, bool) {
 		return game.Input{CameraX: a.camera.X, CameraY: a.camera.Y}, true
 	}
 	in := input.Read(a.camera)
+	if a.dash.over {
+		// The panel takes the mouse from the world.
+		in.Place, in.Dig = false, false
+	}
+	a.dash.take(&in, a.game)
 	a.camera.X, a.camera.Y = in.CameraX, in.CameraY
 	return in, true
 }
@@ -392,10 +454,62 @@ func (a *app) Draw(screen *ebiten.Image) {
 	}
 	a.rend.DrawWorld(screen, a.game.World(), a.in.CameraX, a.in.CameraY)
 	if a.shots == nil {
-		a.rend.DrawOverlay(screen, a.game, a.in)
+		a.drawDash(screen)
 	}
 	if a.timing != nil {
 		a.timing.addDraw(a.timing.clock.since(start))
+	}
+}
+
+// drawDash draws, over the world, the views that are on, the status line
+// with the brush at the cursor, the panel if it is open, and the cell
+// under the cursor if that view is on. The cursor is the mouse, which
+// moves while the ticks are paused, or in a replay, which ignores the
+// mouse for the session, the replay's.
+func (a *app) drawDash(screen *ebiten.Image) {
+	camX, camY := a.in.CameraX, a.in.CameraY
+	cx, cy := camX+a.ui.X, camY+a.ui.Y
+	if a.replaying {
+		cx, cy = a.in.CursorX, a.in.CursorY
+	}
+	if a.dash.views != 0 {
+		a.rend.DrawViews(screen, a.game, a.dash.views, camX, camY)
+	}
+	r, shape := a.dash.brush(a.game)
+	st := &render.Status{
+		CursorX: cx, CursorY: cy, CameraX: camX, CameraY: camY, Radius: r, Shape: shape,
+		Selected: a.game.Materials().Def(a.game.Slots()[a.dash.slot(a.game)-1]).Name, Time: a.dash.timeName(),
+	}
+	if a.dash.open {
+		st.Cols = (a.width - a.dash.panel.Width()) / render.GlyphWidth
+	}
+	if a.dash.over {
+		st.Radius = -1 // the mouse is on the panel, not the world
+	}
+	a.rend.DrawOverlay(screen, a.game, st)
+	if a.dash.open {
+		a.rend.DrawPanel(screen, &a.dash.panel, a.ui.X, a.ui.Y)
+	}
+	if a.dash.views&render.ViewCell != 0 && !a.dash.over {
+		a.rend.DrawCell(screen, a.game, cx, cy, cx-camX, cy-camY)
+	}
+}
+
+// drawShot draws a shot: the world and the parts of the dashboard -dash
+// names, the cell view at the input's cursor. It draws no status line,
+// whose rates would make shots differ from run to run.
+func (a *app) drawShot(dst *ebiten.Image) {
+	camX, camY := a.in.CameraX, a.in.CameraY
+	a.rend.DrawWorld(dst, a.game.World(), camX, camY)
+	if a.dash.views != 0 {
+		a.rend.DrawViews(dst, a.game, a.dash.views, camX, camY)
+	}
+	if a.dash.open {
+		a.dash.build(a.game, a.width)
+		a.rend.DrawPanel(dst, &a.dash.panel, -1, -1)
+	}
+	if a.dash.views&render.ViewCell != 0 {
+		a.rend.DrawCell(dst, a.game, a.in.CursorX, a.in.CursorY, a.in.CursorX-camX, a.in.CursorY-camY)
 	}
 }
 

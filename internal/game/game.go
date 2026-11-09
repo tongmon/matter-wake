@@ -8,7 +8,11 @@
 // or destroy one, and neither does the world's own tick. So for every
 // material, its cells in the world plus its count in the inventory stay
 // the same for the whole session. Creative mode, for development, places
-// without taking from the inventory and so makes cells.
+// without taking from the inventory and so makes cells; it counts them
+// (Made), so the sum still holds once they are taken off. A session may
+// turn it on and off, and change the brush and the body tool, as it goes
+// (Change), so that the test dashboard's changes are inputs a replay
+// records.
 //
 // The rooms also hold rigid bodies (internal/rigid), which the body tool,
 // a development tool, drops from nothing. A body's pixels are cells of a
@@ -68,14 +72,16 @@ type Input struct {
 	CameraX, CameraY int
 	// CursorX and CursorY are the cursor position in world cells.
 	CursorX, CursorY int
+	// Select picks a material slot, 1-based; 0 keeps the current one.
+	Select int
+	// Change changes settings from this tick on, before the tools act.
+	Change Change
 	// Place fills the empty cells under the cursor with the selected
 	// material, taken from the inventory.
 	Place bool
 	// Dig wears down the cells under the cursor and moves the ones it digs
 	// out into the inventory. It wins over Place.
 	Dig bool
-	// Select picks a material slot, 1-based; 0 keeps the current one.
-	Select int
 	// Drop drops a body of the body tool centred on the cursor. It does
 	// nothing where the body would not fit.
 	Drop bool
@@ -89,8 +95,11 @@ type Tool struct {
 	// Rate is the damage the tool deals in one tick to each cell under it.
 	// A cell is dug out once the damage it took reaches its material's hp.
 	Rate uint32
-	// Radius is the radius in cells of the brush it digs and places with.
+	// Radius is the radius in cells of the brush it digs and places with,
+	// 0 to MaxRadius.
 	Radius int
+	// Shape is the brush's shape.
+	Shape Shape
 }
 
 // BodyTool is what the body tool drops: rectangular bodies of one solid
@@ -99,8 +108,16 @@ type Tool struct {
 type BodyTool struct {
 	// Material names the solid the bodies are made of; empty for no tool.
 	Material string
-	// Width and Height are the bodies' size in pixels.
+	// Width and Height are the bodies' size in pixels, at most
+	// rigid.MaxPixels together.
 	Width, Height int
+	// Angle turns the bodies about their middle, in whole degrees
+	// clockwise on screen, from -MaxAngle to MaxAngle.
+	Angle int
+	// VX and VY are the velocity the bodies start with, in cells per
+	// second, rightward and downward: 10 cells per second is 1 m/s. Each is
+	// at most MaxSpeed either way.
+	VX, VY int
 }
 
 // Config describes a new session.
@@ -194,13 +211,15 @@ type Game struct {
 	// ahead and aheadList are Upcoming's buffers.
 	ahead     []aheadBlock
 	aheadList [][2]int
-	// bodies are the session's rigid bodies. body is the body tool's
-	// material and size; bodyW is 0 without one.
-	bodies       *rigid.System
-	body         material.ID
-	bodyW, bodyH int
-	// dropped counts the bodies the body tool dropped.
+	// bodies are the session's rigid bodies. bodyTool is what the body
+	// tool drops, and bodyID its material, if it has one.
+	bodies   *rigid.System
+	bodyTool BodyTool
+	bodyID   material.ID
+	// dropped counts the bodies the body tool dropped, and made, by
+	// material, the cells creative mode placed.
 	dropped int
+	made    []int
 }
 
 // New starts a session in cfg.Scene with an empty inventory. In the
@@ -209,11 +228,8 @@ func New(cfg *Config) (*Game, error) {
 	if len(cfg.Slots) == 0 {
 		return nil, errors.New("game: no material slots")
 	}
-	switch {
-	case cfg.Tool.Rate == 0:
-		return nil, errors.New("game: the tool deals no damage")
-	case cfg.Tool.Radius < 0:
-		return nil, fmt.Errorf("game: tool radius %d is negative", cfg.Tool.Radius)
+	if err := checkTool(cfg.Tool); err != nil {
+		return nil, err
 	}
 	slots := make([]material.ID, len(cfg.Slots))
 	for i, name := range cfg.Slots {
@@ -246,7 +262,7 @@ func New(cfg *Config) (*Game, error) {
 	}
 	g := &Game{
 		world: w, mats: cfg.Materials, slots: slots, tool: cfg.Tool, creative: cfg.Creative,
-		inventory: make([]int, cfg.Materials.Len()),
+		inventory: make([]int, cfg.Materials.Len()), made: make([]int, cfg.Materials.Len()),
 	}
 	if err := g.setUp(cfg); err != nil {
 		g.Close()
@@ -258,18 +274,11 @@ func New(cfg *Config) (*Game, error) {
 // setUpBodies checks the body tool and makes the System that holds the
 // bodies.
 func (g *Game) setUpBodies(cfg *Config) error {
-	if t := cfg.Body; t.Material != "" {
-		id, ok := cfg.Materials.Lookup(t.Material)
-		switch {
-		case !ok:
-			return fmt.Errorf("game: the body tool names unknown material %q", t.Material)
-		case cfg.Materials.Def(id).Kind != material.Solid:
-			return fmt.Errorf("game: the body tool's material %q is not a solid", t.Material)
-		case t.Width < 1 || t.Height < 1:
-			return fmt.Errorf("game: the body tool's size %dx%d is not positive", t.Width, t.Height)
-		}
-		g.body, g.bodyW, g.bodyH = id, t.Width, t.Height
+	id, err := bodyMaterial(cfg.Body, cfg.Materials)
+	if err != nil {
+		return err
 	}
+	g.bodyTool, g.bodyID = cfg.Body, id
 	s, err := rigid.New(g.world, cfg.Materials)
 	if err != nil {
 		return fmt.Errorf("game: %w", err)
@@ -559,7 +568,7 @@ func (g *Game) Inventory(id material.ID) int {
 // and the terrain near them is made collision; the world's tick runs the
 // cells and puts back the cells the bodies pushed out; and Box2D steps
 // (internal/rigid).
-func (g *Game) Step(in Input) error {
+func (g *Game) Step(in *Input) error {
 	if g.terrain != nil {
 		if err := g.stream(in.CameraX, in.CameraY); err != nil {
 			return err
@@ -567,6 +576,9 @@ func (g *Game) Step(in Input) error {
 		// The rooms show all of the world, whose middle is the focus
 		// already.
 		g.world.SetFocus(in.CameraX+g.viewW/2, in.CameraY+g.viewH/2)
+	}
+	if err := g.apply(in.Change); err != nil {
+		return err
 	}
 	if in.Select >= 1 && in.Select <= len(g.slots) {
 		g.selected = in.Select - 1
@@ -582,10 +594,10 @@ func (g *Game) Step(in Input) error {
 	if err := g.bodies.Break(g.inventory); err != nil {
 		return fmt.Errorf("game: %w", err)
 	}
-	if in.Drop && g.bodyW > 0 {
-		ok, err := g.bodies.Drop(g.body, in.CursorX-g.bodyW/2, in.CursorY-g.bodyH/2, g.bodyW, g.bodyH)
+	if in.Drop && g.bodyTool.Material != "" {
+		ok, err := g.dropBody(in.CursorX, in.CursorY)
 		if err != nil {
-			return fmt.Errorf("game: %w", err)
+			return err
 		}
 		if ok {
 			g.dropped++
@@ -607,12 +619,11 @@ func (g *Game) Step(in Input) error {
 // inventory. The damage stays in the cells (world.World.Wear), or for a
 // body's cell in the pixel it shows (rigid.System.Wear).
 func (g *Game) dig(cx, cy int) {
-	r := g.tool.Radius
+	r, shape := g.tool.Radius, g.tool.Shape
 	for y := cy - r; y <= cy+r; y++ {
 		for x := cx - r; x <= cx+r; x++ {
-			dx, dy := x-cx, y-cy
 			c, ok := g.world.At(x, y)
-			if !ok || dx*dx+dy*dy > r*r {
+			if !ok || !covers(shape, r, x-cx, y-cy) {
 				continue
 			}
 			def := g.mats.Def(c.Mat)
@@ -635,10 +646,10 @@ func (g *Game) dig(cx, cy int) {
 // place fills the empty cells under the brush centred on (cx, cy) with the
 // selected material, one from the inventory for each, in rows from the
 // bottom, so a short inventory fills a hole from its floor. It stops when
-// the inventory runs out. In creative mode it takes nothing and fills the
-// brush.
+// the inventory runs out. In creative mode it takes nothing, fills the
+// brush and counts what it made.
 func (g *Game) place(cx, cy int) {
-	r, sel := g.tool.Radius, g.slots[g.selected]
+	r, shape, sel := g.tool.Radius, g.tool.Shape, g.slots[g.selected]
 	if g.mats.Def(sel).Kind == material.Empty {
 		return // placing air would fill nothing
 	}
@@ -647,13 +658,14 @@ func (g *Game) place(cx, cy int) {
 			if !g.creative && g.inventory[sel] == 0 {
 				return
 			}
-			dx, dy := x-cx, y-cy
 			c, ok := g.world.At(x, y)
-			if !ok || dx*dx+dy*dy > r*r || g.mats.Def(c.Mat).Kind != material.Empty {
+			if !ok || !covers(shape, r, x-cx, y-cy) || g.mats.Def(c.Mat).Kind != material.Empty {
 				continue
 			}
 			g.world.Set(x, y, sel)
-			if !g.creative {
+			if g.creative {
+				g.made[sel]++
+			} else {
 				g.inventory[sel]--
 			}
 		}

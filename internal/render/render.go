@@ -42,6 +42,13 @@ type Renderer struct {
 	// pix holds the pixels of the chunk being uploaded.
 	pix []byte
 	op  ebiten.DrawImageOptions
+	// The views' buffers (views.go): the edges to draw, the frozen
+	// bodies', the queued cells and the path they are stroked as.
+	edges, frozen []game.Edge
+	queued        []world.Queued
+	path          vector.Path
+	stroke        vector.StrokeOptions
+	drawPath      vector.DrawPathOptions
 }
 
 // New returns a renderer for the cells of mats.
@@ -124,28 +131,89 @@ func (r *Renderer) forget(cx0, cy0, cx1, cy1, cols int) {
 	}
 }
 
+// Status is what the status line shows besides the session itself.
+type Status struct {
+	// CursorX, CursorY, CameraX and CameraY are the cursor and the top-left
+	// cell of the view, in world cells.
+	CursorX, CursorY int
+	CameraX, CameraY int
+	// Radius and Shape are the brush's, outlined at the cursor; a radius
+	// below 0 draws no outline.
+	Radius int
+	Shape  game.Shape
+	// Selected is the material the brush places.
+	Selected string
+	// Time names the time controls' state when the ticks do not run at
+	// full speed, such as paused; empty otherwise.
+	Time string
+	// Cols is how many characters a line may hold, 0 for any: past it the
+	// status wraps.
+	Cols int
+}
+
 // DrawOverlay draws the brush outline at the cursor, a status line with
 // the camera, the blocks in memory, how many chunks the last tick ran, the
 // bodies in memory and how many of them wait frozen for a block, the cells
-// waiting to be put back, and what the inventory
-// holds of each slot's material. The cursor and the camera are in world
-// cells.
-func (r *Renderer) DrawOverlay(dst *ebiten.Image, g *game.Game, in game.Input) {
-	radius := float32(g.Tool().Radius) + 0.5
-	sx, sy := float32(in.CursorX-in.CameraX)+0.5, float32(in.CursorY-in.CameraY)+0.5
-	vector.StrokeCircle(dst, sx, sy, radius, 1, brushStroke, false)
-	var held strings.Builder
-	if g.Creative() {
-		held.WriteString("creative (places without the inventory)  ")
-	}
-	for i, id := range g.Slots() {
-		fmt.Fprintf(&held, "%d %s %d  ", i+1, r.mats.Def(id).Name, g.Inventory(id))
+// waiting to be put back, and what the inventory holds of each slot's
+// material, and a line of keys.
+func (r *Renderer) DrawOverlay(dst *ebiten.Image, g *game.Game, s *Status) {
+	sx, sy := float32(s.CursorX-s.CameraX), float32(s.CursorY-s.CameraY)
+	switch {
+	case s.Radius < 0:
+	case s.Shape == game.ShapeSquare:
+		side := float32(2*s.Radius + 1)
+		vector.StrokeRect(dst, sx-float32(s.Radius), sy-float32(s.Radius), side, side, 1, brushStroke, false)
+	default:
+		vector.StrokeCircle(dst, sx+0.5, sy+0.5, float32(s.Radius)+0.5, 1, brushStroke, false)
 	}
 	w := g.World()
-	status := fmt.Sprintf("%s  tick %d  TPS %.0f  FPS %.0f  awake %d chunks  %d blocks  camera %d,%d\n"+
-		"%d bodies (%d frozen)  %d queued\n%s\n"+
-		"LMB place  RMB dig  B body  1-%d material  WASD/arrows move (Shift faster)",
-		g.Selected().Name, w.Tick(), ebiten.ActualTPS(), ebiten.ActualFPS(), w.Awake(), g.Blocks(),
-		in.CameraX, in.CameraY, g.Bodies(), g.Frozen(), w.QueueLen(), held.String(), len(g.Slots()))
-	ebitenutil.DebugPrint(dst, status)
+	first := []string{s.Selected, fmt.Sprintf("tick %d", w.Tick())}
+	if s.Time != "" {
+		first = append(first, s.Time)
+	}
+	first = append(first, fmt.Sprintf("TPS %.0f", ebiten.ActualTPS()), fmt.Sprintf("FPS %.0f", ebiten.ActualFPS()),
+		fmt.Sprintf("awake %d chunks", w.Awake()), fmt.Sprintf("%d blocks", g.Blocks()),
+		fmt.Sprintf("camera %d,%d", s.CameraX, s.CameraY))
+	var held []string
+	if g.Creative() {
+		held = append(held, "creative (places without the inventory)")
+	}
+	for i, id := range g.Slots() {
+		held = append(held, fmt.Sprintf("%d %s %d", i+1, r.mats.Def(id).Name, g.Inventory(id)))
+	}
+	keys := []string{
+		"LMB place", "RMB dig", "B body", fmt.Sprintf("1-%d material", min(len(g.Slots()), 9)),
+		"WASD/arrows move (Shift faster)", "Tab dashboard",
+	}
+	var b strings.Builder
+	for _, line := range [][]string{
+		first,
+		{fmt.Sprintf("%d bodies (%d frozen)", g.Bodies(), g.Frozen()), fmt.Sprintf("%d queued", w.QueueLen())},
+		held,
+		keys,
+	} {
+		wrap(&b, line, s.Cols)
+	}
+	ebitenutil.DebugPrint(dst, b.String())
+}
+
+// wrap writes parts to b two spaces apart, starting a new line where the
+// next part would run past cols characters (any, for 0), and ends the
+// line.
+func wrap(b *strings.Builder, parts []string, cols int) {
+	n := 0
+	for i, p := range parts {
+		switch {
+		case i == 0:
+		case cols > 0 && n+2+len(p) > cols:
+			b.WriteByte('\n')
+			n = 0
+		default:
+			b.WriteString("  ")
+			n += 2
+		}
+		b.WriteString(p)
+		n += len(p)
+	}
+	b.WriteByte('\n')
 }

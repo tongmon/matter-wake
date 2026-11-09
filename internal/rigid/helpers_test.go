@@ -92,7 +92,7 @@ func tick(tb testing.TB, s *System, w *world.World) {
 // fails the test if it cannot.
 func drop(tb testing.TB, s *System, m material.ID, x, y, w, h int) {
 	tb.Helper()
-	ok, err := s.Drop(m, x, y, w, h)
+	ok, err := s.Drop(m, x, y, w, h, 0, 0, 0)
 	if err != nil || !ok {
 		tb.Fatalf("Drop at (%d, %d): %v, %v", x, y, ok, err)
 	}

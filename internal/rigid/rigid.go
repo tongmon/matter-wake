@@ -38,6 +38,7 @@ package rigid
 
 import (
 	"fmt"
+	"math"
 
 	"github.com/tongmon/matter-wake/internal/fixed"
 	"github.com/tongmon/matter-wake/internal/material"
@@ -59,11 +60,14 @@ const (
 	// densityScale turns a solid's density into Box2D's kilograms per
 	// square meter: Noita's wood of density 6 weighs 0.6 kg/m² (C31, C05).
 	densityScale = 0.1
-	// maxBodies and maxPixels are what a cell's link to its body holds
+	// maxBodies and MaxPixels are what a cell's link to its body holds
 	// (world.BodyCell): 16 bits each.
 	maxBodies = 1 << 16
-	maxPixels = 1 << 16
 )
+
+// MaxPixels is the most pixels a body's image holds: a cell's link to its
+// body numbers them in 16 bits (world.BodyCell).
+const MaxPixels = 1 << 16
 
 // System holds the rigid bodies of one world and the terrain collision
 // near them. It is not safe for concurrent use. Box2D keeps its worlds in
@@ -121,6 +125,8 @@ type System struct {
 	freed []rect
 	// cold is freeze's scratch list of the bodies it stops, by slot.
 	cold []int32
+	// scratch holds the edges Box2D gives, for drawing (view.go).
+	scratch []physics.Edge
 }
 
 // New returns a System for the bodies of w, whose cells are of mats. It
@@ -191,35 +197,72 @@ func (s *System) Pixels(n []int) {
 	}
 }
 
-// Drop adds a body of material m, w × h pixels, with its top-left pixel at
-// cell (x, y), at rest and unturned. It reports false, and adds nothing,
-// when a cell under it is outside the world or memory, static, powder or
-// another body, or when the world holds as many bodies as it can. Liquid
-// and air give way when its pixels are written. The body's pixels go into
-// the grid at the next Write.
-func (s *System) Drop(m material.ID, x, y, w, h int) (bool, error) {
+// Drop adds a body of material m, w × h pixels, whose image unturned would
+// have its top-left pixel at cell (x, y), turned about its middle by angle
+// radians (clockwise on screen, Box2D's sign with y down) and moving at
+// (vx, vy) cells per second. It reports false, and adds nothing, when a
+// cell under it is outside the world or memory, static, powder or another
+// body, or when the world holds as many bodies as it can. Under it are the
+// cells whose centers fall inside the turned rectangle, a little widened,
+// so it covers every cell Write samples. Liquid and air give way when its
+// pixels are written. The body's pixels go into the grid at the next Write.
+func (s *System) Drop(m material.ID, x, y, w, h int, angle, vx, vy float32) (bool, error) {
 	switch {
 	case int(m) >= len(s.kinds) || s.kinds[m] != material.Solid:
 		return false, fmt.Errorf("rigid: material %d is not a solid", m)
-	case w < 1 || h < 1 || w*h > maxPixels:
-		return false, fmt.Errorf("rigid: a body of %d×%d pixels; it needs 1 to %d", w, h, maxPixels)
+	case w < 1 || h < 1 || w > MaxPixels || h > MaxPixels || w*h > MaxPixels:
+		return false, fmt.Errorf("rigid: a body of %d×%d pixels; it needs 1 to %d", w, h, MaxPixels)
+	case !finite(angle) || !finite(vx) || !finite(vy):
+		return false, fmt.Errorf("rigid: a body turned by %v moving at %v, %v; each must be finite", angle, vx, vy)
 	case len(s.bodies) >= maxBodies:
 		return false, nil
 	}
-	for cy := y; cy < y+h; cy++ {
-		for cx := x; cx < x+w; cx++ {
+	if !s.fits(x, y, w, h, physics.MakeRot(angle)) {
+		return false, nil
+	}
+	if err := s.add(m, x, y, w, h, angle); err != nil {
+		return false, err
+	}
+	if vx != 0 || vy != 0 {
+		b := &s.bodies[len(s.bodies)-1]
+		s.phys.SetVelocity(b.id, physics.Vec2{X: vx / cellsPerMeter, Y: vy / cellsPerMeter}, 0)
+	}
+	return true, nil
+}
+
+// fits reports whether a body of w × h pixels with the middle of
+// rectangle (x, y, w, h), turned by q, may go there: no cell under it is
+// outside the world or memory, static, powder or another body. A cell is
+// under it when its center falls inside the rectangle widened by
+// sampleEdge, as Write samples. Unturned, those are exactly the cells of
+// the rectangle. The multiplications are converted one by one, as in
+// write.
+func (s *System) fits(x, y, w, h int, q physics.Rot) bool {
+	co, si := q.C, q.S
+	hw, hh := float32(w)/2, float32(h)/2
+	mx, my := float32(x)+hw, float32(y)+hh
+	ex := float32(abs32(co)*hw) + float32(abs32(si)*hh)
+	ey := float32(abs32(si)*hw) + float32(abs32(co)*hh)
+	for cy := int(math.Floor(float64(my - ey))); cy <= int(math.Floor(float64(my+ey))); cy++ {
+		dy := float32(cy) + 0.5 - my
+		for cx := int(math.Floor(float64(mx - ex))); cx <= int(math.Floor(float64(mx+ex))); cx++ {
+			dx := float32(cx) + 0.5 - mx
+			u, v := float32(co*dx)+float32(si*dy), float32(co*dy)-float32(si*dx)
+			if abs32(u) > hw+sampleEdge || abs32(v) > hh+sampleEdge {
+				continue
+			}
 			c, ok := s.w.At(cx, cy)
 			if !ok {
-				return false, nil
+				return false
 			}
 			switch s.kinds[c.Mat] {
 			case material.Static, material.Powder, material.Solid:
-				return false, nil
+				return false
 			case material.Empty, material.Liquid:
 			}
 		}
 	}
-	return true, s.add(m, x, y, w, h, 0)
+	return true
 }
 
 // add makes the body Drop checked, turned by angle radians about its

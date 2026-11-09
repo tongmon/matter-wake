@@ -199,3 +199,20 @@ func fits(a [4]int, cells rect) bool {
 	r := rectOf(a)
 	return r.empty() || r.clip(cells) == r
 }
+
+// ChangeRect returns the change rectangle of chunk (cx, cy): the cells
+// [x0, x1) × [y0, y1) its next run scans. It is empty, x0 == x1, while the
+// chunk sleeps. It is for drawing and changes nothing.
+func (w *World) ChangeRect(cx, cy int) (x0, y0, x1, y1 int) {
+	r := w.dirty[cy*w.cols+cx]
+	if r.empty() {
+		return 0, 0, 0, 0
+	}
+	return r.x0, r.y0, r.x1, r.y1
+}
+
+// Held reports whether chunk (cx, cy) waited in the last tick: it had
+// cells to scan but was over the budget. It is for drawing.
+func (w *World) Held(cx, cy int) bool {
+	return w.tick > 0 && w.held[cy*w.cols+cx] == w.tick
+}

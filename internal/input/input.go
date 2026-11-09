@@ -77,3 +77,56 @@ func pressed(keys ...ebiten.Key) bool {
 	}
 	return false
 }
+
+// Keys are the test dashboard's keys, as a set.
+type Keys uint16
+
+// The dashboard's keys (🔶): Tab opens and closes the panel, Space pauses,
+// F runs one tick and pauses, G slows the ticks, and F1 to F5 turn the
+// views on and off.
+const (
+	KeyPanel Keys = 1 << iota
+	KeyPause
+	KeyStep
+	KeySlow
+	// KeyView is F1; the views follow it, one key each.
+	KeyView
+)
+
+// keyOf maps the dashboard's keys to Ebitengine's, in the order of Keys.
+var keyOf = [...]ebiten.Key{
+	ebiten.KeyTab, ebiten.KeySpace, ebiten.KeyF, ebiten.KeyG,
+	ebiten.KeyF1, ebiten.KeyF2, ebiten.KeyF3, ebiten.KeyF4, ebiten.KeyF5,
+}
+
+// UI is what the devices did for the test dashboard in one update.
+type UI struct {
+	// X and Y are the cursor on the screen, in logical pixels.
+	X, Y int
+	// Click is set when the left button was just pressed.
+	Click bool
+	// Shift is set while Shift is held.
+	Shift bool
+	// Wheel is how far the wheel turned, up positive: 1 a notch of a
+	// mouse wheel, less from a touchpad.
+	Wheel float64
+	// Keys are the dashboard's keys just pressed.
+	Keys Keys
+}
+
+// ReadUI samples the devices once for the dashboard.
+func ReadUI() UI {
+	x, y := ebiten.CursorPosition()
+	ui := UI{
+		X: x, Y: y,
+		Click: inpututil.IsMouseButtonJustPressed(ebiten.MouseButtonLeft),
+		Shift: ebiten.IsKeyPressed(ebiten.KeyShift),
+	}
+	_, ui.Wheel = ebiten.Wheel()
+	for i, k := range keyOf {
+		if inpututil.IsKeyJustPressed(k) {
+			ui.Keys |= 1 << i
+		}
+	}
+	return ui
+}

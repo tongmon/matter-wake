@@ -199,3 +199,11 @@ func (w *World) put(o *Cell, c Cell, x, y int) {
 	*o = c
 	w.touch(rect{x, y, x + 1, y + 1})
 }
+
+// AppendQueued appends to out the cells waiting in the queue to be put
+// back: those that failed before first, then the new ones. It is for
+// drawing and changes nothing.
+func (w *World) AppendQueued(out []Queued) []Queued {
+	out = append(out, w.retry...)
+	return append(out, w.fresh...)
+}

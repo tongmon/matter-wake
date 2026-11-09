@@ -8,9 +8,6 @@ import (
 	"path/filepath"
 
 	"github.com/hajimehoshi/ebiten/v2"
-
-	"github.com/tongmon/matter-wake/internal/game"
-	"github.com/tongmon/matter-wake/internal/render"
 )
 
 // shooter saves the world at chosen ticks. It draws inside Update rather
@@ -34,13 +31,12 @@ func newShooter(ticks []uint32, dir string, width, height int) *shooter {
 	}
 }
 
-// capture saves the current tick, as the camera at (camX, camY) sees it,
-// if it was asked for. It reports whether every shot has been taken.
-func (s *shooter) capture(g *game.Game, r *render.Renderer, camX, camY int) (bool, error) {
-	tick := g.World().Tick()
+// capture saves tick, which the world has run to, as draw draws it, if it
+// was asked for. It reports whether every shot has been taken.
+func (s *shooter) capture(tick uint32, draw func(*ebiten.Image)) (bool, error) {
 	for len(s.ticks) > 0 && s.ticks[0] <= tick {
 		if s.ticks[0] == tick {
-			if err := s.save(g, r, tick, camX, camY); err != nil {
+			if err := s.save(tick, draw); err != nil {
 				return false, err
 			}
 		}
@@ -49,8 +45,9 @@ func (s *shooter) capture(g *game.Game, r *render.Renderer, camX, camY int) (boo
 	return len(s.ticks) == 0, nil
 }
 
-func (s *shooter) save(g *game.Game, r *render.Renderer, tick uint32, camX, camY int) error {
-	r.DrawWorld(s.img, g.World(), camX, camY)
+func (s *shooter) save(tick uint32, draw func(*ebiten.Image)) error {
+	s.img.Clear()
+	draw(s.img)
 	s.img.ReadPixels(s.pix)
 	// ReadPixels gives premultiplied RGBA, which is what image.RGBA holds.
 	img := &image.RGBA{Pix: s.pix, Stride: 4 * s.rect.Dx(), Rect: s.rect}
