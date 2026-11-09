@@ -145,3 +145,61 @@ func TestSetShapesDoesNotAllocate(t *testing.T) {
 		t.Fatalf("SetShapes allocates %v times", n)
 	}
 }
+
+// SetBox makes the box AddDynamicBox makes, to the bit: the same mass,
+// inertia and center of mass, so a box body taken out of the world can
+// be made again as it was.
+func TestSetBoxMakesTheSameBox(t *testing.T) {
+	w := newTestWorld(t)
+	s := Surface{Density: 0.6, Friction: 0.9, Restitution: 0.2}
+	box, err := w.AddDynamicBox(Box{Center: Vec2{3, 4}, HalfW: 0.8, HalfH: 0.6, Density: s.Density, Friction: s.Friction, Restitution: s.Restitution})
+	if err != nil {
+		t.Fatal(err)
+	}
+	again, err := w.AddDynamicBody(Vec2{30, 4}, Rot{C: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := w.SetBox(again, 0.8, 0.6, s); err != nil {
+		t.Fatal(err)
+	}
+	if w.Mass(again) != w.Mass(box) || w.Inertia(again) != w.Inertia(box) || w.LocalCenter(again) != w.LocalCenter(box) {
+		t.Fatalf("SetBox made mass %v, inertia %v, center %v; AddDynamicBox %v, %v, %v",
+			w.Mass(again), w.Inertia(again), w.LocalCenter(again), w.Mass(box), w.Inertia(box), w.LocalCenter(box))
+	}
+	if err := w.SetBox(again, 0, 1, s); err == nil {
+		t.Fatal("SetBox took a box of no width")
+	}
+}
+
+// A disabled body stays where it is through Steps; enabled again, it is
+// awake and moves. A body put to sleep stays asleep.
+func TestDisableAndSleep(t *testing.T) {
+	w := newTestWorld(t)
+	b, err := w.AddDynamicBox(Box{Center: Vec2{0, 10}, HalfW: 0.5, HalfH: 0.5, Density: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	w.Disable(b)
+	p := w.Position(b)
+	for range 30 {
+		w.Step(dt, subSteps)
+	}
+	if w.Position(b) != p || w.Awake(b) {
+		t.Fatalf("the disabled body went from %v to %v, awake %v", p, w.Position(b), w.Awake(b))
+	}
+	w.Enable(b)
+	if !w.Awake(b) {
+		t.Fatal("the enabled body is not awake")
+	}
+	w.Step(dt, subSteps)
+	if w.Position(b) == p {
+		t.Fatal("the enabled body did not move")
+	}
+	w.Sleep(b)
+	p = w.Position(b)
+	w.Step(dt, subSteps)
+	if w.Awake(b) || w.Position(b) != p {
+		t.Fatalf("the sleeping body woke or moved: awake %v at %v", w.Awake(b), w.Position(b))
+	}
+}

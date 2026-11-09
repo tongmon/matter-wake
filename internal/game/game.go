@@ -26,8 +26,8 @@
 // collapse room, as small, for measuring; or the terrain, the big world of
 // which only the blocks around the camera stay in memory (stream.go). The
 // terrain makes a block the first time the camera comes near it; after
-// that the block lives in the store. The terrain has no bodies yet: they
-// are not saved, and would not leave memory with the blocks.
+// that the block lives in the store, with the cells taken from it that
+// wait to go back and the bodies that left memory with it.
 package game
 
 import (
@@ -37,6 +37,7 @@ import (
 
 	"github.com/tongmon/matter-wake/internal/material"
 	"github.com/tongmon/matter-wake/internal/rigid"
+	"github.com/tongmon/matter-wake/internal/save"
 	"github.com/tongmon/matter-wake/internal/scene"
 	"github.com/tongmon/matter-wake/internal/world"
 )
@@ -75,8 +76,8 @@ type Input struct {
 	Dig bool
 	// Select picks a material slot, 1-based; 0 keeps the current one.
 	Select int
-	// Drop drops a body of the body tool centred on the cursor, in the
-	// rooms. It does nothing where the body would not fit.
+	// Drop drops a body of the body tool centred on the cursor. It does
+	// nothing where the body would not fit.
 	Drop bool
 }
 
@@ -162,6 +163,9 @@ type Resume struct {
 	// Without it, the blocks come back awake whole.
 	Chunks    []world.ChunkState
 	Scheduled bool
+	// NextKey is the key the next body made gets. The bodies come with
+	// their blocks.
+	NextKey uint32
 }
 
 // Game is a play session. It is not safe for concurrent use.
@@ -190,8 +194,8 @@ type Game struct {
 	// ahead and aheadList are Upcoming's buffers.
 	ahead     []aheadBlock
 	aheadList [][2]int
-	// bodies are the rigid bodies of the rooms, nil in the terrain.
-	// body is the body tool's material and size; bodyW is 0 without one.
+	// bodies are the session's rigid bodies. body is the body tool's
+	// material and size; bodyW is 0 without one.
 	bodies       *rigid.System
 	body         material.ID
 	bodyW, bodyH int
@@ -251,8 +255,8 @@ func New(cfg *Config) (*Game, error) {
 	return g, nil
 }
 
-// setUpBodies checks the body tool and, in the rooms, makes the System
-// that holds the bodies.
+// setUpBodies checks the body tool and makes the System that holds the
+// bodies.
 func (g *Game) setUpBodies(cfg *Config) error {
 	if t := cfg.Body; t.Material != "" {
 		id, ok := cfg.Materials.Lookup(t.Material)
@@ -265,9 +269,6 @@ func (g *Game) setUpBodies(cfg *Config) error {
 			return fmt.Errorf("game: the body tool's size %dx%d is not positive", t.Width, t.Height)
 		}
 		g.body, g.bodyW, g.bodyH = id, t.Width, t.Height
-	}
-	if cfg.Scene == SceneTerrain {
-		return nil
 	}
 	s, err := rigid.New(g.world, cfg.Materials)
 	if err != nil {
@@ -342,6 +343,7 @@ func (g *Game) setUp(cfg *Config) error {
 		}
 		g.selected = r.Slot - 1
 		copy(g.inventory, r.Inventory)
+		g.bodies.SetNextKey(r.NextKey)
 		if r.Stream != nil {
 			g.streaming = *r.Stream
 		}
@@ -395,25 +397,50 @@ func (g *Game) Slot() int {
 }
 
 // SaveBlocks puts every block of the terrain in memory into the store, so
-// the store holds the whole world as it is, and keeps them in memory: the
-// session goes on as if nothing happened (TestSavingBlocksChangesNothing).
-// The sandbox has nothing to save.
+// the store holds the whole world as it is, and keeps them in memory. The
+// sandbox has nothing to save.
+//
+// The session goes on from where a session opened from the save starts:
+// every body and every cell waiting to go back leaves with its block and
+// comes back, in the order opening the save loads them, into a Box2D world
+// made anew, so the two go on the same, tick for tick
+// (TestSavedSessionGoesOnTheSame). Box2D's own snapshot would keep its
+// state to the bit, but not the rest of the bodies' state, and its format
+// changes with Box2D (docs/briefs/body-saves.md). So saving makes the
+// awake bodies lose what their contacts carry from tick to tick. Without
+// bodies or queued cells, the session goes on as if nothing happened
+// (TestSavingBlocksChangesNothing).
 func (g *Game) SaveBlocks() error {
 	// Taking a block out and back wakes it whole. Which chunks wait for
 	// the budget depends on what each has left to scan, so the chunks get
 	// back where they stood and the session goes on as if unsaved.
 	states := g.world.ChunkStates()
-	for _, b := range g.resident {
+	blocks := g.ResidentBlocks()
+	out := make([]save.Block, len(blocks))
+	for i, bodies := range g.bodies.UnloadBlocks(blocks) {
+		out[i].Bodies = bodies
+	}
+	if err := g.bodies.Reset(); err != nil {
+		return fmt.Errorf("game: %w", err)
+	}
+	// Block by block in row order, as opening the save loads them: each
+	// block's cells come back, and then its queued cells and bodies.
+	for i, b := range blocks {
+		out[i].Queued = g.world.TakeQueued(b[0], b[1], nil)
 		blk, err := g.world.UnloadBlock(b[0], b[1])
 		if err != nil {
 			return fmt.Errorf("game: %w", err)
 		}
-		saveErr := g.store.Save(b[0], b[1], blk)
+		out[i].Cells = blk
+		saveErr := g.store.Save(b[0], b[1], &out[i])
 		if err := g.world.LoadBlock(b[0], b[1], blk); err != nil {
 			return fmt.Errorf("game: %w", err)
 		}
 		if saveErr != nil {
 			return fmt.Errorf("game: block (%d, %d): %w", b[0], b[1], saveErr)
+		}
+		if err := g.restore(b[0], b[1], &out[i]); err != nil {
+			return err
 		}
 	}
 	if err := g.world.SetChunkStates(states); err != nil {
@@ -442,12 +469,38 @@ func (g *Game) Close() {
 	g.world.Close()
 }
 
-// Bodies returns how many rigid bodies the session holds.
+// Bodies returns how many rigid bodies the session holds in memory.
 func (g *Game) Bodies() int {
 	if g.bodies == nil {
 		return 0
 	}
 	return g.bodies.Bodies()
+}
+
+// Frozen returns how many of the bodies in memory wait, frozen, for a
+// block not in memory that they may reach.
+func (g *Game) Frozen() int {
+	if g.bodies == nil {
+		return 0
+	}
+	return g.bodies.Frozen()
+}
+
+// BodyRecords appends to out a record of every body in memory, in key
+// order, as a save keeps it.
+func (g *Game) BodyRecords(out []save.Body) []save.Body {
+	if g.bodies == nil {
+		return out
+	}
+	return g.bodies.Records(out)
+}
+
+// NextKey returns the key the next body made gets, for a save.
+func (g *Game) NextKey() uint32 {
+	if g.bodies == nil {
+		return 0
+	}
+	return g.bodies.NextKey()
 }
 
 // Dropped returns how many bodies the body tool has dropped: it makes
@@ -524,10 +577,6 @@ func (g *Game) Step(in Input) error {
 	case in.Place:
 		g.place(in.CursorX, in.CursorY)
 	}
-	if g.bodies == nil {
-		g.world.Step()
-		return nil
-	}
 	// The bodies the tool dug pixels out of split; the pieces too small to
 	// be bodies go to the inventory with what was dug.
 	if err := g.bodies.Break(g.inventory); err != nil {
@@ -571,11 +620,7 @@ func (g *Game) dig(cx, cy int) {
 			case !def.Kind.Diggable() || def.Hardness > g.tool.Power:
 			case def.Kind == material.Solid:
 				// A body's pixel: it leaves the body's image, and the
-				// body splits before it is written again. Only the rooms
-				// have bodies.
-				if g.bodies == nil {
-					continue
-				}
+				// body splits before it is written again.
 				if m, ok := g.bodies.Wear(x, y, g.tool.Rate); ok {
 					g.inventory[m]++
 				}

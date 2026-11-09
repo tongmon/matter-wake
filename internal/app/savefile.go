@@ -44,7 +44,7 @@ func (s *diskStore) path(bx, by int) string {
 	return filepath.Join(s.dir, blocksDir, fmt.Sprintf("%d_%d.mwb", bx, by))
 }
 
-func (s *diskStore) Load(bx, by int) (*world.Block, error) {
+func (s *diskStore) Load(bx, by int) (*save.Block, error) {
 	path := s.path(bx, by)
 	data, err := os.ReadFile(path)
 	if errors.Is(err, fs.ErrNotExist) {
@@ -60,7 +60,7 @@ func (s *diskStore) Load(bx, by int) (*world.Block, error) {
 	return b, nil
 }
 
-func (s *diskStore) Save(bx, by int, b *world.Block) error {
+func (s *diskStore) Save(bx, by int, b *save.Block) error {
 	return writeFile(s.path(bx, by), func(w io.Writer) error { return save.EncodeBlock(w, b, s.mats) })
 }
 
@@ -230,6 +230,7 @@ func readSession(dir string, tick uint32, mats *material.Table) (*game.Resume, e
 		return nil, fmt.Errorf("app: %s: %w", path, err)
 	}
 	r.Slot, r.CameraX, r.CameraY, r.HasCamera, r.Blocks = p.Slot, p.CameraX, p.CameraY, true, p.Blocks
+	r.NextKey = p.NextKey
 	if s := p.Stream; s != nil {
 		r.Stream = &game.StreamState{Area: s.Area, Requested: true, LastCheck: s.LastCheck, Interval: s.Interval}
 	}
@@ -260,7 +261,9 @@ func writeSave(dir string, g *game.Game, camX, camY int, flush func() error) err
 	if err := save.WriteMeta(&meta, save.Meta{Seed: w.Seed(), Width: w.Width(), Height: w.Height(), Tick: w.Tick()}); err != nil {
 		return fmt.Errorf("app: %w", err)
 	}
-	p := &save.Session{CameraX: camX, CameraY: camY, Slot: g.Slot(), Held: map[string]int{}, Blocks: g.ResidentBlocks()}
+	p := &save.Session{
+		CameraX: camX, CameraY: camY, Slot: g.Slot(), Held: map[string]int{}, Blocks: g.ResidentBlocks(), NextKey: g.NextKey(),
+	}
 	if s := g.StreamState(); s.Requested {
 		p.Stream = &save.SessionStream{Area: s.Area, LastCheck: s.LastCheck, Interval: s.Interval}
 	}

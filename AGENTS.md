@@ -84,16 +84,16 @@ Module path: `github.com/tongmon/matter-wake`.
 | `internal/app/` | Window, fixed-step loop, `-shots` capture, replay files (`-record`, `-replay`), the terrain's save folder (`-save`). | yes |
 | `internal/render/` | Draws a session: uploads cell colors, overlay. | yes |
 | `internal/input/` | Maps devices to `game.Input`. | yes |
-| `internal/game/` | A play session: the world plus the player's tools, stepped by `Input`; in the big world it keeps the blocks around the camera in memory. | **no** |
+| `internal/game/` | A play session: the world plus the player's tools and bodies, stepped by `Input`; in the big world it keeps the blocks around the camera in memory, with the bodies they own. | **no** |
 | `internal/world/` | The cell grid, kept in 512×512 blocks that can be loaded and unloaded, and its tick, including the queue of cells to put back that bodies push out. | **no** |
 | `internal/material/` | Material kinds and the data loader. | **no** |
 | `internal/palette/` | Cells to premultiplied RGBA, testable without a GPU. | **no** |
 | `internal/scene/` | Starting worlds: the sandbox, the collapse room for measuring, and the seeded terrain the big world makes its blocks from. | **no** |
-| `internal/save/` | Encodes a world for saving: each block of cells, field by field, and the world header. | **no** |
+| `internal/save/` | Encodes a world for saving: each block of cells, field by field, with the cells taken from it that wait to go back and the bodies it owns; the world header; the session. | **no** |
 | `internal/replay/` | Encodes and decodes replays: how a session started and its input for every tick. Holds the replay goldens. | **no** |
 | `internal/sched/` | The fixed goroutine pool. The only logic package with `sync`. | **no** |
 | `internal/physics/` | Rigid bodies: Box2D v3.2 compiled through cgo, the only cgo package. Worlds, boxes, convex polygon shapes, terrain chains, Step, transforms, velocities, mass, forces. Holds the determinism golden. | **no** |
-| `internal/rigid/` | Rigid bodies in the grid: writes and erases their pixels as cells, pushes the cells in the way into the world's queue, makes the terrain near them collision, pushes them with the buoyancy and drag of liquid, and breaks a body dug apart into bodies of its pieces with convex shapes. Pure Go; calls `internal/physics`. | **no** |
+| `internal/rigid/` | Rigid bodies in the grid: writes and erases their pixels as cells, pushes the cells in the way into the world's queue, makes the terrain near them collision, pushes them with the buoyancy and drag of liquid, breaks a body dug apart into bodies of its pieces with convex shapes, and takes bodies out with the block that owns them and makes them again, freezing those that may reach a block not in memory. Pure Go; calls `internal/physics`. | **no** |
 | `internal/fixed/` | Fixed-point numbers (Q8) for simulation values with fractions. | **no** |
 | `internal/rng/` | Seeded random numbers (SplitMix64), stable across Go versions. | **no** |
 | `data/` | Materials and other tunables (JSON). | |

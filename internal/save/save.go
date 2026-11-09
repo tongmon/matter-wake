@@ -1,5 +1,7 @@
-// Package save encodes a world for saving: one stream per block of cells
-// (EncodeBlock) and a short header for the whole world (WriteMeta).
+// Package save encodes a world for saving: one stream per block, of its
+// cells, the cells taken from it that wait to go back and the rigid bodies
+// that left with it (EncodeBlock), a short header for the whole world (WriteMeta)
+// and the session (WriteSession).
 //
 // A block is written field by field, never as the bytes of the cells in
 // memory, so a change to world.Cell does not break old saves: a new layout
@@ -11,6 +13,8 @@
 //	"mw-block"            8 bytes
 //	version               uint16
 //	materials size        uint64, the bytes of the material list below
+//	extras size           uint64, the bytes of the extras below
+//	                      (version 3 on)
 //	materials             uint32 count, then each name: uint32 length, bytes
 //	fields                uint8 count, then each field:
 //	                        name: uint8 length, bytes
@@ -18,11 +22,22 @@
 //	                        compressed size: uint32
 //	                        the field of every cell, row by row,
 //	                        little-endian, compressed with DEFLATE
+//	extras                (version 3 on) compressed with DEFLATE:
+//	                        queued cells: uint32 count, then each:
+//	                          x, y: int32, the cell it was taken from
+//	                          each field of the cell, as above
+//	                        bodies: uint32 count, then each:
+//	                          key, material, width, height, cx, cy: uint32
+//	                          flags: uint8, 1 whole, 2 awake
+//	                          left, top, x, y, cos, sin, vx, vy, spin:
+//	                            float32 bits
+//	                          each pixel, row by row: has (0 or 1) and
+//	                            tone, uint8, and damage, uint16
 //	checksum              uint32, CRC-32 (IEEE) of everything before it
 //
-// Integers are little-endian. Cells name their material by its index in
-// the block's own list of material names, so a block reads correctly
-// against a table whose materials moved or grew.
+// Integers are little-endian. Cells and bodies name their material by its
+// index in the block's own list of material names, so a block reads
+// correctly against a table whose materials moved or grew.
 //
 // The world header is line-based text, like a replay:
 //
@@ -55,8 +70,9 @@ import (
 
 // BlockVersion is the block layout this build writes. It also reads
 // version 1, which had no rest field: its cells read back with Rest 0, so
-// resting powders count their ticks at rest again.
-const BlockVersion = 2
+// resting powders count their ticks at rest again; and version 2, which
+// held no queued cells or bodies.
+const BlockVersion = 3
 
 // MetaVersion is the world header layout this build reads and writes.
 const MetaVersion = 1
@@ -151,15 +167,27 @@ func boolByte(v bool) byte {
 	return 0
 }
 
-// EncodeBlock writes the cells of b, whose materials come from mats.
-func EncodeBlock(w io.Writer, b *world.Block, mats *material.Table) error {
+// EncodeBlock writes b, whose materials come from mats. b.Cells must not be
+// nil. It fails, writing nothing, if a body cannot be saved: an image
+// whose pixels do not match its size, or a material mats does not have.
+func EncodeBlock(w io.Writer, b *Block, mats *material.Table) error {
 	return encodeBlock(w, b, mats, BlockVersion)
 }
 
 // encodeBlock writes b in the layout of the given version; tests write
 // older versions with it.
-func encodeBlock(w io.Writer, b *world.Block, mats *material.Table, version uint16) error {
+func encodeBlock(w io.Writer, blk *Block, mats *material.Table, version uint16) error {
 	fields := fieldsOf(version)
+	b := blk.Cells
+	var extra []byte
+	if version >= 3 {
+		var err error
+		if extra, err = compressExtras(blk, mats); err != nil {
+			return fmt.Errorf("save: %w", err)
+		}
+	} else if len(blk.Queued) > 0 || len(blk.Bodies) > 0 {
+		return fmt.Errorf("save: a block of version %d holds no queued cells or bodies", version)
+	}
 	sum := crc32.NewIEEE()
 	bw := bufio.NewWriter(io.MultiWriter(w, sum))
 	// A bufio.Writer keeps its first error and Flush returns it.
@@ -178,6 +206,9 @@ func encodeBlock(w io.Writer, b *world.Block, mats *material.Table, version uint
 	}
 	_ = lw.Flush() // a bytes.Buffer does not fail
 	writeUint(bw, uint64(list.Len()), 8)
+	if version >= 3 {
+		writeUint(bw, uint64(len(extra)), 8)
+	}
 	_, _ = bw.Write(list.Bytes())
 	writeUint(bw, uint64(len(fields)), 1)
 	raw := make([]byte, 4*cells)
@@ -203,6 +234,7 @@ func encodeBlock(w io.Writer, b *world.Block, mats *material.Table, version uint
 		writeUint(bw, uint64(packed.Len()), 4)
 		_, _ = bw.Write(packed.Bytes())
 	}
+	_, _ = bw.Write(extra)
 	if err := bw.Flush(); err != nil {
 		return fmt.Errorf("save: %w", err)
 	}
@@ -225,9 +257,13 @@ func writeName(w *bufio.Writer, name string) {
 	_, _ = w.WriteString(name)
 }
 
-// headBytes is how long a block's head is: its magic, version and the
-// size of its material list.
-const headBytes = len(blockMagic) + 2 + 8
+// headBytes is how long a block's head is up to version 2: its magic,
+// version and the size of its material list. From version 3 on the size
+// of the extras follows (extrasBytes).
+const (
+	headBytes   = len(blockMagic) + 2 + 8
+	extrasBytes = 8
+)
 
 // maxCellBytes caps how much DecodeBlock reads besides the head and the
 // material list: well above the most the cells take, every field of every
@@ -236,8 +272,9 @@ const maxCellBytes = 8 << 20
 
 // DecodeBlock reads a block that EncodeBlock wrote, and maps its materials
 // by name onto mats. It fails on another format or version, on damaged
-// data, and when a cell holds a material mats does not have.
-func DecodeBlock(r io.Reader, mats *material.Table) (*world.Block, error) {
+// data, and when a cell or a body holds a material mats does not have. A
+// block of version 1 or 2 reads with no queued cells or bodies.
+func DecodeBlock(r io.Reader, mats *material.Table) (*Block, error) {
 	data, err := readBlock(r)
 	if err != nil {
 		return nil, fmt.Errorf("save: block: %w", err)
@@ -246,36 +283,51 @@ func DecodeBlock(r io.Reader, mats *material.Table) (*world.Block, error) {
 	if got, want := binary.LittleEndian.Uint32(data[len(body):]), crc32.ChecksumIEEE(body); got != want {
 		return nil, fmt.Errorf("save: block: checksum %08x, the data hashes to %08x: the block is damaged or cut short", got, want)
 	}
+	version := binary.LittleEndian.Uint16(data[len(blockMagic):])
+	head := headBytes
+	if version >= 3 {
+		head += extrasBytes
+	}
 	// A bytes.Reader reads byte by byte, so DEFLATE never reads past its
 	// field.
-	d := &decoder{r: bytes.NewReader(body[headBytes:]), fields: fieldsOf(binary.LittleEndian.Uint16(data[len(blockMagic):]))}
-	b, err := d.block(mats, binary.LittleEndian.Uint64(data[headBytes-8:]))
+	d := &decoder{r: bytes.NewReader(body[head:]), fields: fieldsOf(version)}
+	b, err := d.block(mats, binary.LittleEndian.Uint64(data[headBytes-8:]), version, data[headBytes:head])
 	if err != nil {
 		return nil, fmt.Errorf("save: block: %w", err)
 	}
 	if d.r.Len() != 0 {
-		return nil, errors.New("save: block: data after the last field")
+		return nil, errors.New("save: block: data after the last field, queued cell or body")
 	}
 	return b, nil
 }
 
 // readBlock reads a whole block: its head, then as much as the head's
-// material list size and maxCellBytes allow, which must end in a checksum.
+// material list and extras sizes and maxCellBytes allow, which must end in
+// a checksum.
 func readBlock(r io.Reader) ([]byte, error) {
-	head := make([]byte, headBytes)
+	head := make([]byte, headBytes, headBytes+extrasBytes)
 	n, err := io.ReadFull(r, head)
 	if !bytes.HasPrefix(head[:n], []byte(blockMagic)) || n < len(blockMagic) {
 		return nil, errors.New("not a matter-wake block")
 	}
+	version := uint16(0)
 	if n >= len(blockMagic)+2 {
-		if v := binary.LittleEndian.Uint16(head[len(blockMagic):]); v < 1 || v > BlockVersion {
-			return nil, fmt.Errorf("format version %d; this build reads versions 1 to %d", v, BlockVersion)
+		if version = binary.LittleEndian.Uint16(head[len(blockMagic):]); version < 1 || version > BlockVersion {
+			return nil, fmt.Errorf("format version %d; this build reads versions 1 to %d", version, BlockVersion)
 		}
 	}
 	if err != nil {
 		return nil, noEOF(err)
 	}
-	limit := binary.LittleEndian.Uint64(head[headBytes-8:]) + maxCellBytes + 4
+	extra := uint64(0)
+	if version >= 3 {
+		head = head[:headBytes+extrasBytes]
+		if _, err := io.ReadFull(r, head[headBytes:]); err != nil {
+			return nil, noEOF(err)
+		}
+		extra = binary.LittleEndian.Uint64(head[headBytes:])
+	}
+	limit := satAdd(binary.LittleEndian.Uint64(head[headBytes-8:headBytes]), extra, maxCellBytes+4)
 	rest, err := io.ReadAll(io.LimitReader(r, int64(min(limit, math.MaxInt64-1))+1))
 	switch {
 	case err != nil:
@@ -288,14 +340,27 @@ func readBlock(r io.Reader) ([]byte, error) {
 	return append(head, rest...), nil
 }
 
-// decoder reads the parts of a block after its version, which holds
-// fields.
+// satAdd returns the sum of vs, or the largest uint64 if it is larger.
+func satAdd(vs ...uint64) uint64 {
+	sum := uint64(0)
+	for _, v := range vs {
+		if sum+v < sum {
+			return math.MaxUint64
+		}
+		sum += v
+	}
+	return sum
+}
+
+// decoder reads the parts of a block after its head, which holds fields.
 type decoder struct {
 	r      *bytes.Reader
 	fields []field
 }
 
-func (d *decoder) block(mats *material.Table, listBytes uint64) (*world.Block, error) {
+// block reads the block's material list, of listBytes bytes, its cells
+// and, from version 3 on, its extras, whose size head holds.
+func (d *decoder) block(mats *material.Table, listBytes uint64, version uint16, head []byte) (*Block, error) {
 	before := d.r.Len()
 	ids, names, err := d.materials(mats)
 	if err != nil {
@@ -333,7 +398,13 @@ func (d *decoder) block(mats *material.Table, listBytes uint64) (*world.Block, e
 		}
 		b[i].Mat = material.ID(ids[k])
 	}
-	return b, nil
+	blk := &Block{Cells: b}
+	if version >= 3 {
+		if err := d.readExtras(blk, binary.LittleEndian.Uint64(head), ids, names); err != nil {
+			return nil, fmt.Errorf("queued cells and bodies: %w", err)
+		}
+	}
+	return blk, nil
 }
 
 // materials reads the block's material names and returns, for each, its
@@ -562,9 +633,9 @@ func (l *lines) end() {
 }
 
 // SessionVersion is the session file layout this build writes. It reads
-// version 1, which had no stream line, and version 2, which had no chunk
-// lines.
-const SessionVersion = 3
+// version 1, which had no stream line, version 2, which had no chunk
+// lines, and version 3, which had no bodies line.
+const SessionVersion = 4
 
 const sessionMagic = "matter-wake-session"
 
@@ -575,10 +646,11 @@ const sessionMagic = "matter-wake-session"
 //
 // It is line-based text, like the world header:
 //
-//	matter-wake-session 3
+//	matter-wake-session 4
 //	camera 7952 955
 //	slot 3
 //	stream 7872 832 608 398 4200 60
+//	bodies 17
 //	held "sand" 120
 //	held "stone" 15
 //	block 15 1
@@ -587,7 +659,9 @@ const sessionMagic = "matter-wake-session"
 //
 // The stream line holds the camera's last area (x, y, width, height), the
 // tick of the last check and the ticks to the next; a session that had
-// none has no stream line. Only materials the inventory holds get a held
+// none has no stream line. The bodies line holds the key the next rigid
+// body made gets; the bodies themselves are saved with the blocks that own
+// them. Only materials the inventory holds get a held
 // line, in name order, the name quoted as in Go, since it may hold
 // spaces; the blocks follow in row order. Last come the chunks of those
 // blocks that had something to scan or had waited for the budget
@@ -600,6 +674,9 @@ type Session struct {
 	Slot int
 	// Stream is where the stream's requests and checks stood, or nil.
 	Stream *SessionStream
+	// NextKey is the key of the next rigid body made, 0 in a file older
+	// than version 4.
+	NextKey uint32
 	// Held is how many cells of each material the inventory holds.
 	Held map[string]int
 	// Blocks lists the blocks that were in memory, as (bx, by).
@@ -674,6 +751,7 @@ func WriteSession(w io.Writer, s *Session) error {
 		}
 		_, _ = fmt.Fprintf(bw, "stream %d %d %d %d %d %d\n", st.Area[0], st.Area[1], st.Area[2], st.Area[3], st.LastCheck, st.Interval)
 	}
+	_, _ = fmt.Fprintf(bw, "bodies %d\n", s.NextKey)
 	names := make([]string, 0, len(s.Held))
 	for name, n := range s.Held {
 		if n < 0 || name == "" {
@@ -775,6 +853,22 @@ func (l *lines) stream(s *Session, f []string) {
 	s.Stream = st
 }
 
+// bodies reads the fields of a bodies line of a session of version v
+// into s; seen is set once one was read.
+func (l *lines) bodies(s *Session, f []string, v uint64, seen *bool) {
+	switch {
+	case v < 4:
+		l.err = fmt.Errorf("line %q: a version %d session has no bodies line", l.line, v)
+	case len(f) != 1:
+		l.err = fmt.Errorf("line %q, want %q", l.line, "bodies <next key>")
+	case *seen:
+		l.err = errors.New("the bodies line is there twice")
+	default:
+		s.NextKey = uint32(l.uint("next key", f[0], 32))
+		*seen = true
+	}
+}
+
 // chunk reads the fields of a chunk line into s; seen holds the chunks
 // read so far.
 func (l *lines) chunk(s *Session, f []string, seen map[[2]int]bool) {
@@ -818,9 +912,12 @@ func ReadSession(r io.Reader) (*Session, error) {
 	}
 	seen := map[[2]int]bool{}
 	chunks := map[[2]int]bool{}
+	bodies := false
 	for l.err == nil && l.scan() {
 		f := strings.Fields(l.line)
 		switch {
+		case len(f) > 0 && f[0] == "bodies":
+			l.bodies(s, f[1:], v, &bodies)
 		case strings.HasPrefix(l.line, "held "):
 			l.held(s.Held, strings.TrimPrefix(l.line, "held "))
 		case len(f) > 0 && f[0] == "stream":

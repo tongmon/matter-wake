@@ -212,7 +212,7 @@ type World struct {
 	// those that failed to go back before, and spare is fresh's other
 	// buffer. retryBudget is how many retries the next tick may try
 	// (reinsert.go).
-	fresh, retry, spare []queued
+	fresh, retry, spare []Queued
 	retryBudget         int
 	// scanAll makes every chunk scan all its cells every tick, for tests
 	// that check that sleeping changes nothing.

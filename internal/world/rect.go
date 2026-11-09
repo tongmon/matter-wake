@@ -8,6 +8,11 @@ func (r rect) empty() bool {
 	return r.x0 >= r.x1 || r.y0 >= r.y1
 }
 
+// has reports whether cell (x, y) lies in r.
+func (r rect) has(x, y int) bool {
+	return x >= r.x0 && x < r.x1 && y >= r.y0 && y < r.y1
+}
+
 // add grows r to cover o as well.
 func (r *rect) add(o rect) {
 	switch {

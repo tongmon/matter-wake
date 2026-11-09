@@ -407,6 +407,26 @@ func TestStepDoesNotAllocate(t *testing.T) {
 	}
 }
 
+// Nor does a tick of the terrain with bodies, while no block comes or
+// goes.
+func TestTerrainStepWithBodiesDoesNotAllocate(t *testing.T) {
+	g := newTerrainBodyGame(t, 2)
+	x, y := g.Spawn()
+	for i := range 600 {
+		in := Input{CameraX: x, CameraY: y}
+		if i < 40 && i%8 == 0 {
+			in.CursorX, in.CursorY, in.Drop = x+120+10*i, y+60, true
+		}
+		step(t, g, in)
+	}
+	if g.Bodies() == 0 {
+		t.Fatal("no bodies; the test needs some")
+	}
+	if n := testing.AllocsPerRun(20, func() { step(t, g, Input{CameraX: x, CameraY: y}) }); n != 0 {
+		t.Fatalf("a tick of the terrain with bodies allocates %v times", n)
+	}
+}
+
 // The collapse scene is the room scene.Collapse lays out, all of it in
 // memory, seen from the top left.
 func TestCollapseScene(t *testing.T) {
@@ -537,8 +557,8 @@ func TestDigBreaksBodies(t *testing.T) {
 	}
 }
 
-// The terrain has no bodies yet: the body tool does nothing there.
-func TestTerrainHasNoBodies(t *testing.T) {
+// The body tool drops bodies in the terrain too.
+func TestBodyToolWorksInTheTerrain(t *testing.T) {
 	g, err := New(&Config{
 		Width: 1024, Height: 2048, Seed: 1, Workers: 2, Materials: testTable(t), Scene: SceneTerrain,
 		ViewWidth: 64, ViewHeight: 64, Stream: Stream{Grid: 64, Lead: 4, LeadMax: 512, Target: 12, Check: 60},
@@ -550,7 +570,7 @@ func TestTerrainHasNoBodies(t *testing.T) {
 	t.Cleanup(g.Close)
 	x, y := g.Spawn()
 	step(t, g, Input{CameraX: x, CameraY: y, CursorX: x + 32, CursorY: y + 2, Drop: true})
-	if g.Bodies() != 0 {
-		t.Fatalf("the terrain holds %d bodies", g.Bodies())
+	if g.Bodies() != 1 || g.Dropped() != 1 {
+		t.Fatalf("the terrain holds %d bodies after a drop", g.Bodies())
 	}
 }

@@ -106,6 +106,15 @@ type body struct {
 	// dragY) and of their squared distances from it (dragR2). The drag
 	// of each is linear in its offset, so the sums give the total (C42).
 	dragN, dragX, dragY, dragR2 float32
+	// frozen is set while the body waits, out of Box2D's simulation, for a
+	// block not in memory that it may reach (freeze); fv, fspin and fawake
+	// are the velocity it had then and whether it was awake, which it gets
+	// back when it goes on. cold marks the bodies freeze finds this tick,
+	// and reach the cells it found the body may touch.
+	frozen, fawake, cold bool
+	fv                   physics.Vec2
+	fspin                float32
+	reach                rect
 }
 
 // pixel is a pixel of a body's image: the damage it has taken
@@ -198,14 +207,11 @@ func (s *System) write(b *body, slot uint16) {
 	wx, wy := b.middle(co, si)
 	gx, gy := b.center(co, si)
 	// The half width and height of the box around the turned rectangle,
-	// and the cells it covers.
+	// and the rows it covers.
 	ex := float32(abs32(co)*hw) + float32(abs32(si)*hh)
 	ey := float32(abs32(si)*hw) + float32(abs32(co)*hh)
 	r0, r1 := int(math.Floor(float64(fy+wy-ey))), int(math.Floor(float64(fy+wy+ey)))
-	b.box = rect{
-		ox + int(math.Floor(float64(fx+wx-ex))), oy + r0,
-		ox + int(math.Floor(float64(fx+wx+ex))) + 1, oy + r1 + 1,
-	}
+	b.box = boxAt(b, b.p, b.q)
 	b.haveV, b.blocked = false, 0
 	b.dragN, b.dragX, b.dragY, b.dragR2 = 0, 0, 0, 0
 	b.cells = b.cells[:0]
@@ -243,9 +249,35 @@ func (s *System) write(b *body, slot uint16) {
 	if b.written {
 		b.shiftX = float32(b.p.X-b.wp.X) * cellsPerMeter
 		b.shiftY = float32(b.p.Y-b.wp.Y) * cellsPerMeter
+	} else {
+		// Written for the first time, the body has not moved yet, but may
+		// already be moving: made again with its velocity, or broken off
+		// a moving body. Where its velocity takes it in a tick stands for
+		// the shift, so the terrain is made collision where its first Step
+		// takes it (Codex review).
+		s.velocity(b)
+		b.shiftX = float32(b.v.X*tickSeconds) * cellsPerMeter
+		b.shiftY = float32(b.v.Y*tickSeconds) * cellsPerMeter
 	}
 	b.wp, b.wq, b.written, b.force, b.redraw = b.p, b.q, true, false, false
 	s.w.Flush()
+}
+
+// boxAt returns the cells b's turned rectangle covers with its origin at p
+// turned by q: those write samples, and its box once written there.
+func boxAt(b *body, p physics.Vec2, q physics.Rot) rect {
+	px, py := float32(p.X*cellsPerMeter), float32(p.Y*cellsPerMeter)
+	ox, oy := int(math.Floor(float64(px))), int(math.Floor(float64(py)))
+	fx, fy := px-float32(ox), py-float32(oy)
+	co, si := q.C, q.S
+	hw, hh := float32(b.w)/2, float32(b.h)/2
+	wx, wy := b.middle(co, si)
+	ex := float32(abs32(co)*hw) + float32(abs32(si)*hh)
+	ey := float32(abs32(si)*hw) + float32(abs32(co)*hh)
+	return rect{
+		ox + int(math.Floor(float64(fx+wx-ex))), oy + int(math.Floor(float64(fy+wy-ey))),
+		ox + int(math.Floor(float64(fx+wx+ex))) + 1, oy + int(math.Floor(float64(fy+wy+ey))) + 1,
+	}
 }
 
 // within returns the offsets d in [lo, hi] for which |a·d + c| <= half, and

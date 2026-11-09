@@ -2,8 +2,10 @@ package app
 
 import (
 	"fmt"
+	"slices"
 	"sync"
 
+	"github.com/tongmon/matter-wake/internal/save"
 	"github.com/tongmon/matter-wake/internal/scene"
 	"github.com/tongmon/matter-wake/internal/world"
 )
@@ -33,9 +35,9 @@ type prefetchStore struct {
 	terrain *scene.Terrain
 	mu      sync.Mutex
 	// ready holds blocks got ready ahead, until Load takes them.
-	ready map[[2]int]*world.Block
+	ready map[[2]int]*save.Block
 	// pending holds copies of saved blocks not yet written.
-	pending map[[2]int]*world.Block
+	pending map[[2]int]*save.Block
 	// busy marks the blocks a worker is getting ready. The writer waits on
 	// idle until a block it writes is not busy: on Windows a file a worker
 	// holds open cannot be replaced.
@@ -57,7 +59,7 @@ type prefetchStore struct {
 func newPrefetchStore(disk *diskStore, terrain *scene.Terrain) *prefetchStore {
 	s := &prefetchStore{
 		disk: disk, terrain: terrain,
-		ready: map[[2]int]*world.Block{}, pending: map[[2]int]*world.Block{},
+		ready: map[[2]int]*save.Block{}, pending: map[[2]int]*save.Block{},
 		busy: map[[2]int]bool{}, saves: map[[2]int]uint64{}, want: map[[2]int]bool{},
 		jobs: make(chan [2]int, 64), writes: make(chan [2]int, 64),
 	}
@@ -73,7 +75,7 @@ func newPrefetchStore(disk *diskStore, terrain *scene.Terrain) *prefetchStore {
 // Load returns block (bx, by) as last saved, or nil if it never was: from
 // the copies waiting to be written, from the blocks got ready ahead, or
 // read from disk now.
-func (s *prefetchStore) Load(bx, by int) (*world.Block, error) {
+func (s *prefetchStore) Load(bx, by int) (*save.Block, error) {
 	key := [2]int{bx, by}
 	s.mu.Lock()
 	if s.err != nil {
@@ -82,8 +84,7 @@ func (s *prefetchStore) Load(bx, by int) (*world.Block, error) {
 		return nil, err
 	}
 	if c := s.pending[key]; c != nil {
-		b := new(world.Block)
-		*b = *c
+		b := copyBlock(c)
 		s.mu.Unlock()
 		return b, nil
 	}
@@ -97,10 +98,9 @@ func (s *prefetchStore) Load(bx, by int) (*world.Block, error) {
 }
 
 // Save keeps a copy of block (bx, by) and writes it in the background.
-func (s *prefetchStore) Save(bx, by int, b *world.Block) error {
+func (s *prefetchStore) Save(bx, by int, b *save.Block) error {
 	key := [2]int{bx, by}
-	c := new(world.Block)
-	*c = *b
+	c := copyBlock(b)
 	s.mu.Lock()
 	if s.err != nil {
 		err := s.err
@@ -154,11 +154,11 @@ func (s *prefetchStore) prepare() {
 		s.mu.Lock()
 		saves, pending := s.saves[key], s.pending[key] != nil
 		s.mu.Unlock()
-		var b *world.Block
+		var b *save.Block
 		if !pending {
 			var err error
 			if b, err = s.disk.Load(key[0], key[1]); err == nil && b == nil {
-				b = s.terrain.Block(key[0], key[1])
+				b = &save.Block{Cells: s.terrain.Block(key[0], key[1])}
 			} else if err != nil {
 				b = nil
 			}
@@ -170,7 +170,7 @@ func (s *prefetchStore) prepare() {
 // done records that a worker has finished with the block at key: b is
 // what it read or made, or nil, from a read begun when the block had been
 // saved saves times. A block saved again since is not kept.
-func (s *prefetchStore) done(key [2]int, b *world.Block, saves uint64) {
+func (s *prefetchStore) done(key [2]int, b *save.Block, saves uint64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.busy, key)
@@ -205,6 +205,16 @@ func (s *prefetchStore) write() {
 		}
 		s.written.Done()
 	}
+}
+
+// copyBlock returns a copy of b that shares nothing with it.
+func copyBlock(b *save.Block) *save.Block {
+	c := &save.Block{Cells: new(world.Block), Queued: slices.Clone(b.Queued), Bodies: slices.Clone(b.Bodies)}
+	*c.Cells = *b.Cells
+	for i := range c.Bodies {
+		c.Bodies[i].Pixels = slices.Clone(c.Bodies[i].Pixels)
+	}
+	return c
 }
 
 // Flush waits until every block saved is written and returns the first

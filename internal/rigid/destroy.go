@@ -156,7 +156,7 @@ func (s *System) split(slot int, debris []int) (bool, error) {
 		return true, nil
 	}
 	if len(s.pieces) > 1 {
-		v, spin := s.phys.Velocity(b.id)
+		v, spin := s.motion(b)
 		p, q := s.phys.Transform(b.id)
 		for i := range s.pieces {
 			if i != keep && s.pieces[i].size >= minPiece {
@@ -349,7 +349,17 @@ func (s *System) reshape(b *body) error {
 			return fmt.Errorf("rigid: Box2D made no shape of a body's %d pixels", b.n)
 		}
 	}
+	lc := b.lc
 	b.mass, b.inertia, b.lc = s.phys.Mass(b.id), s.phys.Inertia(b.id), s.phys.LocalCenter(b.id)
+	if b.frozen {
+		// Box2D moves the velocity of the center of mass with it, v + ω ×
+		// Δc, only for a body in the simulation; a frozen one keeps its
+		// velocity here.
+		_, q := s.phys.Transform(b.id)
+		dx, dy := b.lc.X-lc.X, b.lc.Y-lc.Y
+		wx, wy := float32(q.C*dx)-float32(q.S*dy), float32(q.S*dx)+float32(q.C*dy)
+		b.fv = physics.Vec2{X: b.fv.X - float32(b.fspin*wy), Y: b.fv.Y + float32(b.fspin*wx)}
+	}
 	s.covered(b)
 	b.redraw = true
 	return nil

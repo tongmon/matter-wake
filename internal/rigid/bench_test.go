@@ -267,3 +267,46 @@ func BenchmarkBreakMany(b *testing.B) {
 	slices.Sort(brk)
 	b.ReportMetric(float64(brk[len(brk)/2])/1e6, "break-ms")
 }
+
+// BenchmarkUnloadAndLoad takes the heavy scene's 450 bodies out with their
+// block, after 3 seconds in which they landed on each other, the sand and
+// the water, and makes them again, as a block leaving memory and coming
+// back does; then writes them back, as the next tick does. It reports
+// each stage in milliseconds.
+func BenchmarkUnloadAndLoad(b *testing.B) {
+	var unload, load, write []time.Duration
+	now := newClock(b)
+	for range b.N {
+		b.StopTimer()
+		s, w := newHeavyScene(b, 2)
+		for range benchTicks {
+			tick(b, s, w)
+		}
+		s.Write()
+		b.StartTimer()
+		t0 := now()
+		recs := s.Unload(0, 0, nil)
+		t1 := now()
+		if err := s.Load(0, 0, recs); err != nil {
+			b.Fatal(err)
+		}
+		t2 := now()
+		s.Write()
+		t3 := now()
+		unload, load, write = append(unload, t1-t0), append(load, t2-t1), append(write, t3-t2)
+		b.StopTimer()
+		if len(recs) != heavyBodies {
+			b.Fatalf("unloaded %d bodies, want %d", len(recs), heavyBodies)
+		}
+		s.Close()
+		w.Close()
+		b.StartTimer()
+	}
+	for _, st := range []struct {
+		name string
+		d    []time.Duration
+	}{{"unload", unload}, {"load", load}, {"write", write}} {
+		slices.Sort(st.d)
+		b.ReportMetric(float64(st.d[len(st.d)/2])/1e6, st.name+"-ms")
+	}
+}

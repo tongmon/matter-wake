@@ -257,6 +257,26 @@ func TestBodyRoundTrips(t *testing.T) {
 
 // TestStepAndReadDoNotAllocate checks the per-tick calls: Step, and reading
 // every body's transform.
+// Making terrain again, as a chunk's cells change, allocates nothing once
+// the buffers have grown: in a big world a chunk near a body may be made
+// again every tick. The body's definition used to move to the heap at
+// every call, since C gets its address (found with the terrain's bodies,
+// 2026-11-09).
+func TestRebuildingChainsDoesNotAllocate(t *testing.T) {
+	w := newTestWorld(t)
+	chains := []Chain{{Points: []Vec2{{0, 0}, {1, 0}, {1, 1}, {0, 1}}, Loop: true}}
+	allocs := testing.AllocsPerRun(20, func() {
+		b, err := w.AddStaticChains(chains, 0.6)
+		if err != nil {
+			t.Fatal(err)
+		}
+		w.DestroyBody(b)
+	})
+	if allocs != 0 {
+		t.Errorf("making a chain body and removing it allocates %v times, want 0", allocs)
+	}
+}
+
 func TestStepAndReadDoNotAllocate(t *testing.T) {
 	w, bodies := newPile(t, false)
 	var sink float32
