@@ -45,7 +45,7 @@ func click(t *testing.T, d *dash, g *game.Game, a int, shift bool) {
 	if !ok {
 		t.Fatalf("the panel has no span for act %d", a)
 	}
-	d.handle(&input.UI{X: x, Y: y, Click: true, Shift: shift}, g)
+	d.handle(&input.UI{X: x, Y: y, Click: true, Shift: shift}, g, testWidth)
 }
 
 // spanAt returns the middle of the span of d's panel, built for g, that
@@ -183,8 +183,8 @@ func TestPanelSteps(t *testing.T) {
 	}
 	click(t, d, g, downAct(fieldVX), false)
 	x, y, _ := spanAt(d, g, -downAct(fieldVY))
-	d.handle(&input.UI{X: x, Y: y, Wheel: 1, Shift: true}, g)
-	d.handle(&input.UI{X: x, Y: y, Click: true}, g) // a click on the value does nothing
+	d.handle(&input.UI{X: x, Y: y, Wheel: 1, Shift: true}, g, testWidth)
+	d.handle(&input.UI{X: x, Y: y, Click: true}, g, testWidth) // a click on the value does nothing
 	for range 40 {
 		click(t, d, g, downAct(fieldAngle), true)
 	}
@@ -195,7 +195,7 @@ func TestPanelSteps(t *testing.T) {
 		t.Fatalf("body tool %+v, want %+v", got, want)
 	}
 	click(t, d, g, actShape, false)
-	d.handle(&input.UI{X: 10, Y: 10, Wheel: -1}, g) // on the world: the brush
+	d.handle(&input.UI{X: 10, Y: 10, Wheel: -1}, g, testWidth) // on the world: the brush
 	if r, s := d.brush(g); r != tool.Radius-1 || s != game.ShapeSquare {
 		t.Fatalf("brush %d %s, want %d square", r, s, tool.Radius-1)
 	}
@@ -213,7 +213,7 @@ func TestReplayPanelChangesNothing(t *testing.T) {
 	}
 	d.do(actCreative, false, g)
 	d.do(downAct(fieldRadius)+1, false, g)
-	d.handle(&input.UI{X: 10, Y: 10, Wheel: 1}, g)
+	d.handle(&input.UI{X: 10, Y: 10, Wheel: 1}, g, testWidth)
 	if d.pending != (game.Input{}) {
 		t.Fatalf("the replay's dashboard changed %+v", d.pending)
 	}
@@ -330,5 +330,16 @@ func TestCreativeSwitchTurnsOff(t *testing.T) {
 	click(t, d, g, actCreative, false)
 	if in := tick(t, d, g, &game.Input{}); in.Change != (game.Change{What: game.ChangeMode}) || g.Creative() {
 		t.Fatalf("the switch sent %+v and left creative %t; want it off", in.Change, g.Creative())
+	}
+}
+
+// The update that opens the panel already finds the mouse on it, so a
+// click held as it opens does not reach the world under it (the second
+// Codex review).
+func TestPanelTakesTheMouseAsItOpens(t *testing.T) {
+	g, _, d := newDashGame(t)
+	d.handle(&input.UI{X: testWidth - 20, Y: 40, Keys: input.KeyPanel}, g, testWidth)
+	if !d.open || !d.over {
+		t.Fatalf("open %t, over %t; want the panel open under the mouse", d.open, d.over)
 	}
 }

@@ -142,16 +142,17 @@ func (r *Replay) Config(mats *material.Table, workers int) *game.Config {
 
 // Recordable reports why a session started with cfg could not be
 // recorded: its header is one Write refuses, or the table has a solid
-// whose name is not one word, which the body tool's changes would have to
-// write. A recording checks it before the session, since Write runs only
-// at its end (Codex review).
+// whose name a body tool's change could not write, not one word or none
+// (the word for no tool). A recording checks it before the session, since
+// Write runs only at its end (two Codex reviews).
 func Recordable(cfg *game.Config) error {
 	if err := New(cfg).validate(); err != nil {
 		return err
 	}
 	for id := range cfg.Materials.Len() {
-		if d := cfg.Materials.Def(material.ID(id)); d.Kind == material.Solid && !isWord(d.Name) {
-			return fmt.Errorf("replay: the solid %q is not one word, as a replay names the body tool's material", d.Name)
+		if d := cfg.Materials.Def(material.ID(id)); d.Kind == material.Solid && (!isWord(d.Name) || d.Name == bodyNone) {
+			return fmt.Errorf("replay: the solid %q is not one word other than %q, as a replay names the body tool's material",
+				d.Name, bodyNone)
 		}
 	}
 	return nil
