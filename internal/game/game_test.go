@@ -586,18 +586,20 @@ const coldMaterials = `{"materials": [
 	{"name": "water", "kind": "liquid", "density": 20, "fallAccel": 0.375, "sinkChance": 50,
 	 "flowSpeed": 0.9, "flowDamping": 0.8, "dispersion": 4},
 	{"name": "ice", "kind": "static", "density": 255, "hp": 600, "body": "ice_body"},
-	{"name": "glass", "kind": "static", "density": 255, "hp": 600, "body": "glass_body"},
+	{"name": "glass", "kind": "static", "density": 255, "hp": 600, "body": "glass_slab"},
 	{"name": "glass_powder", "kind": "powder", "density": 30, "fallAccel": 0.275, "sinkChance": 25, "slideChance": 50, "hp": 300},
 	{"name": "ice_body", "kind": "solid", "density": 6, "hp": 300, "friction": 0.05, "restitution": 0.2, "anchor": "top"},
 	{"name": "glass_body", "kind": "solid", "density": 6, "hp": 300, "friction": 0.3, "restitution": 0.2,
-	 "anchor": "largest", "shatter": "glass_powder"}
+	 "anchor": "largest", "shatter": "glass_powder"},
+	{"name": "glass_slab", "kind": "solid", "density": 6, "hp": 300, "friction": 0.9, "anchor": "largest"}
 ]}`
 
 // Digging ice turns the rest of it into one static body; digging the body
-// keeps it where it is. Digging glass turns it into a static body too, and
-// digging that shatters it into powder. Each material's cells, its pixels
-// and the inventory, less what creative mode made and what turned into
-// another material, stay what they were.
+// keeps it where it is. Digging glass turns it into a static body of glass
+// that does not shatter: digging that only takes pixels out. The glass the
+// body tool drops shatters into powder when dug. Each material's cells,
+// its pixels and the inventory, less what creative mode made and what
+// turned into another material, stay what they were.
 func TestIceAndGlassTurnAsTheToolDigs(t *testing.T) {
 	tab, err := material.ParseBytes([]byte(coldMaterials))
 	if err != nil {
@@ -606,6 +608,7 @@ func TestIceAndGlassTurnAsTheToolDigs(t *testing.T) {
 	g, err := New(&Config{
 		Width: 160, Height: 100, Seed: 1, Workers: 2, Materials: tab, Creative: true,
 		Slots: []string{"ice", "glass"}, Tool: Tool{Power: 10, Rate: 300, Radius: 4, Shape: ShapeSquare},
+		Body: BodyTool{Material: "glass_body", Width: 12, Height: 8},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -659,9 +662,27 @@ func TestIceAndGlassTurnAsTheToolDigs(t *testing.T) {
 		t.Fatalf("after digging the glass: %d bodies, want 2", g.Bodies())
 	}
 	step(t, g, dig(75, 76))
-	if g.Bodies() != 1 || g.world.Count(tab.MustLookup("glass_powder")) == 0 {
-		t.Fatalf("after digging the glass body: %d bodies and %d cells of powder; want the ice alone and the powder",
+	if g.Bodies() != 2 || g.world.Count(tab.MustLookup("glass_powder")) != 0 {
+		t.Fatalf("after digging the glass body: %d bodies and %d cells of powder; want 2 and none",
 			g.Bodies(), g.world.Count(tab.MustLookup("glass_powder")))
+	}
+	check("glass dug")
+	// A glass body dropped onto the floor, dug where it lies. The body
+	// tool makes its pixels.
+	step(t, g, &Input{CursorX: 130, CursorY: 60, Drop: true})
+	start[tab.MustLookup("glass_body")] += 12 * 8
+	for range 120 {
+		step(t, g, &Input{})
+	}
+	if g.Bodies() != 3 {
+		t.Fatalf("%d bodies after the drop, want 3", g.Bodies())
+	}
+	dropped := g.BodyRecords(nil)[2]
+	x, y := int(dropped.X*10), int(dropped.Y*10)
+	step(t, g, dig(x, y))
+	if g.Bodies() != 2 || g.world.Count(tab.MustLookup("glass_powder")) == 0 {
+		t.Fatalf("after digging the dropped glass at (%d, %d): %d bodies and %d cells of powder; want 2 and the powder",
+			x, y, g.Bodies(), g.world.Count(tab.MustLookup("glass_powder")))
 	}
 	check("glass shattered")
 	for range 60 {

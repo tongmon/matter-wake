@@ -18,9 +18,10 @@ import (
 
 // convertWindow is the side of the square, centered on the cell a region
 // is filled from, that the body it turns into is cut to: the region's cells
-// outside it stay terrain, to turn when one of theirs is destroyed. 🔶🧪
-// Noita's is 384 (C136); a body's image holds MaxPixels, 256², so ours is
-// the largest square an image holds.
+// outside it stay terrain, to turn when one of theirs is destroyed. Noita's
+// is 384 (C136); a body's image holds MaxPixels, 256², so ours is the
+// largest square an image holds. The developer chose 384 for when large
+// ice comes, with pixel numbers of 24 bits (design.md 8절).
 const convertWindow = 256
 
 // seed is a terrain cell destroyed since the last Convert whose material
