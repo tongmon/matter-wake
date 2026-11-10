@@ -43,19 +43,19 @@
     {
       "name": "ice_body", "kind": "solid", "density": 6,
       "hardness": 0, "hp": 10000,
-      "friction": 0.05, "restitution": 0.2, "buoyancy": 0, "anchor": "top",
+      "friction": 0.05, "restitution": 0.2, "buoyancy": 0, "anchor": "top", "cracks": true, "sleepTo": "ice",
       "color": "#b7dcec", "toneSpread": 30
     },
     {
       "name": "glass_body", "kind": "solid", "density": 6,
       "hardness": 0, "hp": 200,
-      "friction": 0.3, "restitution": 0.2, "buoyancy": 0, "anchor": "largest", "shatter": "glass_powder",
+      "friction": 0.3, "restitution": 0.2, "buoyancy": 0, "anchor": "largest", "shatter": "glass_powder", "cracks": true,
       "color": "#d5e9edb4", "toneSpread": 20
     },
     {
       "name": "glass_slab", "kind": "solid", "density": 6,
       "hardness": 0, "hp": 10000,
-      "friction": 0.9, "restitution": 0, "buoyancy": 0, "anchor": "largest",
+      "friction": 0.9, "restitution": 0, "buoyancy": 0, "anchor": "largest", "cracks": true, "sleepTo": "glass",
       "color": "#d5e9edb4", "toneSpread": 20
     }
   ]

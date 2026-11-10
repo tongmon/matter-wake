@@ -162,6 +162,13 @@ func checkSavedSessionGoesOn(t *testing.T, s game.Stream) {
 	if x, y := resumed.Spawn(); x != last.CameraX || y != last.CameraY {
 		t.Fatalf("the resumed camera is at (%d, %d), want (%d, %d)", x, y, last.CameraX, last.CameraY)
 	}
+	// The camera went more than rigid.SettleMove right: far bodies of ice
+	// and glass were checked there, and the next check counts from there.
+	sx, sy := played.SettlePoint()
+	if x, y := resumed.SettlePoint(); x != sx || y != sy || sx == camX+240 {
+		t.Fatalf("the resumed session last settled at (%d, %d), the saved one at (%d, %d), from (%d, %d)",
+			x, y, sx, sy, camX+240, camY+135)
+	}
 	for i := 50; i < 100; i++ {
 		in := input(i)
 		for _, g := range []*game.Game{played, resumed} {

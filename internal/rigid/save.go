@@ -366,7 +366,7 @@ func (s *System) remake(r *save.Body) (body, error) {
 		d := s.mats.Def(b.mat)
 		// As add makes it: the box's center of mass is its origin.
 		err = s.phys.SetBox(id, float32(b.w)/(2*cellsPerMeter), float32(b.h)/(2*cellsPerMeter), physics.Surface{
-			Density: float32(d.Density) * densityScale, Friction: q8(d.Friction), Restitution: q8(d.Restitution),
+			Density: float32(d.Density) * densityScale, Friction: q8(d.Friction), Restitution: q8(d.Restitution), Hits: d.Cracks,
 		})
 		b.mass, b.inertia = s.phys.Mass(id), s.phys.Inertia(id)
 	} else {
@@ -409,7 +409,7 @@ func (s *System) Reset() error {
 	// Close first: Box2D holds 128 worlds, and the new one takes the old
 	// one's place.
 	s.phys.Close()
-	phys, err := physics.NewWorld(physics.Config{Gravity: physics.Vec2{X: 0, Y: gravity}})
+	phys, err := physics.NewWorld(worldConfig)
 	if err != nil {
 		return fmt.Errorf("rigid: %w", err)
 	}

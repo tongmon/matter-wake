@@ -5,9 +5,11 @@ matter-wake-replay 7
 # body. A wide cut through it leaves the top hanging, static, and the
 # rest falls. The tool digs the pane: it turns into a static body of glass
 # that does not shatter, and a cut down it keeps the larger piece static
-# while the smaller falls. Then a body of the glass that shatters is
-# thrown right at 5 m/s and an ice body down at 10 m/s, and the glass one
-# is dug where it lies: it turns whole into powder.
+# while the smaller falls. Then a body of the glass that shatters is set
+# down on the floor, turned 45°, too gently to crack, an ice body is
+# thrown down at 10 m/s, and the glass one is dug where it lies: it turns
+# whole into powder. The pieces that fall and the thrown ice crack where
+# they land (cracks.rpl).
 seed 1
 size 480 270
 scene sandbox
@@ -18,7 +20,7 @@ tool 10 2000 4 circle
 body wood 16 12 0 0 0
 mode play
 slots ice glass stone
-materials 49b022a399e068b7
+materials d839cbd7dd531865
 ticks 600
 
 # Stone, a column of ice under it, and a pane of glass, in creative mode.
@@ -44,10 +46,10 @@ ticks 600
 162 363 174 D 0 0 0
 168 363 179 D 0 0 0
 174 363 179 - 0 0 0
-# A glass body thrown right at 5 m/s, turned 45°; an ice body thrown
+# A glass body set down on the floor, turned 45°; an ice body thrown
 # down at 10 m/s.
-200 250 200 B 0 0 0 body glass_body 12 8 45 50 0
-201 250 200 - 0 0 0
+200 294 254 B 0 0 0 body glass_body 12 8 45 0 0
+201 294 254 - 0 0 0
 230 330 100 B 0 0 0 body ice_body 16 6 0 0 100
 231 330 100 - 0 0 0
 # Dig the glass body where it lies on the floor: it shatters.

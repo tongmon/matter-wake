@@ -1,0 +1,50 @@
+matter-wake-replay 7
+# Ice and glass far from the camera turn back into terrain (C138), in the
+# terrain of a 4096x4096 world, with a target of four blocks in memory as
+# terrain_bodies. A body of ice, one of glass that does not shatter and
+# one of glass that shatters drop onto the ground right of the middle of
+# the view; they crack where they land, and the glass that shatters turns
+# into powder. Once they sleep, the camera walks right, 128 cells every 10
+# ticks: when its middle has moved more than 512 cells, the ice and the
+# glass that does not shatter, pieces too, asleep 350 or more cells away,
+# turn back into cells of ice and glass, one for each pixel. The camera
+# walks back, and the tool digs the glass the slab left: what is left
+# around the hole turns into static bodies again. Cells come and go with
+# their blocks, so this replay is not checked for conservation.
+seed 1
+size 4096 4096
+scene terrain
+view 480 270
+stream 64 4 512 4 60
+budget 250000
+tool 10 2000 4 circle
+body ice_body 16 6 0 0 0
+mode play
+slots sand water stone
+materials d839cbd7dd531865
+ticks 900
+
+# Three bodies over the ground right of the middle of the view.
+0 2100 1000 B 0 1808 955
+10 2140 1000 B 0 1808 955 body glass_slab 16 6 0 0 0
+20 2180 1000 B 0 1808 955 body glass_body 12 8 0 0 0
+21 2180 1000 - 0 1808 955
+# Walk right once they sleep, 128 cells every 10 ticks: the check comes at
+# the fifth step.
+500 2336 1104 - 0 1936 955
+510 2464 1104 - 0 2064 955
+520 2592 1104 - 0 2192 955
+530 2720 1104 - 0 2320 955
+540 2848 1104 - 0 2448 955
+550 2976 1104 - 0 2576 955
+# Walk back: the check at the fifth step finds no body to turn.
+650 2848 1104 - 0 2448 955
+660 2720 1104 - 0 2320 955
+670 2592 1104 - 0 2192 955
+680 2464 1104 - 0 2064 955
+690 2336 1104 - 0 1936 955
+700 2208 1104 - 0 1808 955
+# Dig the glass the slab left: what is left of it turns into static
+# bodies again.
+720 2140 1085 D 0 1808 955
+745 2140 1085 - 0 1808 955

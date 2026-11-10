@@ -167,9 +167,17 @@ func (g *Game) Body() BodyTool {
 	return g.bodyTool
 }
 
+// Lost adds to n[id], for every material id, how many pixels of it cracks
+// took out of bodies, which no longer exist anywhere (rigid.System.Lost).
+// n must have an entry for every material.
+func (g *Game) Lost(n []int) {
+	g.bodies.Lost(n)
+}
+
 // Turned adds to n[id], for every material id, how many cells or pixels of
 // it turned into another material, less how many turned into it: terrain
-// turned into a body, and a body turned into powder (rigid.System.Turned).
+// turned into a body, a body turned into powder, and a body turned back
+// into terrain (rigid.System.Turned).
 // Its sum over the materials is zero. n must have an entry for every
 // material.
 func (g *Game) Turned(n []int) {

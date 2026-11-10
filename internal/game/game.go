@@ -28,9 +28,12 @@
 //
 // Some materials turn into others, cell for cell (Turned): the terrain of
 // a material whose cells turn into a body, ice or glass, becomes one body
-// when the tool digs a cell of it, and a body of a material that shatters,
-// glass, turns into its powder when it loses a pixel. So the sums hold
-// once what turned is taken off too.
+// when the tool digs a cell of it, a body of a material that shatters,
+// glass, turns into its powder when it loses a pixel, and in the terrain
+// bodies of ice and glass far from the camera turn back into terrain. And
+// cracks take pixels out of bodies that hit something fast, for good
+// (Lost). So the sums hold once what turned and what was lost are taken
+// off too.
 //
 // A session plays the sandbox, a small room kept whole in memory; the
 // collapse room, as small, for measuring; or the terrain, the big world of
@@ -189,6 +192,10 @@ type Resume struct {
 	// NextKey is the key the next body made gets. The bodies come with
 	// their blocks.
 	NextKey uint32
+	// Settle is where the camera's middle was when far bodies last turned
+	// back into terrain (Game.SettlePoint), or nil to start from where the
+	// camera starts.
+	Settle *[2]int
 }
 
 // Game is a play session. It is not safe for concurrent use.
@@ -226,6 +233,9 @@ type Game struct {
 	// material, the cells creative mode placed.
 	dropped int
 	made    []int
+	// settleX and settleY are where the camera's middle was when far
+	// bodies last turned back into terrain (settle).
+	settleX, settleY int
 }
 
 // New starts a session in cfg.Scene with an empty inventory. In the
@@ -369,6 +379,10 @@ func (g *Game) setUp(cfg *Config) error {
 	// Keep the view in the world, moving it as little as it takes.
 	g.spawnX = min(max(camX, 0), max(g.world.Width()-g.viewW, 0))
 	g.spawnY = min(max(camY, 0), max(g.world.Height()-g.viewH, 0))
+	g.settleX, g.settleY = g.spawnX+g.viewW/2, g.spawnY+g.viewH/2
+	if r := cfg.Resume; r != nil && r.Settle != nil {
+		g.settleX, g.settleY = r.Settle[0], r.Settle[1]
+	}
 	// Only the request: the first check belongs to the first tick, which
 	// sees that tick's camera, as the saved session's next tick would.
 	if err := g.request(g.spawnX, g.spawnY); err != nil {
@@ -583,6 +597,9 @@ func (g *Game) Step(in *Input) error {
 		// The rooms show all of the world, whose middle is the focus
 		// already.
 		g.world.SetFocus(in.CameraX+g.viewW/2, in.CameraY+g.viewH/2)
+		if err := g.settle(in.CameraX+g.viewW/2, in.CameraY+g.viewH/2); err != nil {
+			return err
+		}
 	}
 	if err := g.apply(in.Change); err != nil {
 		return err
@@ -623,6 +640,28 @@ func (g *Game) Step(in *Input) error {
 		return fmt.Errorf("game: %w", err)
 	}
 	return nil
+}
+
+// settle turns far bodies of ice and glass back into terrain
+// (rigid.System.Settle) when the camera's middle, now at (cx, cy), has
+// moved more than rigid.SettleMove cells since it last did, as Noita does
+// (C138). Only the terrain does: the rooms' camera does not move.
+func (g *Game) settle(cx, cy int) error {
+	dx, dy := cx-g.settleX, cy-g.settleY
+	if dx*dx+dy*dy <= rigid.SettleMove*rigid.SettleMove {
+		return nil
+	}
+	g.settleX, g.settleY = cx, cy
+	if err := g.bodies.Settle(float32(cx), float32(cy)); err != nil {
+		return fmt.Errorf("game: %w", err)
+	}
+	return nil
+}
+
+// SettlePoint returns where the camera's middle was when far bodies last
+// turned back into terrain, for a save.
+func (g *Game) SettlePoint() (x, y int) {
+	return g.settleX, g.settleY
 }
 
 // dig deals the tool's damage to every cell under the brush centred on

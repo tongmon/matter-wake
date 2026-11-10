@@ -161,3 +161,89 @@ TPT에는 강체, 파괴, 몸체가 없습니다(tpt.md "Sleep, chunk scheduling
 - 측정: 깨짐 없는 틱의 몸체 비용 `go test -run '^$' -bench Bodies -count 5 ./internal/rigid/` 전후, 변환 비용 `BenchmarkConvert`(창 128·192·256).
 - 비교 화면: `go run ./cmd/matter-wake -replay internal/replay/testdata/ice_glass.rpl -shots ... -dash panel,bodies,chains`.
 - 직접 플레이로 볼 점: 얼음·유리를 팔 때 덩어리 전체가 몸체가 되는 순간이 보이지 않는지(같은 색), 가로로 판 얼음의 아래가 떨어지는 모습, 세로로 자른 유리 판의 작은 쪽이 떨어지는 모습, `B`로 놓은 glass_body를 팔 때 통째로 가루로 무너지는 모습, 큰 얼음 덩어리에서 창 경계가 보이는지.
+
+## PR B: 충돌 균열과 잠듦 변환 (2026-11-10, `feat/body-cracks`)
+
+PR A가 머지된 뒤(21281c8) 같은 요약에 이어 씁니다. 다시 읽은 것: `doc BODY_CRACK_SLEEP` 전체, `section C138`, 균열 이동체가 전기 이동체라서 전기 이동 규칙 `section C123 C124 C125`(모델 `model_electricity_move`는 C124가 밝히듯 균열 분기를 빼고 있어 균열의 모양은 알려 주지 않음), 재질 값(`noitaref -fields crackability,solid_on_sleep_convert,solid_break_to_type`). Box2D v3.2의 접촉 hit 사건은 소스(`contact_solver.c`, `solver.c`, `contact.c`)로 확인했습니다.
+
+### 관측 규칙 (PR B)
+
+| 규칙 (자기 말로) | 근거 (절:줄) | 확인 수준 |
+|---|---|---|
+| 균열 판정은 접촉 사건마다, 그 사건의 두 몸체 중 균열 가능(crackability > 0) 재질인 쪽마다 한다 | BODY_CRACK_SLEEP:44-46 | STATIC |
+| 판정 속도는 그 쪽의 접촉 직전 법선 방향 상대 속도다(300 px/s로 던진 몸체가 332 px/s로 닿을 때 사건 벡터 (0, 33.2), 직후 속도 -0.2배) | BODY_CRACK_SLEEP:52-54 | LIVE |
+| 속도 50 px/s 이하는 판정하지 않는다. 넘으면 난수 U∈[0,1]을 하나 뽑아 U × 100 ≤ 속도(px/s)이면 균열을 하나 만든다. 그래서 50 px/s를 넘자마자 약 50% 확률이고, 100 px/s 이상은 늘 생긴다 | BODY_CRACK_SLEEP:8-11, 47-48, 55-58 | STATIC + LIVE(150판정/64생성, 어긋남 0) |
+| crackability 값(100, 40)은 문턱이나 확률에 쓰이지 않는다. 0보다 큰지와 이동체가 지울 셀인지(1 이상)만 본다 | BODY_CRACK_SLEEP:13, 50 | STATIC |
+| 균열은 접촉점에서 진행 방향으로 조금 물러난 곳에 생기고, 몸체 안쪽으로(그 쪽 속도의 반대) 나아간다. 무작위로 흔들리며 가고 0~2번 갈라진다(전기 이동체, 에너지 200) | BODY_CRACK_SLEEP:47-51 | STATIC |
+| 전기 이동체는 비액체 셀에서 반경 1~4 안에서 진행 방향과의 내적에서 거리/2를 뺀 점수가 가장 높은 셀로 옮겨 가고, 걸음마다 에너지를 1 쓴다. 균열 분기는 이 모델에 없다 | C124:3620-3622, 3628, 3636 | NATIVE + LIVE(균열 분기 제외) |
+| 이동체가 지나간 줄의 균열 가능 셀이 지워지고, 그 입자는 셀로 돌아오지 않아 셀 수가 준다. 셀이 지워지는 정확한 조건은 모른다 | BODY_CRACK_SLEEP:14, 70-74, 123 | LIVE + OPEN |
+| 순서: Step 안의 접촉 사건 → 균열 생성 → 이동체가 셀을 지움 → 재구성 → 유리면 통째로 부서짐 | BODY_CRACK_SLEEP:74 | LIVE |
+| 910 px/s로 한 Step에 튀어 오른 바닥 충돌에는 판정이 없었다(616 px/s는 있었음). 원인은 모른다 | BODY_CRACK_SLEEP:16, 66-67, 124 | LIVE + OPEN |
+| 잠듦 변환은 카메라 중심이 마지막 점검 위치에서 512 px 넘게(거리² > 512²) 움직였을 때만 돌고, 그때 점검 위치를 지금 중심으로 바꾼다 | BODY_CRACK_SLEEP:17-18, 78-79 | STATIC + LIVE |
+| 대상: static이 아니고 잠듦 변환 재질인 몸체 중 몸체 원점과 카메라 중심의 거리가 350 px 이상이면서 잠들었거나, 750 px 이상인 것. 그 재질의 break_to 셀로 바뀌고 몸체는 사라진다(셀 수 = 몸체 셀 수) | BODY_CRACK_SLEEP:80-86, 89-93 | STATIC + LIVE(예측 3 = 변환 3) |
+| 잠든 시간이나 정지 기준은 조건이 아니다. 카메라 이동과 거리만 본다 | BODY_CRACK_SLEEP:95-96 | LIVE |
+
+### C138 3.4절: 실제로 잃은 셀
+
+16×8(128픽셀) 몸체를 바위 바닥이나 steel 판에 던진 다섯 실행입니다(판정/생성, 끝의 셀 수). 생성 하나당 잃은 셀을 오른쪽에 셈했습니다(우리 계산).
+
+| 실행(최대 \|v\|) | glass_brittle | ice_glass | rock_static_box2d |
+|---|---|---|---|
+| r100(172 px/s) | 3/1 → 125(생성당 3) | 16/4 → 94(8.5) | 3/1 → 128(0) |
+| r300(332) | 7/3 → 116(4) | 10/4 → 125(0.75) | 4/1 → 128(0) |
+| r600(616) | 14/5 → 108(4) | 17/6 → 108(3.3) | 4/2 → 128(0) |
+| r900(첫 충돌 910, 판정은 184 px/s) | 2/1 → 128(0) | 9/6 → 118(1.7) | 3/1 → 118(10) |
+| s300(steel 판, 330) | 4/1 → 121(7) | 5/2 → 111(8.5) | 5/3 → 126(0.7) |
+
+glass_brittle과 ice_glass를 합하면 생성 33개에 셀 129개, 생성 하나당 약 3.9셀이고 0~17셀로 퍼집니다. 잃은 수는 속도에 비례하지 않습니다. glass는 모든 실행에서 첫 생성 뒤 통째로 부서졌습니다.
+
+### 현재 코드 대조 (PR B)
+
+| 관측 규칙 | 우리 코드 | 같음 / 다름 / 없음 | 다름이면 |
+|---|---|---|---|
+| 접촉 사건마다 균열 가능 쪽을 판정 | `internal/physics` `Hits`(Box2D 접촉 hit 사건), `internal/rigid` crack.go | 같음 | 사건은 균열 가능 재질의 형상에만 켜서(`enableHitEvents`), 다른 접촉은 사건을 만들지 않습니다 |
+| 접촉 직전 법선 상대 속도 | Box2D hit 사건의 `approachSpeed`: Step의 해를 구하기 전에 접촉점에서 잰 법선 방향 상대 속도, 그 접촉의 점 중 가장 큰 것 | 같음(재는 시점) | Box2D는 사건마다 한 값을 줍니다. 두 몸체가 같은 속도를 받습니다(Noita도 사건 하나의 벡터) |
+| 50 px/s 넘으면 U×100 ≤ 속도 | `crackMin` 50, `crackSure` 100칸/s 🧪 | 같음 | 칸 = px |
+| 난수 | (seed, 틱, 몸체 key, 그 몸체의 이번 틱 판정 번호) 해시 🔶 | 다름 | Noita는 전역 LCG 하나. 결정성을 위해 몸체마다 따로 뽑음 |
+| 910 px/s 한 Step 충돌에 판정 없음 | 따르지 않음: Box2D v3.2는 빠른 몸체를 연속 충돌로 멈춘 뒤 다음 Step의 접촉에서 큰 접근 속도로 사건을 냄 | 다름(개발자 결정 2026-11-10, "빠를수록 늘 균열") | `TestFastHitCracks` |
+| 이동체가 지나간 셀을 지움 | 우리 균열 선(아래 "우리 설계") | 다름(자체 설계 🔶🧪) | 모양과 길이는 Noita에 확인된 규칙이 없음 |
+| 지운 셀은 돌아오지 않음 | 지운 픽셀을 재질별로 셈(`Game.Lost`) | 같음 + 셈 | 개발자 결정 2026-11-10, "Noita처럼 지우고 셈" |
+| 재구성 → 유리 통째로 | 다음 틱의 `Break`(shatter) | 같음 | |
+| 잠듦 변환: 카메라 512 px, 350 잠듦 / 750 | `game` 카메라 중심 점검, `rigid.System.Settle` 🧪 512, 350, 750 | 같음 | 지형 장면만(방은 카메라가 움직이지 않음) |
+| 몸체 원점과의 거리 | 질량 중심과의 거리 🔶 | 다름 | 우리 조각은 부모의 원점을 지녀 원점이 몸체 밖일 수 있음 |
+| break_to 셀, 셀 수 그대로 | 재질 필드 `sleepTo`, 픽셀마다 칸 하나(유리 부서짐과 같은 자리 규칙) | 같음 | |
+
+### 실제 수치 (PR B)
+
+| matter-wake 재질 | Noita 재질 | 필드 | Noita 값 | matter-wake 값 |
+|---|---|---|---|---|
+| ice_body | ice_glass | crackability, solid_on_sleep_convert, solid_break_to_type | 100, true, ice_static | `cracks: true`, `sleepTo: ice` |
+| glass_slab | glass_brittle | crackability, solid_on_sleep_convert, solid_break_to_type | 100, true, glass_static | `cracks: true`, `sleepTo: glass` |
+| glass_body | glass | crackability, solid_on_sleep_convert | 100, false | `cracks: true`, 잠듦 변환 없음 |
+| wood | wood | crackability, solid_on_sleep_convert | 0, false | 없음 |
+| (전역) | — | 판정 문턱, 확실 문턱 | 물리 단위 5, 10(×10 = px/s) | `crackMin` 50, `crackSure` 100칸/s 🧪 |
+| (전역) | — | 점검 이동, 잠듦 거리, 무조건 거리 | 512, 350, 750 px | 512, 350, 750칸 🧪 |
+
+### 자료에 없음 / OPEN → 우리 설계 (PR B)
+
+TPT에는 강체와 충돌 균열, 몸체의 잠듦 변환이 없습니다(tpt.md: rigid bodies, destruction, sleep은 none). TPT의 전기(SPRK)는 셀을 지우지 않고, 균열과 무관해 가져온 것이 없습니다.
+
+| 빈칸 | 자료 상태 | TPT 방식 | 우리 설계 | 측정 방법 | 추가 분석 제안 |
+|---|---|---|---|---|---|
+| 균열 난수와 판정 순서 | Noita는 전역 LCG, 순서는 Box2D 사건 순 | 없음 | 🔶 사건을 (균열 나는 몸체의 key, 접촉점 x, y) 순으로 정렬하고, 난수는 (seed, 틱, key, 그 몸체의 이번 틱 판정 번호) 해시에서 뽑음. worker 수와 무관 | 리플레이 골든 1·4 worker | 아니오 |
+| 균열 선의 모양과 길이 | 이동체(에너지 200, 분기 0~2)의 셀 제거 조건 OPEN, 생성당 평균 약 3.9셀(위 표) | 없음 | 🔶🧪 접촉점에서 몸체 안쪽(그 몸체 쪽 법선의 반대)으로 이미지의 픽셀을 한 칸씩 5걸음(`crackSteps`) 가며 지나는 픽셀을 지움. 걸음마다 방향을 8방향 중 하나로 두고, 1/4씩 왼쪽·오른쪽 45°로 꺾되 처음 방향에서 45°를 넘지 않음(C124의 "방향과 내적이 큰 쪽으로" 감을 정수 걸음으로). 분기 없음 | 던지기 실험으로 생성당 잃은 셀을 3.4절과 비교(`TestCrackRunsIntoTheBody`) | 아니오(균열 모양은 느낌의 문제라 플레이로 먼저 봄) |
+| 접근 속도를 재는 때 | Noita: listener 사건의 벡터(접촉 직전) | 없음 | 🔶 Box2D hit 사건: 각 Step의 해를 구하기 전, 접촉점의 법선 상대 속도. 접촉이 시작될 때가 아니라 접촉이 이어지는 동안 매 Step 잴 수 있으나, 문턱(50칸/s)보다 빠르게 다가오는 Step에만 사건이 남 | `TestCracksNeedSpeed` | 아니오 |
+| 아주 빠른 충돌 | 910 px/s에 사건 없음, 원인 OPEN | 없음 | 개발자 결정 2026-11-10 "빠를수록 늘 균열". Box2D v3.2 hit 사건이 100 m/s 충돌에도 남는지 테스트로 고정 | `TestFastHitCracks` | 아니오 |
+| 균열로 떨어진 2픽셀 미만 조각 | Noita는 1픽셀을 지움(C135) | 없음 | 🔶 지금 나누기 규칙 그대로 인벤토리로(파낸 것과 같은 경로). Noita처럼 지우려면 균열로 나뉜 몸체를 따로 표시해야 함 | — | 아니오 |
+| 잠듦 변환의 거리를 재는 점 | 몸체 원점 | 없음 | 🔶 질량 중심. 우리 조각의 원점은 부모 것이라 몸체 밖일 수 있음 | 테스트 | 아니오 |
+| 첫 점검 위치 | 없음 | 없음 | 🔶 세션을 시작할 때의 카메라 중심. 저장한 세션은 마지막 점검 위치를 세션 파일에 적어 이어 감 | `TestFarIceTurnsBackIntoTerrain`, `TestSavedSessionGoesOnTheSame` | 아니오 |
+| 리플레이와 대시보드에서 잠듦 변환 | Noita는 카메라 이동뿐 | 없음 | 🔶 리플레이는 입력의 카메라로 그대로 돎(지형 장면). 방 장면은 카메라가 움직이지 않아 돌지 않음. 대시보드에 "지금 점검" 버튼은 두지 않음(필요하면 다음에) | 지형 리플레이 골든 | 아니오 |
+| 얼린 몸체 | Noita에는 얼림이 없음 | 없음 | 🔶 얼린 몸체(메모리 가장자리)는 바꾸지 않음. 그 블록이 내려가면 몸체로 저장되고, 돌아온 뒤 다시 점검됨 | 테스트 | 아니오 |
+
+### 결과 (PR B, 2026-11-10)
+
+- 테스트: `internal/physics` hit_test.go(접근 속도, 91·200 m/s 충돌도 사건, 사건을 켠 형상과 문턱, 할당 0회), `internal/rigid` crack_test.go(속도 문턱, 확률이 속도/100, 균열 선이 안쪽 45° 안에서 5픽셀 이하, 던진 유리가 금 가고 가루가 됨, 1500칸/s 충돌, static 얼음의 균열, 잠듦 변환의 거리와 잠), `internal/game` `TestFarIceTurnsBackIntoTerrain`(카메라가 512칸 넘게 움직여야 점검), `internal/app` `TestSavedSessionGoesOnTheSame`(마지막 점검 자리가 저장으로 이어짐), `internal/save` 세션 형식 5. 리플레이 골든 `cracks.rpl`, `terrain_settle.rpl`(1·4 worker 같음, `cracks.rpl`은 매 틱 셀 보존에서 지운 픽셀을 셈).
+- 균열 하나가 지우는 픽셀: 꽉 찬 얼음 안으로 39번 냈을 때 평균 4.9(Noita 3.9). `cracks.rpl`에서는 16×6 얼음이 5 m/s에 1, 10 m/s에 6, 20칸에서 떨어진 유리 판이 1, 나무 상자에 맞은 static 얼음이 5픽셀을 잃었습니다. 얇은 몸체에서는 선이 몸체 밖으로 나가 Noita처럼 들쭉날쭉합니다.
+- 측정: 깨짐 없는 틱의 몸체 몫 558.0 → 553.1 µs, Step 124.7 → 126.7 µs(main과 번갈아 5회 중앙값, 나무 몸체 450개).
+- 화면: [cracks.png](../images/cracks.png), [cracks-static.png](../images/cracks-static.png), [cracks-panel.png](../images/cracks-panel.png), [settle.png](../images/settle.png).
+- 남은 빈칸: 위 "자료에 없음"의 🔶 전부(design.md 8절, PR에서 물음). 균열 이동체가 셀을 지우는 조건과 갈라짐은 Noita에서도 OPEN이라, 직접 플레이로 본 뒤 필요하면 추가 분석(C138 8절의 첫 OPEN)을 제안합니다.

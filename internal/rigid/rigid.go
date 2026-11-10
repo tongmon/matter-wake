@@ -72,6 +72,10 @@ const (
 	maxBodies = 1 << 16
 )
 
+// worldConfig sets up the Box2D world: gravity down, and hits listed from
+// the speed a crack starts at.
+var worldConfig = physics.Config{Gravity: physics.Vec2{X: 0, Y: gravity}, HitSpeed: crackMin / cellsPerMeter}
+
 // MaxPixels is the most pixels a body's image holds: a cell's link to its
 // body numbers them in 16 bits (world.BodyCell).
 const MaxPixels = 1 << 16
@@ -142,8 +146,14 @@ type System struct {
 	// turned counts, by material, the cells and pixels the bodies turned
 	// into another material, less those they turned into it (Turned).
 	turned []int
-	// spill holds the powder a shattered body puts in the queue.
+	// spill holds the cells a body turned into cells puts in the queue.
 	spill []world.Queued
+	// hits and checks are crack's scratch space: the last Step's hits and
+	// the contacts of bodies that crack among them. lost counts, by
+	// material, the pixels cracks took out (Lost).
+	hits   []physics.Hit
+	checks []crackCheck
+	lost   []int
 	// scratch holds the edges Box2D gives, for drawing (view.go).
 	scratch []physics.Edge
 }
@@ -151,11 +161,14 @@ type System struct {
 // New returns a System for the bodies of w, whose cells are of mats. It
 // walls the world's edges in for Box2D, so bodies stay in the world.
 func New(w *world.World, mats *material.Table) (*System, error) {
-	phys, err := physics.NewWorld(physics.Config{Gravity: physics.Vec2{X: 0, Y: gravity}})
+	phys, err := physics.NewWorld(worldConfig)
 	if err != nil {
 		return nil, fmt.Errorf("rigid: %w", err)
 	}
-	s := &System{w: w, phys: phys, mats: mats, kinds: make([]material.Kind, mats.Len()), turned: make([]int, mats.Len())}
+	s := &System{
+		w: w, phys: phys, mats: mats, kinds: make([]material.Kind, mats.Len()),
+		turned: make([]int, mats.Len()), lost: make([]int, mats.Len()),
+	}
 	for i := range s.kinds {
 		s.kinds[i] = mats.Def(material.ID(i)).Kind
 	}
@@ -299,6 +312,7 @@ func (s *System) add(m material.ID, x, y, w, h int, angle float32) error {
 		Density:     float32(d.Density) * densityScale,
 		Friction:    q8(d.Friction),
 		Restitution: q8(d.Restitution),
+		Hits:        d.Cracks,
 	})
 	if err != nil {
 		return fmt.Errorf("rigid: %w", err)
@@ -386,7 +400,9 @@ func (s *System) sync() {
 
 // Step stops the bodies that may reach a block not in memory and lets go
 // of those that no longer may (freeze), pushes each other dynamic body with
-// what liquid does to it (push), then advances Box2D by one tick.
+// what liquid does to it (push), advances Box2D by one tick, then cracks
+// the bodies of materials that crack where they hit something fast
+// (crack.go); the next Break splits them.
 func (s *System) Step() error {
 	s.freeze()
 	for i := range s.bodies {
@@ -399,5 +415,6 @@ func (s *System) Step() error {
 		b.haveV = false
 	}
 	s.phys.Step(tickSeconds, subSteps)
+	s.crack()
 	return nil
 }
