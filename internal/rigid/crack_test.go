@@ -1,6 +1,7 @@
 package rigid
 
 import (
+	"slices"
 	"testing"
 
 	"github.com/tongmon/matter-wake/internal/material"
@@ -303,5 +304,51 @@ func TestSettleTakesAWholeStack(t *testing.T) {
 	}
 	if len(s.bodies) != 0 || w.Count(c.ice) != 2*16*6 {
 		t.Fatalf("%d bodies and %d ice cells after the check; want none and %d", len(s.bodies), w.Count(c.ice), 2*16*6)
+	}
+}
+
+// When a crack splits a body, at the end of the tick, the cells of its
+// pixels link to the body and the pixel that now hold them before the
+// tick ends: the next tick's tool digs before the bodies are written
+// again, and must dig the pixel the cell shows (Codex review).
+func TestCrackedBodyCellsLinkToTheirPieces(t *testing.T) {
+	s, w, id := newSystem(t, 200, 120, 1)
+	c := coldIDs(s)
+	w.Fill(0, 110, 200, 120, id.stone)
+	throw(t, s, c.iceBody, 90, 103, 30, 6, 0)
+	for range 60 {
+		tick(t, s, w)
+	}
+	// A crack down through the middle, as runCrack takes pixels out.
+	b := &s.bodies[0]
+	for j := range b.h {
+		s.takeOut(b, 0, j*b.w+12)
+	}
+	if err := s.Step(); err != nil {
+		t.Fatal(err)
+	}
+	if len(s.bodies) != 2 {
+		t.Fatalf("%d bodies after the cut, want 2", len(s.bodies))
+	}
+	for y := range w.Height() {
+		for x := range w.Width() {
+			cell, _ := w.At(x, y)
+			if s.kinds[cell.Mat] != material.Solid {
+				continue
+			}
+			slot, k := cell.Body()
+			if int(slot) >= len(s.bodies) || int(k) >= len(s.bodies[slot].px) || !s.bodies[slot].px[k].ok {
+				t.Fatalf("cell (%d, %d) links to body %d pixel %d, which is not one", x, y, slot, k)
+			}
+			if got := slices.Contains(s.bodies[slot].cells, cellAt{int32(x), int32(y)}); !got {
+				t.Fatalf("cell (%d, %d) links to body %d, which does not list it", x, y, slot)
+			}
+		}
+	}
+	// Digging a cell of the piece wears the piece's pixel.
+	piece := &s.bodies[1]
+	at := piece.cells[0]
+	if _, ok := s.Wear(int(at.x), int(at.y), 1<<30); !ok || piece.n == piece.w*piece.h {
+		t.Fatal("digging a cell of the piece did not take a pixel out of it")
 	}
 }
