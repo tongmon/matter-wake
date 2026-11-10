@@ -40,6 +40,17 @@ func TestGoldenReplays(t *testing.T) {
 	for _, path := range paths {
 		t.Run(filepath.Base(path), func(t *testing.T) {
 			r := load(t, path)
+			// Under the race detector each replay plays once, on 4 workers,
+			// where the races would be, against the golden: playing it on 1
+			// worker as well took the package past CI's 10 minutes
+			// (docs/pitfalls.md). The plain run checks that 1 and 4 workers
+			// agree.
+			if raceDetector {
+				got, cov := trace(t, r, tab, 4)
+				all.add(&cov)
+				compareGolden(t, strings.TrimSuffix(path, ".rpl")+".golden", got)
+				return
+			}
 			got, cov := trace(t, r, tab, 1)
 			// The result must not depend on the worker count.
 			if many, _ := trace(t, r, tab, 4); many != got {
