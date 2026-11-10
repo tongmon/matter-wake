@@ -325,6 +325,9 @@ func (s *System) detach(slot, i int, p physics.Vec2, q physics.Rot, v physics.Ve
 		key: s.nextKey, mat: par.mat, w: pc.x1 - pc.x0, h: pc.y1 - pc.y0,
 		left: par.left, top: par.top, cx: par.cx + pc.x0, cy: par.cy + pc.y0,
 		buoyancy: s.pieceBuoyancy(par.mat),
+		// Where its body was last written, which its pixels' cells show
+		// (redrawInPlace).
+		p: par.wp, q: par.wq, inherit: par.written,
 	}
 	n := nb.w * nb.h
 	nb.px = make([]pixel, n)

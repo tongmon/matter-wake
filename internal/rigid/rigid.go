@@ -424,5 +424,36 @@ func (s *System) Step() error {
 	// tick ends: a block that leaves memory or a save before the next one
 	// records them as they are (Codex review). The pieces too small to be
 	// bodies are lost with the crack.
-	return s.Break(s.lost)
+	if !s.broken {
+		return nil
+	}
+	if err := s.Break(s.lost); err != nil {
+		return err
+	}
+	s.redrawInPlace()
+	return nil
+}
+
+// redrawInPlace writes the bodies Break changed again where they were last
+// written, and the pieces it broke off where their bodies were, so the
+// cells link to the bodies and pixels that hold them now. The next tick's
+// tools use those links before its Write moves the bodies (Codex review).
+// The cells are those the bodies held, less the pixels gone.
+func (s *System) redrawInPlace() {
+	for i := range s.bodies {
+		if b := &s.bodies[i]; b.redraw && b.written {
+			s.erase(b, uint16(i))
+		}
+	}
+	for i := range s.bodies {
+		b := &s.bodies[i]
+		switch {
+		case b.redraw && b.written:
+			b.p, b.q = b.wp, b.wq
+		case !b.written && b.inherit:
+		default:
+			continue
+		}
+		s.write(b, uint16(i))
+	}
 }

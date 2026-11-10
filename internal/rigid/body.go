@@ -85,6 +85,9 @@ type body struct {
 	// force has this Write rewrite the body though it did not move: a body
 	// that may have covered some of its cells moved.
 	force bool
+	// inherit is set on a piece Break made of a body that was written:
+	// until it is written, p and q are where that body was last written.
+	inherit bool
 	// box covers the turned rectangle at the last write, and with it every
 	// cell whose center fell inside the image, written or not; a body too
 	// thin for any cell center still has one. shiftX and shiftY are how far
