@@ -274,7 +274,10 @@ func unit(r *rng.Stream) float32 {
 // to its branching energy (C139 3.4): two cracks, turned 0.3 to 1.5 radians
 // to either side of its axis, with half its energy and one branch fewer,
 // and random numbers of their own. They walk from the next tick; the crack
-// itself finishes its tick and ends.
+// itself finishes its tick and ends. A branch is born with its energy at
+// its branching energy, and a step spends energy before it checks, so a
+// branch never branches again: the short side branches C139 reads in
+// Noita's (3.4), though one may have a branch left (Codex review).
 func (s *System) fork(i int) {
 	p := &s.movers[i]
 	p.done = true
