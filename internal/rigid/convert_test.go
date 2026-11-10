@@ -433,6 +433,54 @@ func TestStaticBodyLeavesAndComesBack(t *testing.T) {
 	}
 }
 
+// A static body across two blocks that comes back with the first of them,
+// while the second is not in memory yet, writes its pixels in the second
+// once that comes back too: it never moves, so only the block's coming
+// back has it written again (Codex review).
+func TestStaticBodyFillsABlockThatComesBackLater(t *testing.T) {
+	s, w, _ := newStreamedSystem(t, 2, 1)
+	c := coldIDs(s)
+	w.Fill(490, 400, 530, 420, c.ice)
+	digCell(t, s, 490, 400)
+	convert(t, s)
+	tick(t, s, w)
+	n := s.bodies[0].n
+	if got := w.Count(c.iceBody); got != n {
+		t.Fatalf("the static body shows %d of its %d pixels", got, n)
+	}
+	// Both blocks leave, the body with the first.
+	recs := s.Unload(0, 0, nil)
+	left, err := w.UnloadBlock(0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.Unload(1, 0, nil)
+	right, err := w.UnloadBlock(1, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The first comes back, then the second a few ticks later.
+	if err := w.LoadBlock(0, 0, left); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Load(0, 0, recs); err != nil {
+		t.Fatal(err)
+	}
+	for range 3 {
+		tick(t, s, w)
+	}
+	if err := w.LoadBlock(1, 0, right); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Load(1, 0, nil); err != nil {
+		t.Fatal(err)
+	}
+	tick(t, s, w)
+	if got := w.Count(c.iceBody); got != n {
+		t.Fatalf("with both blocks back, the static body shows %d of its %d pixels", got, n)
+	}
+}
+
 // A tick with static bodies and pieces of them allocates nothing.
 func TestTickWithStaticBodiesDoesNotAllocate(t *testing.T) {
 	s, w, id := newSystem(t, 200, 120, 1)

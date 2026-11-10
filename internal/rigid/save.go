@@ -196,7 +196,10 @@ func (s *System) dropChunk(i int) {
 // key is already in memory is left out: only a save mixed by a crash
 // holds one twice. Load fails, adding no body, if a record is not one a
 // body can be made of or the keys are not in increasing order. New bodies
-// get keys after every key loaded.
+// get keys after every key loaded. The bodies in memory that reach into
+// the block are written again at the next Write: written while it was
+// away, they left out their cells there, and one that does not move, as a
+// static body, would never write them (Codex review).
 func (s *System) Load(bx, by int, recs []save.Body) error {
 	for i := range recs {
 		if err := s.checkRecord(&recs[i]); err != nil {
@@ -224,6 +227,12 @@ func (s *System) Load(bx, by int, recs []save.Body) error {
 		}
 		made = append(made, b)
 		s.nextKey = max(s.nextKey, r.Key+1)
+	}
+	area := blockCells(bx, by)
+	for i := range s.bodies {
+		if b := &s.bodies[i]; b.written && b.box.overlaps(area) {
+			b.redraw = true
+		}
 	}
 	s.insert(made)
 	return nil

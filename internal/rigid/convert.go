@@ -129,9 +129,9 @@ func (s *System) convertAt(x, y int, m material.ID) error {
 }
 
 // fill finds the cells of material m 4-connected to (x, y) within win,
-// lists them in s.filled by their place in win, row by row, and returns the
-// cells around them and how many there are. Cells outside the world or
-// memory are not m.
+// lists them in s.filled by their place in win, in the order it finds
+// them, and returns the cells around them and how many there are. Cells
+// outside the world or memory are not m.
 func (s *System) fill(x, y int, m material.ID, win rect) (rect, int) {
 	ww, wh := win.x1-win.x0, win.y1-win.y0
 	n := ww * wh
