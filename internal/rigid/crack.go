@@ -196,10 +196,12 @@ func (s *System) moveCracks() {
 // cell it is in shows, if the pixel can crack, and, when the step came
 // diagonally, the pixel of the cell beside it in the row it came from, so
 // the line is 4-connected; then it moves, a cell along the turned axis or a
-// jitter. Only the last step decides whether it goes on: a crack whose last
-// step marked nothing ends, and, if it marked something this tick, takes
-// out every marked pixel of the body it marked last (crumble). One whose
-// energy ran out ends too, taking nothing out.
+// jitter. The last step decides first: a crack whose last step marked
+// nothing ends, and, if it marked something this tick, takes out every
+// marked pixel of the body it marked last (crumble), whatever energy it has
+// left. One whose last step marked a pixel goes on while it has energy; if
+// it has none, it ends there and takes nothing out. That is the order
+// Noita's mover checks them in (C139 3.4).
 func (s *System) walk(i int) {
 	m := &s.movers[i]
 	if m.started && m.r.IntN(101) > crackSpeed {
