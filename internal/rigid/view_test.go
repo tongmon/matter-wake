@@ -56,9 +56,9 @@ func TestEdges(t *testing.T) {
 	w.Fill(0, 50, 200, 60, id.stone)
 	drop(t, s, id.wood, 40, 30, 10, 4)
 	tick(t, s, w)
-	body, frozen := s.BodyEdges(nil, nil)
-	if len(body) != 4 || len(frozen) != 0 {
-		t.Fatalf("a box has %d edges and %d frozen, want 4 and 0", len(body), len(frozen))
+	body, frozen, static := s.BodyEdges(nil, nil, nil)
+	if len(body) != 4 || len(frozen) != 0 || len(static) != 0 {
+		t.Fatalf("a box has %d edges, %d frozen and %d static; want 4, 0 and 0", len(body), len(frozen), len(static))
 	}
 	for _, e := range body {
 		for _, p := range [][2]float32{{e.X0, e.Y0}, {e.X1, e.Y1}} {

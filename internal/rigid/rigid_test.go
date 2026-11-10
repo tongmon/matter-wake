@@ -493,7 +493,7 @@ func TestPixelsCountsImages(t *testing.T) {
 	drop(t, s, id.wood, 40, 10, 5, 3)
 	n := make([]int, testMaterials)
 	s.Pixels(n)
-	if want := []int{0, 0, 0, 0, 115}; !slices.Equal(n, want) {
+	if want := []int{0, 0, 0, 0, 115, 0, 0, 0, 0, 0, 0, 0, 0}; !slices.Equal(n, want) {
 		t.Fatalf("Pixels %v, want %v", n, want)
 	}
 	if c := cells(w); c[material.Air] != 100*100 {

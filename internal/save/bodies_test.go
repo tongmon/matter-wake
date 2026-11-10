@@ -43,7 +43,7 @@ func randomBodies(seed uint64, n int, m material.ID) []Body {
 		b := Body{
 			Key: s.Uint32(), Mat: m, W: w, H: h, Left: f(), Top: f(), CX: s.IntN(100), CY: s.IntN(100),
 			Whole: s.Bool(), X: f(), Y: f(), C: f(), S: f(), VX: f(), VY: f(), Spin: f(), Awake: s.Bool(),
-			Pixels: make([]Pixel, w*h),
+			Static: s.Bool(), Pixels: make([]Pixel, w*h),
 		}
 		for k := range b.Pixels {
 			b.Pixels[k] = Pixel{Damage: uint16(s.Uint32()), Tone: uint8(s.Uint32()), OK: s.IntN(5) > 0}
@@ -155,6 +155,43 @@ func TestBlockReadsVersion2(t *testing.T) {
 	// Only version 3 holds them.
 	if err := encodeBlock(&bytes.Buffer{}, &Block{Cells: want, Queued: randomQueued(1, 1, 2)}, mats, 2); err == nil {
 		t.Fatal("a version 2 block took queued cells")
+	}
+}
+
+// A block of version 3, from before static bodies, reads back with
+// dynamic bodies, and cannot hold a static one: a body flagged static in
+// it is damage.
+func TestBlockReadsVersion3(t *testing.T) {
+	mats := woodTable(t, "stone", "sand", "water")
+	bodies := randomBodies(10, 20, mats.MustLookup("wood"))
+	for i := range bodies {
+		bodies[i].Static = false
+	}
+	var buf bytes.Buffer
+	if err := encodeBlock(&buf, &Block{Cells: new(world.Block), Bodies: bodies}, mats, 3); err != nil {
+		t.Fatal(err)
+	}
+	got, err := DecodeBlock(&buf, mats)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Bodies) != len(bodies) {
+		t.Fatalf("%d bodies read back, want %d", len(got.Bodies), len(bodies))
+	}
+	for i, b := range got.Bodies {
+		if b.Static || b.Key != bodies[i].Key {
+			t.Fatalf("body %d read back as %+v", i, b)
+		}
+	}
+	bodies[0].Static = true
+	if err := encodeBlock(&bytes.Buffer{}, &Block{Cells: new(world.Block), Bodies: bodies}, mats, 3); err == nil {
+		t.Fatal("a version 3 block took a static body")
+	}
+	// The same block written as version 4 and called version 3.
+	data := encodeAll(t, &Block{Cells: new(world.Block), Bodies: bodies}, mats)
+	binary.LittleEndian.PutUint16(data[len(blockMagic):], 3)
+	if _, err := DecodeBlock(bytes.NewReader(rechecksum(data)), mats); err == nil || !strings.Contains(err.Error(), "flags") {
+		t.Fatalf("a version 3 block with a static body: error %v", err)
 	}
 }
 

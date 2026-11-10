@@ -1,25 +1,25 @@
-tick 0 air 115088 stone 5008 sand 4320 water 5184 wood 0 held stone 0 sand 0 water 0 wood 0 queued 0 bodies 0 checksum e51b68b0ce4137ce
-tick 30 air 115088 stone 5008 sand 4320 water 5184 wood 0 held stone 0 sand 0 water 0 wood 0 queued 0 bodies 0 checksum 2af18e3d044912cf
-tick 60 air 115088 stone 5008 sand 4320 water 5184 wood 0 held stone 0 sand 0 water 0 wood 0 queued 0 bodies 0 checksum 9781fed957175272
-tick 90 air 114919 stone 5177 sand 4320 water 5184 wood 0 held stone 0 sand 0 water 0 wood 0 queued 0 bodies 0 checksum e62915f1a4e07252
-tick 120 air 114867 stone 5177 sand 4372 water 5184 wood 0 held stone 0 sand 0 water 0 wood 0 queued 0 bodies 0 checksum 63fb734ad9757fe2
-tick 150 air 114867 stone 5177 sand 4372 water 5184 wood 0 held stone 0 sand 0 water 0 wood 0 queued 0 bodies 0 checksum 6455857e9e750036
-tick 180 air 114810 stone 5177 sand 4369 water 5184 wood 60 held stone 0 sand 0 water 0 wood 0 queued 3 bodies 1 checksum 4edef1f9e3d1a461
-tick 210 air 114736 stone 5177 sand 4372 water 5184 wood 131 held stone 0 sand 0 water 0 wood 0 queued 0 bodies 2 checksum d3518c4fb061c1bb
-tick 240 air 114774 stone 5177 sand 4372 water 5151 wood 126 held stone 0 sand 0 water 0 wood 0 queued 33 bodies 2 checksum 24a499b59f08e7d2
-tick 270 air 114725 stone 5177 sand 4372 water 5153 wood 173 held stone 0 sand 0 water 0 wood 0 queued 31 bodies 3 checksum d09e959ec6177710
-tick 300 air 114739 stone 5177 sand 4372 water 5141 wood 171 held stone 0 sand 0 water 0 wood 0 queued 43 bodies 3 checksum 1f88c6e4c2573a7e
-tick 330 air 114739 stone 5177 sand 4372 water 5141 wood 171 held stone 0 sand 0 water 0 wood 0 queued 43 bodies 3 checksum 6c563e24c07f77b8
-tick 360 air 114741 stone 5177 sand 4372 water 5138 wood 172 held stone 0 sand 0 water 0 wood 0 queued 46 bodies 3 checksum 4df6431bee2d83af
-tick 390 air 114750 stone 5168 sand 4372 water 5138 wood 172 held stone 9 sand 0 water 0 wood 0 queued 46 bodies 3 checksum f513aeaf50b8a18e
-tick 420 air 114752 stone 5168 sand 4372 water 5138 wood 170 held stone 9 sand 0 water 0 wood 0 queued 46 bodies 3 checksum 879c7deb195a5759
-tick 450 air 114751 stone 5168 sand 4371 water 5137 wood 173 held stone 9 sand 0 water 0 wood 0 queued 48 bodies 3 checksum 00c18a6bf8c0a192
-tick 480 air 114752 stone 5168 sand 4372 water 5137 wood 171 held stone 9 sand 0 water 0 wood 0 queued 47 bodies 3 checksum eb7bddff47b25a8f
-tick 510 air 114575 stone 5168 sand 4372 water 5313 wood 172 held stone 9 sand 0 water 0 wood 0 queued 93 bodies 3 checksum db9e62f8099dbd0d
-tick 540 air 114577 stone 5168 sand 4372 water 5310 wood 173 held stone 9 sand 0 water 0 wood 0 queued 96 bodies 3 checksum 707753c5ec0d819d
-tick 570 air 114581 stone 5168 sand 4372 water 5307 wood 172 held stone 9 sand 0 water 0 wood 0 queued 99 bodies 3 checksum d37cdd94e02e8ce5
-tick 600 air 114582 stone 5168 sand 4372 water 5304 wood 174 held stone 9 sand 0 water 0 wood 0 queued 102 bodies 3 checksum 08958d43304a3d20
-tick 630 air 114582 stone 5168 sand 4372 water 5304 wood 174 held stone 9 sand 0 water 0 wood 0 queued 102 bodies 3 checksum 919db4b3586cdc21
-tick 660 air 114582 stone 5168 sand 4372 water 5304 wood 174 held stone 9 sand 0 water 0 wood 0 queued 102 bodies 3 checksum 253e96e298de36bb
-tick 690 air 114582 stone 5168 sand 4372 water 5304 wood 174 held stone 9 sand 0 water 0 wood 0 queued 102 bodies 3 checksum 29e8f633e036327c
-tick 720 air 114582 stone 5168 sand 4372 water 5304 wood 174 held stone 9 sand 0 water 0 wood 0 queued 102 bodies 3 checksum 14c3e3103d2a03ae
+tick 0 air 115088 stone 5008 sand 4320 water 5184 wood 0 ice 0 glass 0 glass_powder 0 ice_body 0 glass_body 0 held stone 0 sand 0 water 0 wood 0 ice 0 glass 0 glass_powder 0 ice_body 0 glass_body 0 queued 0 bodies 0 checksum e51b68b0ce4137ce
+tick 30 air 115088 stone 5008 sand 4320 water 5184 wood 0 ice 0 glass 0 glass_powder 0 ice_body 0 glass_body 0 held stone 0 sand 0 water 0 wood 0 ice 0 glass 0 glass_powder 0 ice_body 0 glass_body 0 queued 0 bodies 0 checksum 2af18e3d044912cf
+tick 60 air 115088 stone 5008 sand 4320 water 5184 wood 0 ice 0 glass 0 glass_powder 0 ice_body 0 glass_body 0 held stone 0 sand 0 water 0 wood 0 ice 0 glass 0 glass_powder 0 ice_body 0 glass_body 0 queued 0 bodies 0 checksum 9781fed957175272
+tick 90 air 114919 stone 5177 sand 4320 water 5184 wood 0 ice 0 glass 0 glass_powder 0 ice_body 0 glass_body 0 held stone 0 sand 0 water 0 wood 0 ice 0 glass 0 glass_powder 0 ice_body 0 glass_body 0 queued 0 bodies 0 checksum e62915f1a4e07252
+tick 120 air 114867 stone 5177 sand 4372 water 5184 wood 0 ice 0 glass 0 glass_powder 0 ice_body 0 glass_body 0 held stone 0 sand 0 water 0 wood 0 ice 0 glass 0 glass_powder 0 ice_body 0 glass_body 0 queued 0 bodies 0 checksum 63fb734ad9757fe2
+tick 150 air 114867 stone 5177 sand 4372 water 5184 wood 0 ice 0 glass 0 glass_powder 0 ice_body 0 glass_body 0 held stone 0 sand 0 water 0 wood 0 ice 0 glass 0 glass_powder 0 ice_body 0 glass_body 0 queued 0 bodies 0 checksum 6455857e9e750036
+tick 180 air 114810 stone 5177 sand 4369 water 5184 wood 60 ice 0 glass 0 glass_powder 0 ice_body 0 glass_body 0 held stone 0 sand 0 water 0 wood 0 ice 0 glass 0 glass_powder 0 ice_body 0 glass_body 0 queued 3 bodies 1 checksum 4edef1f9e3d1a461
+tick 210 air 114736 stone 5177 sand 4372 water 5184 wood 131 ice 0 glass 0 glass_powder 0 ice_body 0 glass_body 0 held stone 0 sand 0 water 0 wood 0 ice 0 glass 0 glass_powder 0 ice_body 0 glass_body 0 queued 0 bodies 2 checksum d3518c4fb061c1bb
+tick 240 air 114774 stone 5177 sand 4372 water 5151 wood 126 ice 0 glass 0 glass_powder 0 ice_body 0 glass_body 0 held stone 0 sand 0 water 0 wood 0 ice 0 glass 0 glass_powder 0 ice_body 0 glass_body 0 queued 33 bodies 2 checksum 24a499b59f08e7d2
+tick 270 air 114725 stone 5177 sand 4372 water 5153 wood 173 ice 0 glass 0 glass_powder 0 ice_body 0 glass_body 0 held stone 0 sand 0 water 0 wood 0 ice 0 glass 0 glass_powder 0 ice_body 0 glass_body 0 queued 31 bodies 3 checksum d09e959ec6177710
+tick 300 air 114739 stone 5177 sand 4372 water 5141 wood 171 ice 0 glass 0 glass_powder 0 ice_body 0 glass_body 0 held stone 0 sand 0 water 0 wood 0 ice 0 glass 0 glass_powder 0 ice_body 0 glass_body 0 queued 43 bodies 3 checksum 1f88c6e4c2573a7e
+tick 330 air 114739 stone 5177 sand 4372 water 5141 wood 171 ice 0 glass 0 glass_powder 0 ice_body 0 glass_body 0 held stone 0 sand 0 water 0 wood 0 ice 0 glass 0 glass_powder 0 ice_body 0 glass_body 0 queued 43 bodies 3 checksum 6c563e24c07f77b8
+tick 360 air 114741 stone 5177 sand 4372 water 5138 wood 172 ice 0 glass 0 glass_powder 0 ice_body 0 glass_body 0 held stone 0 sand 0 water 0 wood 0 ice 0 glass 0 glass_powder 0 ice_body 0 glass_body 0 queued 46 bodies 3 checksum 4df6431bee2d83af
+tick 390 air 114750 stone 5168 sand 4372 water 5138 wood 172 ice 0 glass 0 glass_powder 0 ice_body 0 glass_body 0 held stone 9 sand 0 water 0 wood 0 ice 0 glass 0 glass_powder 0 ice_body 0 glass_body 0 queued 46 bodies 3 checksum f513aeaf50b8a18e
+tick 420 air 114752 stone 5168 sand 4372 water 5138 wood 170 ice 0 glass 0 glass_powder 0 ice_body 0 glass_body 0 held stone 9 sand 0 water 0 wood 0 ice 0 glass 0 glass_powder 0 ice_body 0 glass_body 0 queued 46 bodies 3 checksum 879c7deb195a5759
+tick 450 air 114751 stone 5168 sand 4371 water 5137 wood 173 ice 0 glass 0 glass_powder 0 ice_body 0 glass_body 0 held stone 9 sand 0 water 0 wood 0 ice 0 glass 0 glass_powder 0 ice_body 0 glass_body 0 queued 48 bodies 3 checksum 00c18a6bf8c0a192
+tick 480 air 114752 stone 5168 sand 4372 water 5137 wood 171 ice 0 glass 0 glass_powder 0 ice_body 0 glass_body 0 held stone 9 sand 0 water 0 wood 0 ice 0 glass 0 glass_powder 0 ice_body 0 glass_body 0 queued 47 bodies 3 checksum eb7bddff47b25a8f
+tick 510 air 114575 stone 5168 sand 4372 water 5313 wood 172 ice 0 glass 0 glass_powder 0 ice_body 0 glass_body 0 held stone 9 sand 0 water 0 wood 0 ice 0 glass 0 glass_powder 0 ice_body 0 glass_body 0 queued 93 bodies 3 checksum db9e62f8099dbd0d
+tick 540 air 114577 stone 5168 sand 4372 water 5310 wood 173 ice 0 glass 0 glass_powder 0 ice_body 0 glass_body 0 held stone 9 sand 0 water 0 wood 0 ice 0 glass 0 glass_powder 0 ice_body 0 glass_body 0 queued 96 bodies 3 checksum 707753c5ec0d819d
+tick 570 air 114581 stone 5168 sand 4372 water 5307 wood 172 ice 0 glass 0 glass_powder 0 ice_body 0 glass_body 0 held stone 9 sand 0 water 0 wood 0 ice 0 glass 0 glass_powder 0 ice_body 0 glass_body 0 queued 99 bodies 3 checksum d37cdd94e02e8ce5
+tick 600 air 114582 stone 5168 sand 4372 water 5304 wood 174 ice 0 glass 0 glass_powder 0 ice_body 0 glass_body 0 held stone 9 sand 0 water 0 wood 0 ice 0 glass 0 glass_powder 0 ice_body 0 glass_body 0 queued 102 bodies 3 checksum 08958d43304a3d20
+tick 630 air 114582 stone 5168 sand 4372 water 5304 wood 174 ice 0 glass 0 glass_powder 0 ice_body 0 glass_body 0 held stone 9 sand 0 water 0 wood 0 ice 0 glass 0 glass_powder 0 ice_body 0 glass_body 0 queued 102 bodies 3 checksum 919db4b3586cdc21
+tick 660 air 114582 stone 5168 sand 4372 water 5304 wood 174 ice 0 glass 0 glass_powder 0 ice_body 0 glass_body 0 held stone 9 sand 0 water 0 wood 0 ice 0 glass 0 glass_powder 0 ice_body 0 glass_body 0 queued 102 bodies 3 checksum 253e96e298de36bb
+tick 690 air 114582 stone 5168 sand 4372 water 5304 wood 174 ice 0 glass 0 glass_powder 0 ice_body 0 glass_body 0 held stone 9 sand 0 water 0 wood 0 ice 0 glass 0 glass_powder 0 ice_body 0 glass_body 0 queued 102 bodies 3 checksum 29e8f633e036327c
+tick 720 air 114582 stone 5168 sand 4372 water 5304 wood 174 ice 0 glass 0 glass_powder 0 ice_body 0 glass_body 0 held stone 9 sand 0 water 0 wood 0 ice 0 glass 0 glass_powder 0 ice_body 0 glass_body 0 queued 102 bodies 3 checksum 14c3e3103d2a03ae

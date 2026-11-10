@@ -25,6 +25,13 @@
 //     buoyancy of liquid under it (C41). Then it advances Box2D by one
 //     tick.
 //
+// Bodies come from the body tool (Drop) and from the terrain: a dug cell of
+// a material that turns into a body, such as ice, turns the cells of that
+// material 4-connected to it into one body, static if its solid has an
+// anchor (Convert, convert.go). Before Write, the bodies that lost pixels
+// break into pieces, of which a static body keeps one static, or shatter
+// into powder (Break, destroy.go).
+//
 // In a big world kept in memory by blocks, a body leaves memory with the
 // first block it touches to go and comes back with it (Unload, Load), and
 // a body that may reach a block not in memory waits, frozen, until it is
@@ -125,6 +132,18 @@ type System struct {
 	freed []rect
 	// cold is freeze's scratch list of the bodies it stops, by slot.
 	cold []int32
+	// seeds lists the terrain cells destroyed since the last Convert
+	// whose material turns into a body. mark and filled are Convert's
+	// scratch space: the cells of the window it fills found so far, and
+	// the list of them.
+	seeds  []seed
+	mark   []bool
+	filled []int32
+	// turned counts, by material, the cells and pixels the bodies turned
+	// into another material, less those they turned into it (Turned).
+	turned []int
+	// spill holds the powder a shattered body puts in the queue.
+	spill []world.Queued
 	// scratch holds the edges Box2D gives, for drawing (view.go).
 	scratch []physics.Edge
 }
@@ -136,7 +155,7 @@ func New(w *world.World, mats *material.Table) (*System, error) {
 	if err != nil {
 		return nil, fmt.Errorf("rigid: %w", err)
 	}
-	s := &System{w: w, phys: phys, mats: mats, kinds: make([]material.Kind, mats.Len())}
+	s := &System{w: w, phys: phys, mats: mats, kinds: make([]material.Kind, mats.Len()), turned: make([]int, mats.Len())}
 	for i := range s.kinds {
 		s.kinds[i] = mats.Def(material.ID(i)).Kind
 	}
@@ -290,17 +309,17 @@ func (s *System) add(m material.ID, x, y, w, h int, angle float32) error {
 	b := &s.bodies[slot]
 	// A box's center of mass is its center, the origin: lc stays zero,
 	// exactly, where Box2D's sum over the box's triangles might round.
-	b.mass, b.inertia, b.buoyancy = s.phys.Mass(id), s.phys.Inertia(id), pieceBuoyancy(d)
+	b.mass, b.inertia, b.buoyancy = s.phys.Mass(id), s.phys.Inertia(id), s.pieceBuoyancy(m)
 	return nil
 }
 
-// pieceBuoyancy returns the buoyancy (C41) of a body of material d, made
+// pieceBuoyancy returns the buoyancy (C41) of a body of material m, made
 // whole or broken off another. 🔶 Every body takes its material's, pieces
 // too. In Noita buoyancy belongs to the entity that holds a body, so
 // bodies of a material alone and new pieces feel none (C135); ours are
 // all bodies of a material, so the shipped wood has none either.
-func pieceBuoyancy(d material.Def) float32 {
-	return q8(d.Buoyancy)
+func (s *System) pieceBuoyancy(m material.ID) float32 {
+	return q8(s.mats.Def(m).Buoyancy)
 }
 
 // q8 converts a material's fixed-point value to Box2D's float.
@@ -315,6 +334,11 @@ func q8(v fixed.Q8) float32 {
 func (s *System) Write() {
 	for i := range s.bodies {
 		b := &s.bodies[i]
+		if b.static && b.written {
+			// A static body is where it was made; Box2D need not be asked.
+			b.p, b.q = b.wp, b.wq
+			continue
+		}
 		b.p, b.q = s.phys.Transform(b.id)
 	}
 	s.sync()
@@ -361,13 +385,13 @@ func (s *System) sync() {
 }
 
 // Step stops the bodies that may reach a block not in memory and lets go
-// of those that no longer may (freeze), pushes each other body with what
-// liquid does to it (push), then advances Box2D by one tick.
+// of those that no longer may (freeze), pushes each other dynamic body with
+// what liquid does to it (push), then advances Box2D by one tick.
 func (s *System) Step() error {
 	s.freeze()
 	for i := range s.bodies {
 		b := &s.bodies[i]
-		if b.frozen {
+		if b.frozen || b.static {
 			b.dragN, b.dragX, b.dragY, b.dragR2 = 0, 0, 0, 0
 		} else if err := s.push(b); err != nil {
 			return err

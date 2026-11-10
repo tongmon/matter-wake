@@ -15,7 +15,10 @@ type ids struct {
 }
 
 // testTable returns air, stone, sand, water and wood with the values of
-// data/materials.json, but wood of buoyancy b (0 there).
+// data/materials.json, but wood of buoyancy b (0 there), then ice, glass
+// and what they turn into; trunk, a test terrain that turns into static
+// wood; and rock, one that turns into a static body that keeps its
+// largest piece without shattering.
 func testTable(tb testing.TB, b float64) *material.Table {
 	tb.Helper()
 	q := func(f float64) fixed.Q8 {
@@ -33,7 +36,21 @@ func testTable(tb testing.TB, b float64) *material.Table {
 			Name: "water", Kind: material.Liquid, Density: 20, FallAccel: q(0.375), SinkChance: 50,
 			FlowSpeed: q(0.9), FlowDamping: q(0.8), Dispersion: 4,
 		},
-		{Name: "wood", Kind: material.Solid, Density: 6, Hardness: 8, HP: 5000, Friction: q(0.9), Restitution: q(0.2), Buoyancy: q(b)},
+		{
+			Name: "wood", Kind: material.Solid, Density: 6, Hardness: 8, HP: 5000, Friction: q(0.9), Restitution: q(0.2), Buoyancy: q(b),
+			Anchor: material.AnchorBottom,
+		},
+		{Name: "ice", Kind: material.Static, Density: 255, HP: 30000, Body: "ice_body"},
+		{Name: "ice_body", Kind: material.Solid, Density: 6, HP: 10000, Friction: q(0.05), Restitution: q(0.2), Anchor: material.AnchorTop},
+		{Name: "glass", Kind: material.Static, Density: 255, HP: 30000, Body: "glass_body"},
+		{
+			Name: "glass_body", Kind: material.Solid, Density: 6, HP: 200, Friction: q(0.3), Restitution: q(0.2),
+			Anchor: material.AnchorLargest, Shatter: "glass_powder",
+		},
+		{Name: "glass_powder", Kind: material.Powder, Density: 30, FallAccel: q(0.275), SinkChance: 25, SlideChance: 50, HP: 1000},
+		{Name: "trunk", Kind: material.Static, Density: 255, Hardness: 8, HP: 5000, Body: "wood"},
+		{Name: "rock", Kind: material.Static, Density: 255, HP: 1000, Body: "rock_body"},
+		{Name: "rock_body", Kind: material.Solid, Density: 10, HP: 1000, Friction: q(0.6), Anchor: material.AnchorLargest},
 	})
 	if err != nil {
 		tb.Fatal(err)
@@ -116,7 +133,19 @@ func owned(w *world.World, wood material.ID, slot uint16) (n int, r rect) {
 }
 
 // testMaterials is how many materials testTable holds.
-const testMaterials = 5
+const testMaterials = 13
+
+// cold holds the test materials that turn into bodies and what they turn
+// into.
+type cold struct {
+	ice, iceBody, glass, glassBody, powder, trunk, rock material.ID
+}
+
+// coldIDs returns the IDs of the materials of cold in s's table.
+func coldIDs(s *System) cold {
+	m := s.mats.MustLookup
+	return cold{m("ice"), m("ice_body"), m("glass"), m("glass_body"), m("glass_powder"), m("trunk"), m("rock")}
+}
 
 // cells returns how many cells of the world hold each material of
 // testTable, plus the cells waiting in its queue.

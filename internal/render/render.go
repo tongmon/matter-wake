@@ -42,13 +42,13 @@ type Renderer struct {
 	// pix holds the pixels of the chunk being uploaded.
 	pix []byte
 	op  ebiten.DrawImageOptions
-	// The views' buffers (views.go): the edges to draw, the frozen
-	// bodies', the queued cells and the path they are stroked as.
-	edges, frozen []game.Edge
-	queued        []world.Queued
-	path          vector.Path
-	stroke        vector.StrokeOptions
-	drawPath      vector.DrawPathOptions
+	// The views' buffers (views.go): the edges to draw, the frozen and the
+	// static bodies', the queued cells and the path they are stroked as.
+	edges, frozen, static []game.Edge
+	queued                []world.Queued
+	path                  vector.Path
+	stroke                vector.StrokeOptions
+	drawPath              vector.DrawPathOptions
 }
 
 // New returns a renderer for the cells of mats.

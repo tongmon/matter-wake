@@ -6,10 +6,11 @@ import "github.com/tongmon/matter-wake/internal/rigid"
 type Edge = rigid.Edge
 
 // BodyEdges appends to out the edges of the collision shapes of every body
-// in memory, in cells, and those of the frozen bodies to frozen. It is for
-// the test dashboard's drawing and changes nothing.
-func (g *Game) BodyEdges(out, frozen []Edge) ([]Edge, []Edge) {
-	return g.bodies.BodyEdges(out, frozen)
+// in memory, in cells, those of the frozen bodies to frozen and those of
+// the static bodies, which never move, to static. It is for the test
+// dashboard's drawing and changes nothing.
+func (g *Game) BodyEdges(out, frozen, static []Edge) ([]Edge, []Edge, []Edge) {
+	return g.bodies.BodyEdges(out, frozen, static)
 }
 
 // TerrainEdges appends to out the edges of the terrain collision the

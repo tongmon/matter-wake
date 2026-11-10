@@ -26,6 +26,12 @@
 // the inventory too. So a solid's pixels plus the inventory are what the
 // body tool dropped (Dropped).
 //
+// Some materials turn into others, cell for cell (Turned): the terrain of
+// a material whose cells turn into a body, ice or glass, becomes one body
+// when the tool digs a cell of it, and a body of a material that shatters,
+// glass, turns into its powder when it loses a pixel. So the sums hold
+// once what turned is taken off too.
+//
 // A session plays the sandbox, a small room kept whole in memory; the
 // collapse room, as small, for measuring; or the terrain, the big world of
 // which only the blocks around the camera stay in memory (stream.go). The
@@ -564,10 +570,11 @@ func (g *Game) Inventory(id material.ID) int {
 // store, ends the session.
 //
 // The tools act first. Then the bodies the tool dug into split into
-// their pieces, their pixels are written where Box2D's last Step left them
-// and the terrain near them is made collision; the world's tick runs the
-// cells and puts back the cells the bodies pushed out; and Box2D steps
-// (internal/rigid).
+// their pieces or shatter, the terrain the tool dug into turns into bodies
+// if its material does, the bodies' pixels are written where Box2D's last
+// Step left them and the terrain near them is made collision; the world's
+// tick runs the cells and puts back the cells the bodies pushed out; and
+// Box2D steps (internal/rigid).
 func (g *Game) Step(in *Input) error {
 	if g.terrain != nil {
 		if err := g.stream(in.CameraX, in.CameraY); err != nil {
@@ -589,9 +596,13 @@ func (g *Game) Step(in *Input) error {
 	case in.Place:
 		g.place(in.CursorX, in.CursorY)
 	}
-	// The bodies the tool dug pixels out of split; the pieces too small to
-	// be bodies go to the inventory with what was dug.
+	// The bodies the tool dug pixels out of split, or shatter; the pieces
+	// too small to be bodies go to the inventory with what was dug. Then
+	// the terrain the tool dug into turns into bodies.
 	if err := g.bodies.Break(g.inventory); err != nil {
+		return fmt.Errorf("game: %w", err)
+	}
+	if err := g.bodies.Convert(); err != nil {
 		return fmt.Errorf("game: %w", err)
 	}
 	if in.Drop && g.bodyTool.Material != "" {
@@ -638,6 +649,8 @@ func (g *Game) dig(cx, cy int) {
 			case g.world.Wear(x, y, g.tool.Rate):
 				g.world.Set(x, y, material.Air)
 				g.inventory[c.Mat]++
+				// Ice and glass around it turn into a body (Step).
+				g.bodies.Destroyed(x, y, c.Mat)
 			}
 		}
 	}

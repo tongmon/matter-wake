@@ -92,6 +92,14 @@ func TestParseRejectsBadTables(t *testing.T) {
 		{"buoyancy on water", `{"materials":[{"name":"air","kind":"empty"},{"name":"water","kind":"liquid","buoyancy":1}]}`, "only solids"},
 		{"negative buoyancy", `{"materials":[{"name":"air","kind":"empty"},{"name":"wood","kind":"solid","density":6,"buoyancy":-0.5}]}`, "buoyancy"},
 		{"fall on wood", `{"materials":[{"name":"air","kind":"empty"},{"name":"wood","kind":"solid","density":6,"fallAccel":0.5}]}`, "only powders and liquids"},
+		{"body on sand", `{"materials":[{"name":"air","kind":"empty"},{"name":"wood","kind":"solid","density":6},{"name":"sand","kind":"powder","body":"wood"}]}`, "only statics"},
+		{"body unknown", `{"materials":[{"name":"air","kind":"empty"},{"name":"ice","kind":"static","body":"ice_body"}]}`, "not a solid"},
+		{"body not solid", `{"materials":[{"name":"air","kind":"empty"},{"name":"ice","kind":"static","body":"stone"},{"name":"stone","kind":"static"}]}`, "not a solid"},
+		{"anchor on stone", `{"materials":[{"name":"air","kind":"empty"},{"name":"stone","kind":"static","anchor":"top"}]}`, "only solids"},
+		{"unknown anchor", `{"materials":[{"name":"air","kind":"empty"},{"name":"wood","kind":"solid","density":6,"anchor":"middle"}]}`, "unknown anchor"},
+		{"empty anchor", `{"materials":[{"name":"air","kind":"empty"},{"name":"wood","kind":"solid","density":6,"anchor":""}]}`, "unknown anchor"},
+		{"shatter on stone", `{"materials":[{"name":"air","kind":"empty"},{"name":"sand","kind":"powder"},{"name":"stone","kind":"static","shatter":"sand"}]}`, "only solids"},
+		{"shatter to water", `{"materials":[{"name":"air","kind":"empty"},{"name":"water","kind":"liquid"},{"name":"glass","kind":"solid","density":6,"shatter":"water"}]}`, "not a powder"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -103,6 +111,51 @@ func TestParseRejectsBadTables(t *testing.T) {
 				t.Fatalf("error %q does not mention %q", err, tt.wantErr)
 			}
 		})
+	}
+}
+
+func TestLinks(t *testing.T) {
+	tab, err := Parse(strings.NewReader(`{"materials":[{"name":"air","kind":"empty"},
+		{"name":"ice","kind":"static","body":"ice_body"},
+		{"name":"ice_body","kind":"solid","density":6,"anchor":"top","shatter":"powder"},
+		{"name":"powder","kind":"powder"},
+		{"name":"wood","kind":"solid","density":6,"anchor":"bottom"}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ice, body, powder, wood := tab.MustLookup("ice"), tab.MustLookup("ice_body"), tab.MustLookup("powder"), tab.MustLookup("wood")
+	if tab.BodyOf(ice) != body || tab.BodyOf(body) != Air || tab.BodyOf(powder) != Air {
+		t.Errorf("BodyOf: ice %d, ice_body %d, powder %d; want %d, %d, %d", tab.BodyOf(ice), tab.BodyOf(body), tab.BodyOf(powder), body, Air, Air)
+	}
+	if tab.ShatterOf(body) != powder || tab.ShatterOf(wood) != Air {
+		t.Errorf("ShatterOf: ice_body %d, wood %d; want %d, %d", tab.ShatterOf(body), tab.ShatterOf(wood), powder, Air)
+	}
+	if tab.Def(body).Anchor != AnchorTop || tab.Def(wood).Anchor != AnchorBottom || tab.Def(ice).Anchor != NoAnchor {
+		t.Errorf("anchors %v, %v, %v; want top, bottom and none", tab.Def(body).Anchor, tab.Def(wood).Anchor, tab.Def(ice).Anchor)
+	}
+}
+
+// The fields bodies come of are left out of a table's fingerprint when
+// unset, so a table that sets none keeps the fingerprint it had before
+// they were added, and the replays recorded with it give no warning.
+func TestLinksLeaveOldFingerprints(t *testing.T) {
+	// The table internal/replay/testdata held before ice and glass, which
+	// the replays there were recorded with.
+	tab, err := Parse(strings.NewReader(`{"materials": [
+		{"name": "air", "kind": "empty", "density": 0, "color": "#00000000"},
+		{"name": "stone", "kind": "static", "density": 255, "hardness": 10, "hp": 100000, "color": "#6b6a72", "toneSpread": 40},
+		{"name": "sand", "kind": "powder", "density": 30, "fallAccel": 0.225, "sinkChance": 25, "slideChance": 50,
+		 "hardness": 4, "hp": 800, "color": "#e0c27a", "toneSpread": 50},
+		{"name": "water", "kind": "liquid", "density": 20, "fallAccel": 0.375, "sinkChance": 50,
+		 "flowSpeed": 0.9, "flowDamping": 0.8, "dispersion": 4, "color": "#3a7bd5c8", "toneSpread": 20},
+		{"name": "wood", "kind": "solid", "density": 6, "hardness": 8, "hp": 5000,
+		 "friction": 0.9, "restitution": 0.2, "buoyancy": 0.7, "color": "#8a5a32", "toneSpread": 40}
+	]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := tab.Fingerprint(), "cbe9996c5ef09a49"; got != want {
+		t.Fatalf("fingerprint %s, want %s", got, want)
 	}
 }
 
@@ -134,6 +187,8 @@ func TestFingerprint(t *testing.T) {
 	defs := []Def{
 		{Name: "air", Kind: Empty},
 		{Name: "sand", Kind: Powder, Density: 30, FallAccel: 64, SlideChance: 50, Color: Color{1, 2, 3, 255}},
+		{Name: "glass", Kind: Solid, Density: 6},
+		{Name: "pane", Kind: Static},
 	}
 	tab, err := NewTable(defs)
 	if err != nil {
@@ -162,6 +217,9 @@ func TestFingerprint(t *testing.T) {
 		{"hardness", func(d []Def) []Def { d[1].Hardness++; return d }},
 		{"hp", func(d []Def) []Def { d[1].HP++; return d }},
 		{"another material", func(d []Def) []Def { return append(d, Def{Name: "stone", Kind: Static}) }},
+		{"shatter", func(d []Def) []Def { d[2].Shatter = "sand"; return d }},
+		{"anchor", func(d []Def) []Def { d[2].Anchor = AnchorLargest; return d }},
+		{"body", func(d []Def) []Def { d[3].Body = "glass"; return d }},
 	}
 	for _, e := range edits {
 		other, err := NewTable(e.edit(slices.Clone(defs)))
