@@ -3,10 +3,11 @@ matter-wake-replay 7
 # of ice under a block of stone and puts a pane of glass in the air. The
 # tool digs the bottom of the ice: the whole column turns into one static
 # body. A wide cut through it leaves the top hanging, static, and the
-# rest falls. The tool digs the pane: it turns into a static body, and
-# one more pixel dug shatters it into powder. Then a glass body is thrown
-# right at 5 m/s and an ice body down at 10 m/s, and the glass one is dug
-# where it lies and shatters too.
+# rest falls. The tool digs the pane: it turns into a static body of glass
+# that does not shatter, and a cut down it keeps the larger piece static
+# while the smaller falls. Then a body of the glass that shatters is
+# thrown right at 5 m/s and an ice body down at 10 m/s, and the glass one
+# is dug where it lies: it turns whole into powder.
 seed 1
 size 480 270
 scene sandbox
@@ -17,7 +18,7 @@ tool 10 2000 4 circle
 body wood 16 12 0 0 0
 mode play
 slots ice glass stone
-materials 25c5f996225f3a12
+materials 49b022a399e068b7
 ticks 600
 
 # Stone, a column of ice under it, and a pane of glass, in creative mode.
@@ -33,11 +34,16 @@ ticks 600
 # rest falls.
 70 230 55 D 0 0 0 brush 8 square
 80 230 55 - 0 0 0 brush 2 square
-# Dig the top of the pane: a static body. One pixel more shatters it.
+# Dig the top of the pane: a static body of glass_slab. Then a cut down
+# it, right of the middle: the larger, left piece stays static, the right
+# one falls.
 120 360 160 D 0 0 0
 140 360 160 - 0 0 0
-150 360 166 D 0 0 0
-152 360 166 - 0 0 0
+150 363 164 D 0 0 0
+156 363 169 D 0 0 0
+162 363 174 D 0 0 0
+168 363 179 D 0 0 0
+174 363 179 - 0 0 0
 # A glass body thrown right at 5 m/s, turned 45°; an ice body thrown
 # down at 10 m/s.
 200 250 200 B 0 0 0 body glass_body 12 8 45 50 0

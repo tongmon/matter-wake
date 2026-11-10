@@ -88,6 +88,32 @@ func TestDiggingIceMakesAStaticBody(t *testing.T) {
 	}
 }
 
+// The glass the terrain turns into does not shatter, as in Noita, where
+// glass_static turns into glass_brittle (C136): it loses the pixels dug and
+// keeps its largest piece static; the rest falls. The glass the body tool
+// drops shatters.
+func TestGlassTerrainTurnsIntoGlassThatDoesNotShatter(t *testing.T) {
+	s, w, id := newSystem(t, 200, 120, 1)
+	c := coldIDs(s)
+	w.Fill(0, 110, 200, 120, id.stone)
+	w.Fill(40, 20, 60, 40, c.glass)
+	digCell(t, s, 40, 20)
+	convert(t, s)
+	if len(s.bodies) != 1 || s.bodies[0].mat != c.slab || !s.bodies[0].static {
+		t.Fatalf("%d bodies; want one static glass_slab", len(s.bodies))
+	}
+	debris := breakOff(t, s, column(45, 20, 40)...)
+	if len(s.bodies) != 2 || debris[c.powder] != 0 || w.Count(c.powder) != 0 {
+		t.Fatalf("after a cut: %d bodies, %d powder; want 2 bodies and no powder", len(s.bodies), w.Count(c.powder))
+	}
+	if b := &s.bodies[0]; !b.static || b.n != 14*20 {
+		t.Fatalf("the static piece is static %t with %d pixels; want the right one, 14 × 20", b.static, b.n)
+	}
+	if s.bodies[1].static {
+		t.Fatal("the smaller piece stays static")
+	}
+}
+
 // Ice in the air stays terrain until a cell of it is destroyed: having
 // nothing under it does not turn it (C136). Once turned, the static body
 // it becomes stays in the air too.
@@ -263,16 +289,16 @@ func TestStaticSplitKeepsItsAnchorPiece(t *testing.T) {
 	}
 }
 
-// A body of glass that loses a pixel turns whole into glass powder, one
-// cell for each pixel it has left (the developer's choice, 2026-11-10;
-// Noita makes one for each pixel it had), where the pixels were, and is
-// gone. Static or dynamic, turned or not, no cell is made or lost: powder
-// that finds its cell taken waits in the queue.
+// A body of glass that shatters and loses a pixel turns whole into glass
+// powder, one cell for each pixel it has left (the developer's choice,
+// 2026-11-10; Noita makes one for each pixel it had), where the pixels
+// were, and is gone. Static or dynamic, turned or not, no cell is made or
+// lost: powder that finds its cell taken waits in the queue.
 func TestGlassShattersIntoPowder(t *testing.T) {
 	s, w, id := newSystem(t, 200, 120, 1)
 	c := coldIDs(s)
 	w.Fill(0, 110, 200, 120, id.stone)
-	w.Fill(40, 20, 70, 40, c.glass)
+	w.Fill(40, 20, 70, 40, c.pane)
 	digCell(t, s, 40, 20)
 	convert(t, s)
 	pane := s.bodies[0]
@@ -296,8 +322,8 @@ func TestGlassShattersIntoPowder(t *testing.T) {
 			t.Fatalf("cell %v is %+v; want powder with the pixel's tone %d", at, cell, tone)
 		}
 	}
-	if n := turnedBy(s); n[c.glass] != -599 || n[c.glassBody] != 1 || n[c.powder] != 598 {
-		t.Fatalf("turned %v; want 599 glass into glass_body, 598 of it into powder", n)
+	if n := turnedBy(s); n[c.pane] != -599 || n[c.glassBody] != 1 || n[c.powder] != 598 {
+		t.Fatalf("turned %v; want 599 pane into glass_body, 598 of it into powder", n)
 	}
 	// A thrown pane, turned so that some pixels share a cell.
 	if ok, err := s.Drop(c.glassBody, 120, 30, 12, 8, 0.5, 30, -20); err != nil || !ok {
@@ -341,7 +367,7 @@ func TestBodiesOnStaticBodiesFallWhenItBreaks(t *testing.T) {
 		dig  [][2]int
 	}{
 		{"a notch under it", func(c cold) material.ID { return c.ice }, notch()},
-		{"glass shatters", func(c cold) material.ID { return c.glass }, column(50, 60, 61)},
+		{"glass shatters", func(c cold) material.ID { return c.pane }, column(50, 60, 61)},
 		{"ice is cut", func(c cold) material.ID { return c.ice }, column(70, 60, 70)},
 	} {
 		t.Run(tt.name, func(t *testing.T) {

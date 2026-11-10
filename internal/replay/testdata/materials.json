@@ -31,7 +31,7 @@
     },
     {
       "name": "glass", "kind": "static", "density": 255,
-      "hardness": 0, "hp": 30000, "body": "glass_body",
+      "hardness": 0, "hp": 30000, "body": "glass_slab",
       "color": "#d5e9edb4", "toneSpread": 20
     },
     {
@@ -50,6 +50,12 @@
       "name": "glass_body", "kind": "solid", "density": 6,
       "hardness": 0, "hp": 200,
       "friction": 0.3, "restitution": 0.2, "buoyancy": 0, "anchor": "largest", "shatter": "glass_powder",
+      "color": "#d5e9edb4", "toneSpread": 20
+    },
+    {
+      "name": "glass_slab", "kind": "solid", "density": 6,
+      "hardness": 0, "hp": 10000,
+      "friction": 0.9, "restitution": 0, "buoyancy": 0, "anchor": "largest",
       "color": "#d5e9edb4", "toneSpread": 20
     }
   ]
