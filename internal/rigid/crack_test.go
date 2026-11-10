@@ -253,3 +253,55 @@ func TestSettleTurnsFarBodiesIntoTerrain(t *testing.T) {
 		}
 	}
 }
+
+// A body a crack took pixels out of is split, or shattered, before the
+// tick ends, so a block that leaves memory, or a save, between that tick
+// and the next records it as it is: not still the whole box it was made
+// as with pixels missing, which loading refuses. The pixels a crack cuts
+// off from the rest, too few for a body, are lost with the crack.
+func TestCrackedBodyLeavesWithItsBlockAsItIs(t *testing.T) {
+	s, w, _ := newStreamedSystem(t, 1, 1)
+	c := coldIDs(s)
+	floor := w.Height() - 4
+	throw(t, s, c.iceBody, 200, floor-30, 16, 6, 200)
+	lost := 0
+	for i := 0; lost == 0; i++ {
+		if i == 120 {
+			t.Fatal("the ice never cracked")
+		}
+		tick(t, s, w)
+		lost = lostBy(s)[c.iceBody]
+	}
+	for i := range s.bodies {
+		if s.bodies[i].dirty {
+			t.Fatal("a cracked body waits for the next tick to split")
+		}
+	}
+	recs := s.Unload(0, 0, nil)
+	if err := s.Load(0, 0, recs); err != nil {
+		t.Fatalf("a body unloaded the tick it cracked does not load: %v", err)
+	}
+}
+
+// A stack of ice asleep far enough from the camera turns back into terrain
+// whole: which bodies turn is settled before any does, as turning one
+// takes it out of Box2D, which wakes the bodies it touched (Codex review).
+func TestSettleTakesAWholeStack(t *testing.T) {
+	s, w, id := newSystem(t, 1600, 200, 1)
+	c := coldIDs(s)
+	w.Fill(0, 190, 1600, 200, id.stone)
+	throw(t, s, c.iceBody, 600, 183, 16, 6, 0)
+	throw(t, s, c.iceBody, 602, 176, 16, 6, 0)
+	for i := 0; s.phys.Awake(s.bodies[0].id) || s.phys.Awake(s.bodies[1].id); i++ {
+		if i == 600 {
+			t.Fatal("the stack did not fall asleep")
+		}
+		play(t, s, w, 1)
+	}
+	if err := s.Settle(100, 180); err != nil {
+		t.Fatal(err)
+	}
+	if len(s.bodies) != 0 || w.Count(c.ice) != 2*16*6 {
+		t.Fatalf("%d bodies and %d ice cells after the check; want none and %d", len(s.bodies), w.Count(c.ice), 2*16*6)
+	}
+}

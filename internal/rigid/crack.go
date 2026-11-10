@@ -17,8 +17,8 @@ import (
 // chance that grows with the speed, and always from crackSure on, a crack
 // runs from the contact point into the body and takes out the pixels on
 // its way. They are gone, counted by material (Lost), as Noita's crack
-// erases its cells. The next Break splits the body, or shatters it if its
-// material shatters, as glass does.
+// erases its cells. Step then breaks the body (Break): it splits, or
+// shatters if its material shatters, as glass does.
 //
 // A dynamic body of a material that turns back into terrain far from the
 // camera (material.Def.SleepTo) does so when the camera has moved far
@@ -188,8 +188,8 @@ func octant(x, y float32) int {
 }
 
 // takeOut takes pixel k out of b, at slot, for good: it leaves the image
-// and the cells that show it, and counts as lost. The next Break splits b
-// or shatters it.
+// and the cells that show it, and counts as lost. Step breaks b after the
+// cracks.
 func (s *System) takeOut(b *body, slot, k int) {
 	b.n--
 	b.dirty, s.broken = true, true
@@ -226,12 +226,15 @@ const (
 // asleep, as Noita does when its camera has moved far (C138). Static and
 // frozen bodies stay. Each pixel's cell is the one its center falls in,
 // as in shatter. Settle counts what it turned (Turned).
+//
+// Which bodies turn is settled before any does: turning one takes it out of
+// Box2D, which wakes the bodies it touched, and a stack asleep would turn
+// only in part (Codex review).
 func (s *System) Settle(cx, cy float32) error {
-	dead := false
+	s.settling = s.settling[:0]
 	for slot := range s.bodies {
 		b := &s.bodies[slot]
-		to := s.mats.SleepOf(b.mat)
-		if b.static || b.frozen || !b.written || to == material.Air {
+		if b.static || b.frozen || !b.written || s.mats.SleepOf(b.mat) == material.Air {
 			continue
 		}
 		p, q := s.phys.Transform(b.id)
@@ -240,13 +243,15 @@ func (s *System) Settle(cx, cy float32) error {
 		dy := float32(p.Y*cellsPerMeter) + gy - cy
 		d2 := float32(dx*dx) + float32(dy*dy)
 		if d2 >= settleFar*settleFar || d2 >= settleNear*settleNear && !s.phys.Awake(b.id) {
-			if err := s.dissolve(slot, to, s.lost); err != nil {
-				return err
-			}
-			dead = true
+			s.settling = append(s.settling, slot)
 		}
 	}
-	if dead {
+	for _, slot := range s.settling {
+		if err := s.dissolve(slot, s.mats.SleepOf(s.bodies[slot].mat), s.lost); err != nil {
+			return err
+		}
+	}
+	if len(s.settling) > 0 {
 		s.compact()
 	}
 	return nil
