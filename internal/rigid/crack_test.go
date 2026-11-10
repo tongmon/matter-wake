@@ -680,3 +680,43 @@ func TestWalkingCracksDoesNotAllocate(t *testing.T) {
 		t.Fatal("no crack took anything out of the thin body; the test needs some to")
 	}
 }
+
+// The last step of a tick decides first how a crack ends, as Noita's
+// mover checks it (C139 3.4): one whose last step leaves the body after
+// marking it takes the marks out even if its energy ran out in that tick;
+// one whose last step still marks the body when its energy runs out ends
+// there and takes nothing out (Codex review).
+func TestCrackEndsOnItsLastStep(t *testing.T) {
+	// Out of energy as it leaves a plank 3 pixels thick: the first seed
+	// whose crack ends in its first tick, as most do.
+	for seed := uint64(0); ; seed++ {
+		if seed == 50 {
+			t.Fatal("no crack of 50 left the plank in its first tick")
+		}
+		s, _, _ := newSystem(t, 200, 100, 1)
+		c := coldIDs(s)
+		laid(t, s, c.iceBody, 50, 40, 100, 3)
+		m := newMover(100.5, 42.5, 0, -1, seed)
+		m.energy, m.forks = 2, 0
+		s.movers = append(s.movers[:0], m)
+		s.moveCracks()
+		if len(s.movers) > 0 || len(marked(&s.bodies[0])) > 0 {
+			t.Fatalf("seed %d: a crack out of energy did not end, or left marks", seed)
+		}
+		if lostBy(s)[c.iceBody] > 0 {
+			break
+		}
+	}
+	// Out of energy deep inside a big body: it ends, and its marks stay.
+	s, _, _ := newSystem(t, 260, 260, 1)
+	c := coldIDs(s)
+	laid(t, s, c.iceBody, 5, 5, 250, 250)
+	m := newMover(130.5, 130.5, 0, -1, 1)
+	m.energy, m.forks = 2, 0
+	s.movers = append(s.movers[:0], m)
+	s.moveCracks()
+	if len(s.movers) != 0 || lostBy(s)[c.iceBody] != 0 || len(marked(&s.bodies[0])) == 0 {
+		t.Fatalf("a crack out of energy inside the body: %d left, %d lost, %d marks; want none, none, some",
+			len(s.movers), lostBy(s)[c.iceBody], len(marked(&s.bodies[0])))
+	}
+}
