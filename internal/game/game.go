@@ -196,6 +196,9 @@ type Resume struct {
 	// back into terrain (Game.SettlePoint), or nil to start from where the
 	// camera starts.
 	Settle *[2]int
+	// Cracks lists the cracks that were walking through the cells
+	// (Game.Cracks), in the order they were made.
+	Cracks []save.SessionCrack
 }
 
 // Game is a play session. It is not safe for concurrent use.
@@ -375,6 +378,9 @@ func (g *Game) setUp(cfg *Config) error {
 		if err := g.load(r.Blocks); err != nil {
 			return err
 		}
+		if err := g.bodies.SetCracks(r.Cracks); err != nil {
+			return fmt.Errorf("game: %w", err)
+		}
 	}
 	// Keep the view in the world, moving it as little as it takes.
 	g.spawnX = min(max(camX, 0), max(g.world.Width()-g.viewW, 0))
@@ -530,6 +536,22 @@ func (g *Game) NextKey() uint32 {
 		return 0
 	}
 	return g.bodies.NextKey()
+}
+
+// Walking returns how many cracks walk through the cells.
+func (g *Game) Walking() int {
+	if g.bodies == nil {
+		return 0
+	}
+	return g.bodies.Walking()
+}
+
+// Cracks appends to out the cracks walking through the cells, for a save.
+func (g *Game) Cracks(out []save.SessionCrack) []save.SessionCrack {
+	if g.bodies == nil {
+		return out
+	}
+	return g.bodies.Cracks(out)
 }
 
 // Dropped returns how many bodies the body tool has dropped: it makes

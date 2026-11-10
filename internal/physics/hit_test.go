@@ -64,6 +64,34 @@ func TestHitsReportTheApproachSpeed(t *testing.T) {
 	}
 }
 
+// A box that lands flat touches the ground at both corners of its bottom:
+// Hits lists each point of the contact that came fast enough, not only
+// the fastest, as Noita's cracks start at each (C139).
+func TestHitsListEveryPointOfTheContact(t *testing.T) {
+	w, _, _ := hitWorld(t, 1, 5, true)
+	var hits []Hit
+	for range 120 {
+		w.Step(1.0/60, 4)
+		if hits = w.Hits(hits[:0]); len(hits) > 0 {
+			break
+		}
+	}
+	if len(hits) != 2 {
+		t.Fatalf("a box landing flat made %d hits, want one at each corner: %+v", len(hits), hits)
+	}
+	left, right := hits[0], hits[1]
+	if left.Point.X > right.Point.X {
+		left, right = right, left
+	}
+	if left.Point.X > -0.45 || right.Point.X < 0.45 {
+		t.Fatalf("the hits are at %v and %v, want at the corners, x = -0.5 and 0.5", left.Point, right.Point)
+	}
+	if left.Speed < 8 || right.Speed < 8 || left.Normal != right.Normal {
+		t.Fatalf("the corners hit at %v and %v m/s along %v and %v, want about 8.7 along one normal",
+			left.Speed, right.Speed, left.Normal, right.Normal)
+	}
+}
+
 // A box so fast it crosses the space to the ground in a fraction of a step
 // still reports its hit, at about its speed: Box2D stops it at the ground
 // with continuous collision, and the next step's contact sees it come.

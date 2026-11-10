@@ -88,8 +88,23 @@ func newSystemBuoyancy(tb testing.TB, width, height, workers int, b float64) (*S
 // Box2D holds 128 worlds at once.
 func openSystem(tb testing.TB, width, height, workers int, b float64) (*System, *world.World, ids) {
 	tb.Helper()
+	return openSeededSystem(tb, width, height, workers, b, 1)
+}
+
+// newSeededSystem is newSystem, run on one worker, for a world of seed.
+func newSeededSystem(tb testing.TB, width, height int, seed uint64) (*System, *world.World, ids) {
+	tb.Helper()
+	s, w, id := openSeededSystem(tb, width, height, 1, 0.7, seed)
+	tb.Cleanup(w.Close)
+	tb.Cleanup(s.Close)
+	return s, w, id
+}
+
+// openSeededSystem is openSystem for a world of seed.
+func openSeededSystem(tb testing.TB, width, height, workers int, b float64, seed uint64) (*System, *world.World, ids) {
+	tb.Helper()
 	tab := testTable(tb, b)
-	w, err := world.New(world.Config{Width: width, Height: height, Seed: 1, Workers: workers, Materials: tab})
+	w, err := world.New(world.Config{Width: width, Height: height, Seed: seed, Workers: workers, Materials: tab})
 	if err != nil {
 		tb.Fatal(err)
 	}
@@ -242,4 +257,12 @@ func bodyOverlap(s *System, a, b *body) float64 {
 		depth = min(depth, ra+rb-math.Abs((bx-ax)*n[0]+(by-ay)*n[1]))
 	}
 	return max(depth, 0)
+}
+
+// heldIf returns a pixel the image holds if held is set, else one gone.
+func heldIf(held bool) pixel {
+	if held {
+		return pixel{bits: pixelHeld}
+	}
+	return pixel{}
 }

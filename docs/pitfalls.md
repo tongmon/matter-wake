@@ -40,6 +40,8 @@
 - **golangci-lint v2 설정 키가 바뀌었습니다.** gofumpt는 `extra-rules` 대신 `extra.group-params`/`extra.clothe-returns`, exhaustive는 `ignore-enum-types` 대신 `ignore-types`를 씁니다.
 - **govulncheck는 설치된 Go의 표준 라이브러리도 검사합니다.** 최신 패치보다 낮은 Go(예: 1.27.0)로 `-vuln`을 돌리면 이미 고쳐진 표준 라이브러리 취약점이 나옵니다. 로컬 Go를 최신 패치로 올립니다. CI는 항상 최신 `1.27.x`를 씁니다.
 - **`material.ID`는 enum이 아닙니다.** `Air` 상수 하나 때문에 exhaustive가 enum으로 오인하므로 설정에서 제외했습니다.
+- **Git Bash(MSYS)는 `/`로 시작하는 인자를 Windows 경로로 바꿉니다.** `//`로 시작하는 인자는 `/` 하나로 줄어듭니다. 2026-11-10 Go 주석 `// A static body`를 찾을 문자열로 스크립트에 넘겼더니 `/ A static body`가 되어, 바꾼 자리 앞에 `/` 하나가 남아 컴파일이 깨졌습니다. 그런 인자는 파일에 적어 넘기거나 `MSYS_NO_PATHCONV=1`을 붙입니다.
+- **Windows의 Python 3.9는 줄이 길고 한글이 있는 UTF-8 스크립트를 "Non-UTF-8 code"로 거부할 수 있습니다.** 파일은 UTF-8로 읽히는데도 그렇습니다(2026-11-10). 첫 줄에 `# -*- coding: utf-8 -*-`를 두면 읽습니다.
 - **CI의 `go test -race`는 일반 실행보다 약 16배 느리고, 패키지마다 10분 한도가 있습니다.**
   - 2026-11-07 Windows 러너에서 `internal/app`이 10분을 넘어 main CI가 실패했습니다. Linux와 macOS도 552~559초로 한도에 붙어 있었습니다.
   - 원인은 테스트가 매 틱 부르는 `World.Checksum`이었습니다. 바이트마다 FNV-1a를 돌려 셀 100만 개에 12.8 ms가 걸렸고, 로컬 `internal/app` 테스트 시간의 87%를 썼습니다. 셀을 64비트 단어 두 개로 묶어 섞는 자체 해시로 바꿔 2.1 ms가 됐습니다(`internal/world` checksum.go).

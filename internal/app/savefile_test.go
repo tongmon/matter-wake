@@ -443,3 +443,102 @@ func TestSavedSessionGoesOnOverTheBudget(t *testing.T) {
 		}
 	}
 }
+
+// A session saved while cracks walk through a body of ice goes on exactly
+// as the saved one would have: the cracks walk on from where they were,
+// with the marks they left on the body, and take out the same pixels
+// (design.md 8절).
+func TestSavedCracksGoOn(t *testing.T) {
+	mats := testMaterials(t)
+	dir := t.TempDir()
+	cfg := terrainConfig(mats)
+	cfg.Body = game.BodyTool{Material: "ice_body", Width: 64, Height: 24, VY: 300}
+	sess, err := openSave(dir, cfg, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	played, err := game.New(sess)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer played.Close()
+	camX, camY := played.Spawn()
+	x := camX + 240
+	ground := camY
+	for c, _ := played.World().At(x, ground); c.Mat == 0; c, _ = played.World().At(x, ground) {
+		ground++
+	}
+	in := game.Input{CameraX: camX, CameraY: camY, CursorX: x, CursorY: ground - 60, Drop: true}
+	if err := played.Step(&in); err != nil {
+		t.Fatal(err)
+	}
+	in.Drop = false
+	// Until the ice's cracks have walked a little.
+	for i := 0; len(played.Cracks(nil)) == 0; i++ {
+		if i == 120 {
+			t.Fatal("the ice made no crack")
+		}
+		if err := played.Step(&in); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for range 2 {
+		if err := played.Step(&in); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cracks := played.Cracks(nil)
+	if len(cracks) == 0 {
+		t.Fatal("no crack walks at the save; the test needs some")
+	}
+	if err := writeSave(dir, played, camX, camY, nil); err != nil {
+		t.Fatal(err)
+	}
+	again, err := openSave(dir, cfg, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resumed, err := game.New(again)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resumed.Close()
+	if got := resumed.Cracks(nil); !reflect.DeepEqual(got, cracks) {
+		t.Fatalf("the resumed session's cracks\n%+v\ndiffer from the saved one's\n%+v", got, cracks)
+	}
+	lost := func(g *game.Game) []int {
+		n := make([]int, mats.Len())
+		g.Lost(n)
+		return n
+	}
+	before := lost(played)
+	for range 240 {
+		for _, g := range []*game.Game{played, resumed} {
+			if err := g.Step(&in); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if a, b := played.World().Checksum(), resumed.World().Checksum(); a != b {
+			t.Fatalf("tick %d: the resumed session's checksum %#x, the saved one's %#x", played.World().Tick(), b, a)
+		}
+		if a, b := played.BodyRecords(nil), resumed.BodyRecords(nil); !reflect.DeepEqual(a, b) {
+			t.Fatalf("tick %d: the resumed session's bodies differ from the saved one's", played.World().Tick())
+		}
+		if a, b := played.Cracks(nil), resumed.Cracks(nil); !reflect.DeepEqual(a, b) {
+			t.Fatalf("tick %d: the resumed session's cracks\n%+v\ndiffer from the saved one's\n%+v", played.World().Tick(), b, a)
+		}
+	}
+	after, again2 := lost(played), lost(resumed)
+	took := 0
+	for id := range after {
+		if after[id]-before[id] != again2[id] {
+			t.Fatalf("after the save the cracks took %d pixels of %s, in the resumed session %d",
+				after[id]-before[id], mats.Def(material.ID(id)).Name, again2[id])
+		}
+		took += again2[id]
+	}
+	t.Logf("%d cracks walked at the save; after it they took out %d pixels", len(cracks), took)
+	if took == 0 {
+		t.Fatal("the cracks took nothing out after the save; the test needs them to")
+	}
+}

@@ -153,9 +153,9 @@ type Status struct {
 
 // DrawOverlay draws the brush outline at the cursor, a status line with
 // the camera, the blocks in memory, how many chunks the last tick ran, the
-// bodies in memory and how many of them wait frozen for a block, the cells
-// waiting to be put back, and what the inventory holds of each slot's
-// material, and a line of keys.
+// bodies in memory and how many of them wait frozen for a block, the
+// cracks walking through them, the cells waiting to be put back, and what
+// the inventory holds of each slot's material, and a line of keys.
 func (r *Renderer) DrawOverlay(dst *ebiten.Image, g *game.Game, s *Status) {
 	sx, sy := float32(s.CursorX-s.CameraX), float32(s.CursorY-s.CameraY)
 	switch {
@@ -188,7 +188,10 @@ func (r *Renderer) DrawOverlay(dst *ebiten.Image, g *game.Game, s *Status) {
 	var b strings.Builder
 	for _, line := range [][]string{
 		first,
-		{fmt.Sprintf("%d bodies (%d frozen)", g.Bodies(), g.Frozen()), fmt.Sprintf("%d queued", w.QueueLen())},
+		{
+			fmt.Sprintf("%d bodies (%d frozen)", g.Bodies(), g.Frozen()), fmt.Sprintf("%d cracks", g.Walking()),
+			fmt.Sprintf("%d queued", w.QueueLen()),
+		},
 		held,
 		keys,
 	} {

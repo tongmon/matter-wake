@@ -14,7 +14,7 @@ func image(rows ...string) (px []pixel, w, h int) {
 	px = make([]pixel, w*h)
 	for j, row := range rows {
 		for i, c := range row {
-			px[j*w+i].ok = c == '#'
+			px[j*w+i] = heldIf(c == '#')
 		}
 	}
 	return px, w, h
@@ -198,11 +198,11 @@ func TestShapesOfRandomImages(t *testing.T) {
 		px := make([]pixel, w*h)
 		fill := 30 + r.IntN(65)
 		for k := range px {
-			px[k].ok = r.IntN(100) < fill
+			px[k] = heldIf(r.IntN(100) < fill)
 		}
 		sh.shape(px, w, h)
 		checkPolygons(t, &sh, "random image")
-		at := func(i, j int) bool { return i >= 0 && j >= 0 && i < w && j < h && px[j*w+i].ok }
+		at := func(i, j int) bool { return i >= 0 && j >= 0 && i < w && j < h && px[j*w+i].ok() }
 		for j := -1; j <= h; j++ {
 			for i := -1; i <= w; i++ {
 				all, none := true, true
@@ -242,8 +242,8 @@ func TestRectanglesCoverThePixels(t *testing.T) {
 		px := make([]pixel, w*h)
 		n := 0
 		for k := range px {
-			px[k].ok = r.IntN(2) == 0
-			if px[k].ok {
+			px[k] = heldIf(r.IntN(2) == 0)
+			if px[k].ok() {
 				n++
 			}
 		}
@@ -254,7 +254,7 @@ func TestRectanglesCoverThePixels(t *testing.T) {
 		}
 		for j := range h {
 			for i := range w {
-				if got, want := covers(&sh, float64(i)+0.5, float64(j)+0.5), px[j*w+i].ok; (got == 1) != want || got > 1 {
+				if got, want := covers(&sh, float64(i)+0.5, float64(j)+0.5), px[j*w+i].ok(); (got == 1) != want || got > 1 {
 					t.Fatalf("pixel (%d, %d) %v is in %d rectangles", i, j, want, got)
 				}
 			}

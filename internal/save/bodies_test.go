@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"math"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -46,7 +47,8 @@ func randomBodies(seed uint64, n int, m material.ID) []Body {
 			Static: s.Bool(), Pixels: make([]Pixel, w*h),
 		}
 		for k := range b.Pixels {
-			b.Pixels[k] = Pixel{Damage: uint16(s.Uint32()), Tone: uint8(s.Uint32()), OK: s.IntN(5) > 0}
+			ok := s.IntN(5) > 0
+			b.Pixels[k] = Pixel{Damage: uint16(s.Uint32()), Tone: uint8(s.Uint32()), OK: ok, Crack: ok && s.IntN(4) == 0}
 		}
 		bodies[i] = b
 	}
@@ -163,7 +165,7 @@ func TestBlockReadsVersion2(t *testing.T) {
 // it is damage.
 func TestBlockReadsVersion3(t *testing.T) {
 	mats := woodTable(t, "stone", "sand", "water")
-	bodies := randomBodies(10, 20, mats.MustLookup("wood"))
+	bodies := unmarked(randomBodies(10, 20, mats.MustLookup("wood")))
 	for i := range bodies {
 		bodies[i].Static = false
 	}
@@ -195,6 +197,51 @@ func TestBlockReadsVersion3(t *testing.T) {
 	}
 }
 
+// unmarked returns bodies with no crack marks, as blocks before version 5
+// hold them.
+func unmarked(bodies []Body) []Body {
+	for i := range bodies {
+		for k := range bodies[i].Pixels {
+			bodies[i].Pixels[k].Crack = false
+		}
+	}
+	return bodies
+}
+
+// A block of version 4, from before cracks marked pixels, reads back with
+// no marks, and cannot hold one: a pixel's byte with the mark in it is
+// damage.
+func TestBlockReadsVersion4(t *testing.T) {
+	mats := woodTable(t, "stone", "sand", "water")
+	bodies := unmarked(randomBodies(11, 20, mats.MustLookup("wood")))
+	var buf bytes.Buffer
+	if err := encodeBlock(&buf, &Block{Cells: new(world.Block), Bodies: bodies}, mats, 4); err != nil {
+		t.Fatal(err)
+	}
+	got, err := DecodeBlock(&buf, mats)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Bodies) != len(bodies) {
+		t.Fatalf("%d bodies read back, want %d", len(got.Bodies), len(bodies))
+	}
+	for i, b := range got.Bodies {
+		if b.Key != bodies[i].Key || !slices.Equal(b.Pixels, bodies[i].Pixels) {
+			t.Fatalf("body %d of a version 4 block read back with other pixels", i)
+		}
+	}
+	bodies[0].Pixels[slices.IndexFunc(bodies[0].Pixels, func(p Pixel) bool { return p.OK })].Crack = true
+	if err := encodeBlock(&bytes.Buffer{}, &Block{Cells: new(world.Block), Bodies: bodies}, mats, 4); err == nil {
+		t.Fatal("a version 4 block took a crack mark")
+	}
+	// The same block written as version 5 and called version 4.
+	data := encodeAll(t, &Block{Cells: new(world.Block), Bodies: bodies}, mats)
+	binary.LittleEndian.PutUint16(data[len(blockMagic):], 4)
+	if _, err := DecodeBlock(bytes.NewReader(rechecksum(data)), mats); err == nil || !strings.Contains(err.Error(), "has is") {
+		t.Fatalf("a version 4 block with a crack mark: error %v", err)
+	}
+}
+
 // Damage inside the queued cells or the bodies that the checksum did not
 // catch is refused, as are bodies no format can hold.
 func TestBlockRefusesBadBodies(t *testing.T) {
@@ -210,6 +257,11 @@ func TestBlockRefusesBadBodies(t *testing.T) {
 		"a material not in the table": func() Body {
 			b := body()
 			b.Mat = 99
+			return b
+		}(),
+		"a crack mark on a pixel gone": func() Body {
+			b := body()
+			b.Pixels[1] = Pixel{Crack: true}
 			return b
 		}(),
 	} {
