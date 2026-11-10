@@ -7,6 +7,7 @@ import (
 
 	"github.com/tongmon/matter-wake/internal/material"
 	"github.com/tongmon/matter-wake/internal/physics"
+	"github.com/tongmon/matter-wake/internal/rng"
 	"github.com/tongmon/matter-wake/internal/save"
 	"github.com/tongmon/matter-wake/internal/world"
 )
@@ -73,7 +74,7 @@ func (s *System) record(b *body) save.Body {
 		X: p.X, Y: p.Y, C: q.C, S: q.S, VX: v.X, VY: v.Y, Spin: spin, Awake: awake,
 	}
 	for k, px := range b.px {
-		r.Pixels[k] = save.Pixel{Damage: px.dmg, Tone: px.tone, OK: px.ok}
+		r.Pixels[k] = save.Pixel{Damage: px.dmg, Tone: px.tone, OK: px.ok(), Crack: px.marked()}
 	}
 	return r
 }
@@ -346,8 +347,12 @@ func (s *System) remake(r *save.Body) (body, error) {
 		px: make([]pixel, len(r.Pixels)), buoyancy: s.pieceBuoyancy(r.Mat),
 	}
 	for k, p := range r.Pixels {
-		b.px[k] = pixel{dmg: p.Damage, tone: p.Tone, ok: p.OK}
+		b.px[k] = pixel{dmg: p.Damage, tone: p.Tone}
 		if p.OK {
+			b.px[k].bits = pixelHeld
+			if p.Crack {
+				b.px[k].bits |= pixelMarked
+			}
 			b.n++
 		}
 	}
@@ -401,7 +406,8 @@ func restoreMotion(r *save.Body) (physics.Vec2, float32) {
 // Reset starts Box2D anew, as New does: a world with only the walls, and
 // no terrain collision. The bodies must all have been taken out first.
 // A save does this, so the session it saves goes on from the same state as
-// one opened from it (design.md 8절).
+// one opened from it (design.md 8절). The cracks walking through the cells
+// walk on, as they do in a session opened from the save (SetCracks).
 func (s *System) Reset() error {
 	if len(s.bodies) > 0 {
 		return fmt.Errorf("rigid: Reset with %d bodies in memory", len(s.bodies))
@@ -423,6 +429,45 @@ func (s *System) Reset() error {
 	s.worn, s.gone, s.freed, s.seeds = s.worn[:0], s.gone[:0], s.freed[:0], s.seeds[:0]
 	s.broken = false
 	return s.wall()
+}
+
+// Cracks appends to out the cracks walking through the cells, in the
+// order they were made, as a session saves them: they walk in the world,
+// not with a block.
+func (s *System) Cracks(out []save.SessionCrack) []save.SessionCrack {
+	for i := range s.movers {
+		m := &s.movers[i]
+		out = append(out, save.SessionCrack{
+			X: m.x, Y: m.y, AX: m.ax, AY: m.ay, Energy: m.energy, Split: m.split, Forks: m.forks,
+			LastX: m.lx, LastY: m.ly, Started: m.started, Random: m.r.State(),
+		})
+	}
+	return out
+}
+
+// SetCracks replaces the cracks walking through the cells with cs, for a
+// session opened again, so they walk on as they would have. A crack whose
+// energy or branches are out of what a crack can have, or whose way is not
+// finite, is an error, and nothing changes.
+func (s *System) SetCracks(cs []save.SessionCrack) error {
+	for i := range cs {
+		c := &cs[i]
+		switch {
+		case !finite(c.X) || !finite(c.Y) || !finite(c.AX) || !finite(c.AY):
+			return fmt.Errorf("rigid: crack %d at (%v, %v) along (%v, %v)", i, c.X, c.Y, c.AX, c.AY)
+		case c.Energy > crackEnergy || c.Split < 0 || c.Split > crackSplit || c.Forks < 0 || c.Forks > crackForks:
+			return fmt.Errorf("rigid: crack %d has energy %d, branches at %d, %d more times", i, c.Energy, c.Split, c.Forks)
+		}
+	}
+	s.movers = s.movers[:0]
+	for i := range cs {
+		c := &cs[i]
+		s.movers = append(s.movers, mover{
+			x: c.X, y: c.Y, ax: c.AX, ay: c.AY, energy: c.Energy, split: c.Split, forks: c.Forks,
+			lx: c.LastX, ly: c.LastY, started: c.Started, r: rng.New(c.Random),
+		})
+	}
+	return nil
 }
 
 // NextKey returns the key the next body made gets.

@@ -72,8 +72,9 @@ import (
 // BlockVersion is the block layout this build writes. It also reads
 // version 1, which had no rest field: its cells read back with Rest 0, so
 // resting powders count their ticks at rest again; version 2, which held
-// no queued cells or bodies; and version 3, whose bodies were all dynamic.
-const BlockVersion = 4
+// no queued cells or bodies; version 3, whose bodies were all dynamic; and
+// version 4, whose bodies' pixels had no crack marks.
+const BlockVersion = 5
 
 // MetaVersion is the world header layout this build reads and writes.
 const MetaVersion = 1
@@ -635,9 +636,9 @@ func (l *lines) end() {
 
 // SessionVersion is the session file layout this build writes. It reads
 // version 1, which had no stream line, version 2, which had no chunk
-// lines, version 3, which had no bodies line, and version 4, which had no
-// settle line.
-const SessionVersion = 5
+// lines, version 3, which had no bodies line, version 4, which had no
+// settle line, and version 5, which had no crack lines.
+const SessionVersion = 6
 
 const sessionMagic = "matter-wake-session"
 
@@ -663,7 +664,9 @@ const sessionMagic = "matter-wake-session"
 // tick of the last check and the ticks to the next; a session that had
 // none has no stream line. The bodies line holds the key the next rigid
 // body made gets; the bodies themselves are saved with the blocks that own
-// them. Only materials the inventory holds get a held
+// them. The settle line holds where far bodies last turned back into
+// terrain, and each crack line a crack walking through the cells, in the
+// order they were made (SessionCrack). Only materials the inventory holds get a held
 // line, in name order, the name quoted as in Go, since it may hold
 // spaces; the blocks follow in row order. Last come the chunks of those
 // blocks that had something to scan or had waited for the budget
@@ -683,6 +686,9 @@ type Session struct {
 	// back into terrain, as (x, y) in cells, or nil: a file older than
 	// version 5 has none.
 	Settle *[2]int
+	// Cracks lists the cracks walking through the cells, in the order they
+	// were made; a file older than version 6 has none.
+	Cracks []SessionCrack
 	// Held is how many cells of each material the inventory holds.
 	Held map[string]int
 	// Blocks lists the blocks that were in memory, as (bx, by).
@@ -702,6 +708,34 @@ type SessionChunk struct {
 	CX, CY      int
 	Dirty, Keep [4]int
 	Waited      int
+}
+
+// SessionCrack is a crack walking through the cells (internal/rigid):
+// where it is and the way it set out, in cells; the energy it has left,
+// the energy it branches at and how many more times it may; the cell of its
+// last step, once it has started; and the state of its random numbers. A
+// crack line holds them in that order:
+//
+//	crack 130.5 254.25 0 -1 187 6 2 130 255 1 1234567890123
+type SessionCrack struct {
+	X, Y, AX, AY         float32
+	Energy, Split, Forks int32
+	LastX, LastY         int32
+	Started              bool
+	Random               uint64
+}
+
+// valid reports what is wrong with c, or nil.
+func (c *SessionCrack) valid() error {
+	for _, f := range [...]float32{c.X, c.Y, c.AX, c.AY} {
+		if math.IsNaN(float64(f)) || math.IsInf(float64(f), 0) {
+			return fmt.Errorf("a crack at (%v, %v) along (%v, %v) is not finite", c.X, c.Y, c.AX, c.AY)
+		}
+	}
+	if c.Forks < 0 {
+		return fmt.Errorf("a crack may branch %d more times", c.Forks)
+	}
+	return nil
 }
 
 // maxWaited is the longest wait a chunk records (world.ChunkState).
@@ -760,6 +794,15 @@ func WriteSession(w io.Writer, s *Session) error {
 	_, _ = fmt.Fprintf(bw, "bodies %d\n", s.NextKey)
 	if s.Settle != nil {
 		_, _ = fmt.Fprintf(bw, "settle %d %d\n", s.Settle[0], s.Settle[1])
+	}
+	for i := range s.Cracks {
+		c := &s.Cracks[i]
+		if err := c.valid(); err != nil {
+			return fmt.Errorf("save: %w", err)
+		}
+		f := func(v float32) string { return strconv.FormatFloat(float64(v), 'g', -1, 32) }
+		_, _ = fmt.Fprintf(bw, "crack %s %s %s %s %d %d %d %d %d %d %d\n", f(c.X), f(c.Y), f(c.AX), f(c.AY),
+			c.Energy, c.Split, c.Forks, c.LastX, c.LastY, boolByte(c.Started), c.Random)
 	}
 	names := make([]string, 0, len(s.Held))
 	for name, n := range s.Held {
@@ -893,6 +936,55 @@ func (l *lines) settle(s *Session, f []string, v uint64) {
 	}
 }
 
+// crack reads the fields of a crack line of a session of version v into
+// s.
+func (l *lines) crack(s *Session, f []string, v uint64) {
+	switch {
+	case v < 6:
+		l.err = fmt.Errorf("line %q: a version %d session has no crack lines", l.line, v)
+		return
+	case len(f) != 11:
+		l.err = fmt.Errorf("line %q, want %q", l.line,
+			"crack <x> <y> <axis x> <axis y> <energy> <split> <forks> <last x> <last y> <started> <random>")
+		return
+	}
+	c := SessionCrack{
+		X: l.float32("crack x", f[0]), Y: l.float32("crack y", f[1]), AX: l.float32("crack axis x", f[2]), AY: l.float32("crack axis y", f[3]),
+		Energy: l.int32("crack energy", f[4]), Split: l.int32("crack split", f[5]), Forks: l.int32("crack forks", f[6]),
+		LastX: l.int32("crack last x", f[7]), LastY: l.int32("crack last y", f[8]),
+	}
+	c.Started = l.uint("crack started", f[9], 1) == 1
+	c.Random = l.uint("crack random", f[10], 64)
+	if l.err == nil {
+		l.err = c.valid()
+	}
+	s.Cracks = append(s.Cracks, c)
+}
+
+// float32 parses the value v of name as a float32.
+func (l *lines) float32(name, v string) float32 {
+	if l.err != nil {
+		return 0
+	}
+	n, err := strconv.ParseFloat(v, 32)
+	if err != nil {
+		l.err = fmt.Errorf("%s %q is not a number", name, v)
+	}
+	return float32(n)
+}
+
+// int32 parses the value v of name as a signed number of 32 bits.
+func (l *lines) int32(name, v string) int32 {
+	if l.err != nil {
+		return 0
+	}
+	n, err := strconv.ParseInt(v, 10, 32)
+	if err != nil {
+		l.err = fmt.Errorf("%s %q is not a number of 32 bits", name, v)
+	}
+	return int32(n)
+}
+
 // chunk reads the fields of a chunk line into s; seen holds the chunks
 // read so far.
 func (l *lines) chunk(s *Session, f []string, seen map[[2]int]bool) {
@@ -944,6 +1036,8 @@ func ReadSession(r io.Reader) (*Session, error) {
 			l.bodies(s, f[1:], v, &bodies)
 		case len(f) > 0 && f[0] == "settle":
 			l.settle(s, f[1:], v)
+		case len(f) > 0 && f[0] == "crack":
+			l.crack(s, f[1:], v)
 		case strings.HasPrefix(l.line, "held "):
 			l.held(s.Held, strings.TrimPrefix(l.line, "held "))
 		case len(f) > 0 && f[0] == "stream":

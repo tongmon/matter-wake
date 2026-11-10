@@ -180,25 +180,62 @@ static void physicsSetBox( b2BodyId body, float halfW, float halfH, float densit
 	b2CreatePolygonShape( body, &def, &polygon );
 }
 
-// Copies the last step's hit events, as many as fit in cap, into bodies,
-// two bodies an event, and out, five floats an event: the point, the
-// normal and the approach speed. Returns how many events there are, which
-// may be more than cap.
+// physicsHitPoint puts one hit point, number n if it fits in cap, into
+// bodies and out as physicsHits lays them out.
+static void physicsHitPoint( int n, int cap, b2BodyId* bodies, float* out, b2BodyId a, b2BodyId b, b2Pos p,
+							 b2Vec2 normal, float speed )
+{
+	if ( n >= cap )
+	{
+		return;
+	}
+	bodies[2 * n] = a;
+	bodies[2 * n + 1] = b;
+	out[5 * n] = p.x;
+	out[5 * n + 1] = p.y;
+	out[5 * n + 2] = normal.x;
+	out[5 * n + 3] = normal.y;
+	out[5 * n + 4] = speed;
+}
+
+// Copies the points of the contacts the last step's hit events name, as
+// many as fit in cap: each point that approached faster than the world's
+// hit threshold and was pushed apart, as Box2D picks the fastest for the
+// event. bodies gets two bodies a point, out five floats: the point, the
+// normal and the approach speed. A point is rebuilt from a body's center
+// and the point's anchor on it, the static body's if one is, as Box2D
+// rebuilds the event's. An event whose contact is gone gives its own
+// point. Returns how many points there are, which may be more than cap.
 static int physicsHits( b2WorldId world, b2BodyId* bodies, float* out, int cap )
 {
 	b2ContactEvents events = b2World_GetContactEvents( world );
-	for ( int i = 0; i < events.hitCount && i < cap; ++i )
+	float threshold = b2World_GetHitEventThreshold( world );
+	int n = 0;
+	for ( int i = 0; i < events.hitCount; ++i )
 	{
 		const b2ContactHitEvent* e = events.hitEvents + i;
-		bodies[2 * i] = b2Shape_GetBody( e->shapeIdA );
-		bodies[2 * i + 1] = b2Shape_GetBody( e->shapeIdB );
-		out[5 * i] = e->point.x;
-		out[5 * i + 1] = e->point.y;
-		out[5 * i + 2] = e->normal.x;
-		out[5 * i + 3] = e->normal.y;
-		out[5 * i + 4] = e->approachSpeed;
+		b2BodyId a = b2Shape_GetBody( e->shapeIdA );
+		b2BodyId b = b2Shape_GetBody( e->shapeIdB );
+		if ( b2Contact_IsValid( e->contactId ) == false )
+		{
+			physicsHitPoint( n++, cap, bodies, out, a, b, e->point, e->normal, e->approachSpeed );
+			continue;
+		}
+		b2ContactData data = b2Contact_GetData( e->contactId );
+		bool fromB = b2Body_GetType( a ) != b2_staticBody && b2Body_GetType( b ) == b2_staticBody;
+		b2Pos center = b2Body_GetWorldCenter( fromB ? b : a );
+		for ( int k = 0; k < data.manifold.pointCount; ++k )
+		{
+			const b2ManifoldPoint* mp = data.manifold.points + k;
+			float speed = -mp->normalVelocity;
+			if ( speed > threshold && mp->totalNormalImpulse > 0.0f )
+			{
+				b2Pos p = b2OffsetPos( center, fromB ? mp->anchorB : mp->anchorA );
+				physicsHitPoint( n++, cap, bodies, out, a, b, p, data.manifold.normal, speed );
+			}
+		}
 	}
-	return events.hitCount;
+	return n;
 }
 */
 import "C"
@@ -712,22 +749,26 @@ func (w *World) Edges(b Body, out []Edge) []Edge {
 	}
 }
 
-// Hit is a contact the last Step found two shapes in, one of which reports
-// hits, approaching faster than the world's hit speed (Config.HitSpeed).
+// Hit is a point of a contact the last Step found two shapes in, one of
+// which reports hits, approaching faster than the world's hit speed
+// (Config.HitSpeed).
 type Hit struct {
 	// A and B are the bodies of the two shapes.
 	A, B Body
 	// Point is where they hit, in meters, and Normal points from A to B.
 	Point, Normal Vec2
-	// Speed is how fast they approached along the normal at the contact
-	// point, in meters per second, as Box2D samples it before solving the
-	// step's contacts: the fastest of the contact's points.
+	// Speed is how fast they approached along the normal at the point, in
+	// meters per second, as Box2D samples it before solving the step's
+	// contacts.
 	Speed float32
 }
 
-// Hits appends to out the hits of the last Step, in Box2D's order: by
-// contact, which is the same on every run. A shape reports hits if made
-// with Box.Hits or Surface.Hits; either shape of a contact will do.
+// Hits appends to out the hits of the last Step: every point of a contact
+// that approached faster than the world's hit speed and was pushed apart,
+// so a box that lands flat hits at both corners of its bottom. They come in
+// Box2D's order, by contact and then by point, which is the same on every
+// run. A shape reports hits if made with Box.Hits or Surface.Hits; either
+// shape of a contact will do.
 func (w *World) Hits(out []Hit) []Hit {
 	w.mustBeOpen()
 	for {

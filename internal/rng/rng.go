@@ -17,6 +17,11 @@ func New(seed uint64) Stream {
 	return Stream{state: seed}
 }
 
+// State returns where s stands: New(s.State()) goes on as s does.
+func (s *Stream) State() uint64 {
+	return s.state
+}
+
 // Uint64 returns the next 64 random bits.
 func (s *Stream) Uint64() uint64 {
 	s.state += 0x9e3779b97f4a7c15

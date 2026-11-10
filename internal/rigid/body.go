@@ -125,13 +125,39 @@ type body struct {
 }
 
 // pixel is a pixel of a body's image: the damage it has taken
-// (world.Cell.Damage) and its tone, which move with it, and whether the
-// image still holds it. One small value, so writing a cell reads one
-// place.
+// (world.Cell.Damage) and its tone, which move with it, and in bits
+// whether the image still holds it (pixelHeld) and whether a crack marked
+// it (pixelMarked, crack.go). One small value of 4 bytes, so writing a cell
+// reads one place.
 type pixel struct {
 	dmg  uint16
 	tone uint8
-	ok   bool
+	bits uint8
+}
+
+// The bits of a pixel.
+const (
+	pixelHeld = 1 << iota
+	pixelMarked
+)
+
+// ok reports whether the image still holds the pixel.
+func (p pixel) ok() bool {
+	return p.bits&pixelHeld != 0
+}
+
+// marked reports whether a crack marked the pixel.
+func (p pixel) marked() bool {
+	return p.bits&pixelMarked != 0
+}
+
+// shade returns the damage the pixel's cells show: its own, or full once a
+// crack marked it (crackShade).
+func (p pixel) shade() uint16 {
+	if p.marked() {
+		return crackShade
+	}
+	return p.dmg
 }
 
 // cellAt is a cell's position in the world.
@@ -151,7 +177,7 @@ func newBody(id physics.Body, key uint32, m material.ID, w, h int, seed uint64) 
 		cells: make([]cellAt, 0, n+w+h+1),
 	}
 	for k := range b.px {
-		b.px[k] = pixel{tone: uint8(rng.Hash3(seed^toneSalt, uint64(key), uint64(k), 0) >> 56), ok: true}
+		b.px[k] = pixel{tone: uint8(rng.Hash3(seed^toneSalt, uint64(key), uint64(k), 0) >> 56), bits: pixelHeld}
 	}
 	return b
 }
@@ -244,7 +270,7 @@ func (s *System) write(b *body, slot uint16) {
 			j := int(math.Floor(float64(cv-float32(si*dx)-top))) - cy
 			// A cell whose center falls outside the image, or on a pixel
 			// that is gone, stays out.
-			if uint(i) >= uint(iw) || uint(j) >= uint(ih) || !img[j*iw+i].ok {
+			if uint(i) >= uint(iw) || uint(j) >= uint(ih) || !img[j*iw+i].ok() {
 				continue
 			}
 			x, y := ox+k, oy+r
@@ -348,7 +374,7 @@ func (s *System) claim(b *body, slot uint16, k, x, y int, rx, ry float32) bool {
 		s.w.Displace(x, y)
 	}
 	px := b.px[k]
-	s.w.Put(x, y, world.BodyCell(b.mat, px.tone, px.dmg, slot, uint16(k)))
+	s.w.Put(x, y, world.BodyCell(b.mat, px.tone, px.shade(), slot, uint16(k)))
 	return true
 }
 

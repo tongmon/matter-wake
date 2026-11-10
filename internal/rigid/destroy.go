@@ -44,7 +44,7 @@ func (s *System) Wear(x, y int, amount uint32) (material.ID, bool) {
 	b := &s.bodies[slot]
 	// A pixel dug out earlier in the tick may still show in its other
 	// cell until the body is written again.
-	if int(k) >= len(b.px) || !b.px[k].ok {
+	if int(k) >= len(b.px) || !b.px[k].ok() {
 		return 0, false
 	}
 	key := uint32(slot)<<16 | uint32(k)
@@ -84,7 +84,7 @@ func (s *System) showDamage(b *body, slot, k uint16, hide bool) {
 				continue
 			}
 			if owner, pixel := c.Body(); owner == slot && pixel == k {
-				c.Damage = b.px[k].dmg
+				c.Damage = b.px[k].shade()
 				if hide {
 					c = world.Cell{}
 				}
@@ -231,7 +231,7 @@ func (s *System) dissolve(slot int, into material.ID, unplaced []int) error {
 	for j := range b.h {
 		for i := range b.w {
 			px := b.px[j*b.w+i]
-			if !px.ok {
+			if !px.ok() {
 				continue
 			}
 			x, y := pixelCell(b, i, j, p, q)
@@ -271,7 +271,7 @@ func (s *System) find(b *body) {
 	}
 	s.pieces = s.pieces[:0]
 	for k, px := range b.px {
-		if !px.ok || s.label[k] >= 0 {
+		if !px.ok() || s.label[k] >= 0 {
 			continue
 		}
 		id := int32(len(s.pieces))
@@ -288,7 +288,7 @@ func (s *System) find(b *body) {
 				if nb[0] < 0 || nb[1] < 0 || nb[0] >= b.w || nb[1] >= b.h {
 					continue
 				}
-				if m := nb[1]*b.w + nb[0]; b.px[m].ok && s.label[m] < 0 {
+				if m := nb[1]*b.w + nb[0]; b.px[m].ok() && s.label[m] < 0 {
 					s.label[m] = id
 					s.queue = append(s.queue, int32(m))
 				}
@@ -376,7 +376,7 @@ func (s *System) clean(b *body, slot uint16, p physics.Vec2, q physics.Rot) int 
 	for j := range b.h {
 		for i := range b.w {
 			k := j*b.w + i
-			if !b.px[k].ok {
+			if !b.px[k].ok() {
 				continue
 			}
 			x, y := pixelCell(b, i, j, p, q)
@@ -463,7 +463,7 @@ func (s *System) covered(b *body) {
 	n := b.w * b.h
 	b.cover = slices.Grow(b.cover[:0], n)[:n]
 	for k := range b.px {
-		b.cover[k] = b.px[k].ok
+		b.cover[k] = b.px[k].ok()
 	}
 	start := 0
 	for _, end := range s.shape.ends {

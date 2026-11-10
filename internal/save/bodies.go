@@ -61,12 +61,21 @@ type Body struct {
 }
 
 // Pixel is a pixel of a body's image: whether the body still has it, its
-// tone, and the damage it took.
+// tone, the damage it took, and whether a crack marked it (block version 5
+// on); a pixel the body no longer has has no mark.
 type Pixel struct {
 	Damage uint16
 	Tone   uint8
 	OK     bool
+	Crack  bool
 }
+
+// What a pixel's first byte holds, as written: whether the body has it,
+// and from version 5 whether a crack marked it.
+const (
+	pixelHas   = 1
+	pixelCrack = 2
+)
 
 // MaxBodyPixels is the most pixels a body's image may hold: what a cell's
 // link to its pixel holds (world.BodyCell).
@@ -92,7 +101,22 @@ func (b *Body) check(mats *material.Table) error {
 	case b.CX < 0 || b.CY < 0 || b.CX > math.MaxInt32 || b.CY > math.MaxInt32:
 		return fmt.Errorf("body %d begins at (%d, %d) in its first image", b.Key, b.CX, b.CY)
 	}
+	for k, p := range b.Pixels {
+		if p.Crack && !p.OK {
+			return fmt.Errorf("body %d has a crack mark on pixel %d, which it does not have", b.Key, k)
+		}
+	}
 	return nil
+}
+
+// marked reports whether a crack marked a pixel of b.
+func (b *Body) marked() bool {
+	for _, p := range b.Pixels {
+		if p.Crack {
+			return true
+		}
+	}
+	return false
 }
 
 // Flags of a body as written. Version 3 has no flagStatic.
@@ -153,6 +177,9 @@ func writeExtras(w io.Writer, b *Block, mats *material.Table, version uint16) er
 		if b.Bodies[i].Static && version < 4 {
 			return fmt.Errorf("body %d is static, which a block of version %d cannot hold", b.Bodies[i].Key, version)
 		}
+		if version < 5 && b.Bodies[i].marked() {
+			return fmt.Errorf("body %d has crack marks, which a block of version %d cannot hold", b.Bodies[i].Key, version)
+		}
 		var err error
 		if buf, err = writeBody(bw, &b.Bodies[i], mats, buf); err != nil {
 			return err
@@ -194,7 +221,7 @@ func writeBody(w *bufio.Writer, b *Body, mats *material.Table, buf []byte) ([]by
 	}
 	for k, p := range b.Pixels {
 		at := buf[bodyHead+4*k:]
-		at[0], at[1] = boolByte(p.OK), p.Tone
+		at[0], at[1] = boolByte(p.OK)*pixelHas|boolByte(p.Crack)*pixelCrack, p.Tone
 		binary.LittleEndian.PutUint16(at[2:], p.Damage)
 	}
 	_, _ = w.Write(buf)
@@ -211,7 +238,7 @@ func (d *decoder) readExtras(b *Block, size uint64, ids []int, names []string, v
 	}
 	packed := io.NewSectionReader(d.r, d.r.Size()-int64(d.r.Len()), int64(size))
 	zr := flate.NewReader(packed)
-	e := &extras{r: bufio.NewReader(zr), ids: ids, names: names, flags: flagsOf(version)}
+	e := &extras{r: bufio.NewReader(zr), ids: ids, names: names, flags: flagsOf(version), marks: version >= 5}
 	err := e.read(b, d.fields)
 	if err == nil {
 		if n, end := e.r.Read(make([]byte, 1)); n != 0 || !errors.Is(end, io.EOF) {
@@ -229,12 +256,14 @@ func (d *decoder) readExtras(b *Block, size uint64, ids []int, names []string, v
 }
 
 // extras reads the queued cells and bodies of a block; flags are those a
-// body of its version may have.
+// body of its version may have, and marks is set if its pixels may have
+// crack marks.
 type extras struct {
 	r     *bufio.Reader
 	ids   []int
 	names []string
 	flags uint64
+	marks bool
 }
 
 func (e *extras) uint(size int) (uint64, error) {
@@ -342,10 +371,15 @@ func (e *extras) body() (Body, error) {
 	b.Pixels = make([]Pixel, b.W*b.H)
 	for k := range b.Pixels {
 		p := raw[4*k:]
-		if p[0] > 1 {
+		switch {
+		case !e.marks && p[0] > pixelHas:
 			return Body{}, fmt.Errorf("pixel %d: has is %d, not 0 or 1", k, p[0])
+		case e.marks && p[0] != 0 && p[0] != pixelHas && p[0] != pixelHas|pixelCrack:
+			return Body{}, fmt.Errorf("pixel %d: flags %d, not 0, %d or %d", k, p[0], pixelHas, pixelHas|pixelCrack)
 		}
-		b.Pixels[k] = Pixel{OK: p[0] == 1, Tone: p[1], Damage: binary.LittleEndian.Uint16(p[2:])}
+		b.Pixels[k] = Pixel{
+			OK: p[0]&pixelHas != 0, Crack: p[0]&pixelCrack != 0, Tone: p[1], Damage: binary.LittleEndian.Uint16(p[2:]),
+		}
 	}
 	return b, nil
 }

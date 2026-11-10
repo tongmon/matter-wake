@@ -95,7 +95,7 @@ func (s *System) convertAt(x, y int, m material.ID) error {
 	for _, k := range s.filled {
 		cx, cy := win.x0+int(k)%ww, win.y0+int(k)/ww
 		c, _ := s.w.At(cx, cy)
-		b.px[(cy-box.y0)*b.w+cx-box.x0] = pixel{tone: c.Tone, ok: true}
+		b.px[(cy-box.y0)*b.w+cx-box.x0] = pixel{tone: c.Tone, bits: pixelHeld}
 		s.w.Put(cx, cy, world.Cell{})
 	}
 	b.n = n

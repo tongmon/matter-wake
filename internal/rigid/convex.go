@@ -114,7 +114,7 @@ func (sh *shaper) outline(px []pixel, w, h int) {
 	for k := range t.cls {
 		i, j := k%(w+2)-1, k/(w+2)-1
 		t.cls[k] = world.Open
-		if i >= 0 && j >= 0 && i < w && j < h && px[j*w+i].ok {
+		if i >= 0 && j >= 0 && i < w && j < h && px[j*w+i].ok() {
 			t.cls[k] = world.Fixed
 		}
 	}
@@ -326,7 +326,7 @@ func (sh *shaper) rectangles(px []pixel, w, h int) {
 // w pixels wide, are all there and in no rectangle yet.
 func (sh *shaper) free(px []pixel, w, i0, i1, j int) bool {
 	for k := j*w + i0; k < j*w+i1; k++ {
-		if !px[k].ok || sh.used[k] {
+		if !px[k].ok() || sh.used[k] {
 			return false
 		}
 	}

@@ -23,7 +23,9 @@
 //  4. Step pushes each body with what liquid does to it, as in Noita: the
 //     drag of the liquid cells its Write pushed away (C42) and the
 //     buoyancy of liquid under it (C41). Then it advances Box2D by one
-//     tick.
+//     tick, sets off cracks where bodies of materials that crack hit
+//     something fast, walks the cracks through the cells, and breaks the
+//     bodies they took pixels out of (crack.go).
 //
 // Bodies come from the body tool (Drop) and from the terrain: a dug cell of
 // a material that turns into a body, such as ice, turns the cells of that
@@ -149,7 +151,7 @@ type System struct {
 	// spill holds the cells a body turned into cells puts in the queue.
 	spill []world.Queued
 	// hits and checks are crack's scratch space: the last Step's hits and
-	// the contacts of bodies that crack among them. lost counts, by
+	// the points of bodies that crack among them. lost counts, by
 	// material, the pixels cracks took out (Lost).
 	hits   []physics.Hit
 	checks []crackCheck
@@ -159,6 +161,10 @@ type System struct {
 	settling []int
 	// scratch holds the edges Box2D gives, for drawing (view.go).
 	scratch []physics.Edge
+	// cracks marks, by material, the materials that crack, and movers
+	// lists the cracks walking, in the order they were made (crack.go).
+	cracks []bool
+	movers []mover
 }
 
 // New returns a System for the bodies of w, whose cells are of mats. It
@@ -169,11 +175,12 @@ func New(w *world.World, mats *material.Table) (*System, error) {
 		return nil, fmt.Errorf("rigid: %w", err)
 	}
 	s := &System{
-		w: w, phys: phys, mats: mats, kinds: make([]material.Kind, mats.Len()),
+		w: w, phys: phys, mats: mats, kinds: make([]material.Kind, mats.Len()), cracks: make([]bool, mats.Len()),
 		turned: make([]int, mats.Len()), lost: make([]int, mats.Len()),
 	}
 	for i := range s.kinds {
-		s.kinds[i] = mats.Def(material.ID(i)).Kind
+		d := mats.Def(material.ID(i))
+		s.kinds[i], s.cracks[i] = d.Kind, d.Cracks
 	}
 	cols := (w.Width() + world.ChunkSize - 1) / world.ChunkSize
 	rows := (w.Height() + world.ChunkSize - 1) / world.ChunkSize
@@ -403,11 +410,22 @@ func (s *System) sync() {
 
 // Step stops the bodies that may reach a block not in memory and lets go
 // of those that no longer may (freeze), pushes each other dynamic body with
-// what liquid does to it (push), advances Box2D by one tick, then cracks
-// the bodies of materials that crack where they hit something fast
-// (crack.go) and breaks them (Break): pieces too small to be bodies, and
-// powder of a shattered body with nowhere to go, count as lost.
+// what liquid does to it (push), advances Box2D by one tick, then sets off
+// cracks where bodies of materials that crack hit something fast, walks
+// the cracks (crack.go) and breaks the bodies they took pixels out of
+// (Break): pieces too small to be bodies, and powder of a shattered body
+// with nowhere to go, count as lost.
 func (s *System) Step() error {
+	if err := s.advance(); err != nil {
+		return err
+	}
+	s.crack()
+	s.moveCracks()
+	return s.breakCracked()
+}
+
+// advance runs Step up to Box2D's step.
+func (s *System) advance() error {
 	s.freeze()
 	for i := range s.bodies {
 		b := &s.bodies[i]
@@ -419,11 +437,14 @@ func (s *System) Step() error {
 		b.haveV = false
 	}
 	s.phys.Step(tickSeconds, subSteps)
-	s.crack()
-	// The bodies cracks took pixels out of split, or shatter, before the
-	// tick ends: a block that leaves memory or a save before the next one
-	// records them as they are (Codex review). The pieces too small to be
-	// bodies are lost with the crack.
+	return nil
+}
+
+// breakCracked breaks the bodies cracks took pixels out of. They split, or
+// shatter, before the tick ends: a block that leaves memory or a save
+// before the next one records them as they are (Codex review). The pieces
+// too small to be bodies are lost with the crack.
+func (s *System) breakCracked() error {
 	if !s.broken {
 		return nil
 	}

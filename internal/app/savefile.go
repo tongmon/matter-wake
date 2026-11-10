@@ -230,7 +230,7 @@ func readSession(dir string, tick uint32, mats *material.Table) (*game.Resume, e
 		return nil, fmt.Errorf("app: %s: %w", path, err)
 	}
 	r.Slot, r.CameraX, r.CameraY, r.HasCamera, r.Blocks = p.Slot, p.CameraX, p.CameraY, true, p.Blocks
-	r.NextKey, r.Settle = p.NextKey, p.Settle
+	r.NextKey, r.Settle, r.Cracks = p.NextKey, p.Settle, p.Cracks
 	if s := p.Stream; s != nil {
 		r.Stream = &game.StreamState{Area: s.Area, Requested: true, LastCheck: s.LastCheck, Interval: s.Interval}
 	}
@@ -263,6 +263,7 @@ func writeSave(dir string, g *game.Game, camX, camY int, flush func() error) err
 	}
 	p := &save.Session{
 		CameraX: camX, CameraY: camY, Slot: g.Slot(), Held: map[string]int{}, Blocks: g.ResidentBlocks(), NextKey: g.NextKey(),
+		Cracks: g.Cracks(nil),
 	}
 	if s := g.StreamState(); s.Requested {
 		p.Stream = &save.SessionStream{Area: s.Area, LastCheck: s.LastCheck, Interval: s.Interval}
