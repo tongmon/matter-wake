@@ -33,6 +33,27 @@ func randomQueued(seed uint64, n, m int) []world.Queued {
 	return q
 }
 
+// randomParticles returns n random particles of the first m materials,
+// every field any bits a format must keep.
+func randomParticles(seed uint64, n, m int) []world.Particle {
+	s := rng.New(seed)
+	ps := make([]world.Particle, n)
+	for i := range ps {
+		ps[i] = world.Particle{
+			X: int64(s.Uint64()), Y: int64(s.Uint64()), LX: int64(s.Uint64()), LY: int64(s.Uint64()),
+			VX: int32(s.Uint32()), VY: int32(s.Uint32()),
+			Cell: world.Cell{
+				Mat: material.ID(s.IntN(m)), Tone: uint8(s.Uint32()), Falling: s.Bool(), Last: s.Uint32(),
+				Vy: fixed.Q8(int16(s.Uint32())), Ax: fixed.Q8(int16(s.Uint32())), Damage: uint16(s.Uint32()),
+				Rest: uint8(s.IntN(world.SettleTicks + 1)),
+			},
+			Seed: s.Uint64(), Life: int32(s.Uint32()), Density: uint8(s.Uint32()), Pass: int8(s.Uint32()),
+			Flags: world.ParticleFlags(s.IntN(int(world.ParticleFlagsAll) + 1)),
+		}
+	}
+	return ps
+}
+
 // randomBodies returns n bodies of material m with random images, some
 // pixels gone, random transforms and velocities, every float any bits.
 func randomBodies(seed uint64, n int, m material.ID) []Body {
@@ -71,16 +92,17 @@ func woodTable(tb testing.TB, names ...string) *material.Table {
 	return t
 }
 
-// A block keeps the cells that wait to go back and the bodies it owns,
-// every field to the bit, and maps their materials by name as it does its
-// cells'.
+// A block keeps the cells that wait to go back, the bodies it owns and the
+// particles flying in it, every field to the bit, and maps their
+// materials by name as it does its cells'.
 func TestBlockKeepsQueuedCellsAndBodies(t *testing.T) {
 	saved := woodTable(t, "stone", "sand", "water")
 	now := woodTable(t, "water", "oil", "sand", "stone")
 	want := &Block{
-		Cells:  randomBlock(5, saved.Len()-1),
-		Queued: randomQueued(6, 700, saved.Len()-1),
-		Bodies: randomBodies(7, 50, saved.MustLookup("wood")),
+		Cells:     randomBlock(5, saved.Len()-1),
+		Queued:    randomQueued(6, 700, saved.Len()-1),
+		Bodies:    randomBodies(7, 50, saved.MustLookup("wood")),
+		Particles: randomParticles(8, 300, saved.Len()),
 	}
 	got, err := DecodeBlock(bytes.NewReader(encodeAll(t, want, saved)), now)
 	if err != nil {
@@ -129,6 +151,15 @@ func TestBlockKeepsQueuedCellsAndBodies(t *testing.T) {
 		b.Left, b.Top, b.X, b.Y, b.C, b.S, b.VX, b.VY, b.Spin = 0, 0, 0, 0, 0, 0, 0, 0, 0
 		if !reflect.DeepEqual(g, b) {
 			t.Fatalf("body %d is %+v after the round trip, want %+v", i, g, b)
+		}
+	}
+	if len(got.Particles) != len(want.Particles) {
+		t.Fatalf("%d particles after the round trip, want %d", len(got.Particles), len(want.Particles))
+	}
+	for i, p := range want.Particles {
+		p.Cell.Mat = moved(p.Cell.Mat)
+		if got.Particles[i] != p {
+			t.Fatalf("particle %d is %+v after the round trip, want %+v", i, got.Particles[i], p)
 		}
 	}
 	// A body of a material the table lacks cannot be read.
@@ -239,6 +270,41 @@ func TestBlockReadsVersion4(t *testing.T) {
 	binary.LittleEndian.PutUint16(data[len(blockMagic):], 4)
 	if _, err := DecodeBlock(bytes.NewReader(rechecksum(data)), mats); err == nil || !strings.Contains(err.Error(), "has is") {
 		t.Fatalf("a version 4 block with a crack mark: error %v", err)
+	}
+}
+
+// A block of version 5, from before particles were saved, reads back with
+// none, and cannot hold one.
+func TestBlockReadsVersion5(t *testing.T) {
+	mats := woodTable(t, "stone", "sand", "water")
+	bodies := randomBodies(12, 20, mats.MustLookup("wood"))
+	var buf bytes.Buffer
+	if err := encodeBlock(&buf, &Block{Cells: new(world.Block), Bodies: bodies}, mats, 5); err != nil {
+		t.Fatal(err)
+	}
+	got, err := DecodeBlock(&buf, mats)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Bodies) != len(bodies) || got.Particles != nil {
+		t.Fatalf("a version 5 block read back %d bodies and %d particles, want %d and none",
+			len(got.Bodies), len(got.Particles), len(bodies))
+	}
+	withParticles := &Block{Cells: new(world.Block), Particles: randomParticles(13, 3, mats.Len())}
+	if err := encodeBlock(&bytes.Buffer{}, withParticles, mats, 5); err == nil {
+		t.Fatal("a version 5 block took particles")
+	}
+	// The same block written as version 6 and called version 5.
+	data := encodeAll(t, withParticles, mats)
+	binary.LittleEndian.PutUint16(data[len(blockMagic):], 5)
+	if _, err := DecodeBlock(bytes.NewReader(rechecksum(data)), mats); err == nil || !strings.Contains(err.Error(), "more data") {
+		t.Fatalf("a version 5 block with particles: error %v", err)
+	}
+	// A particle with flags no particle has.
+	bad := &Block{Cells: new(world.Block), Particles: randomParticles(14, 1, mats.Len())}
+	bad.Particles[0].Flags = 0x80
+	if err := encodeBlock(&bytes.Buffer{}, bad, mats, BlockVersion); err == nil {
+		t.Fatal("a block took a particle with flags 0x80")
 	}
 }
 

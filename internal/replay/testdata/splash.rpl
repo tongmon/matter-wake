@@ -1,0 +1,65 @@
+matter-wake-replay 7
+# Splashes (docs/briefs/particles.md). Creative mode builds a stone basin
+# on the floor between the ledges and fills it with water. Once the water
+# has settled, a box thrown down at 10 m/s hits it: the water it hits
+# flies up as particles that pass up through the box and come down on
+# the pool and on the box. A small box thrown down at 30 m/s splashes
+# harder, a plank turned 30 degrees lands on its edge, and a box thrown
+# down at 15 m/s onto the sand heap throws the sand up. The conservation
+# check counts the cells in flight.
+seed 1
+size 480 270
+scene sandbox
+view 480 270
+stream 64 4 512 12 60
+budget 250000
+tool 10 2000 2 square
+body wood 16 12 0 0 0
+mode creative
+slots sand water stone
+materials 221cda6d48a9dbbf
+ticks 720
+
+# The basin's walls, 5 cells thick, from the floor up to row 200.
+10 188 264 P 3 0 0
+11 188 259 P 0 0 0
+12 188 254 P 0 0 0
+13 188 249 P 0 0 0
+14 188 244 P 0 0 0
+15 188 239 P 0 0 0
+16 188 234 P 0 0 0
+17 188 229 P 0 0 0
+18 188 224 P 0 0 0
+19 188 219 P 0 0 0
+20 188 214 P 0 0 0
+21 188 209 P 0 0 0
+22 188 204 P 0 0 0
+23 284 264 P 0 0 0
+24 284 259 P 0 0 0
+25 284 254 P 0 0 0
+26 284 249 P 0 0 0
+27 284 244 P 0 0 0
+28 284 239 P 0 0 0
+29 284 234 P 0 0 0
+30 284 229 P 0 0 0
+31 284 224 P 0 0 0
+32 284 219 P 0 0 0
+33 284 214 P 0 0 0
+34 284 209 P 0 0 0
+35 284 204 P 0 0 0
+36 284 200 - 0 0 0
+# Water poured into it.
+37 236 215 P 2 0 0 brush 8 circle
+160 236 215 - 0 0 0 mode play
+# A box thrown down at 10 m/s into the pool.
+260 236 60 B 0 0 0 body wood 16 12 0 0 100
+261 236 60 - 0 0 0
+# A small box thrown down at 30 m/s.
+400 208 60 B 0 0 0 body wood 8 6 0 0 300
+401 208 60 - 0 0 0
+# A plank turned 30 degrees, thrown down at 10 m/s.
+500 262 60 B 0 0 0 body wood 24 4 30 0 100
+501 262 60 - 0 0 0
+# A box thrown down at 15 m/s onto the sand heap.
+600 120 40 B 0 0 0 body wood 12 8 0 0 150
+601 120 40 - 0 0 0

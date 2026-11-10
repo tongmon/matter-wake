@@ -49,6 +49,8 @@ type Renderer struct {
 	path                  vector.Path
 	stroke                vector.StrokeOptions
 	drawPath              vector.DrawPathOptions
+	// particles is DrawWorld's buffer of the particles flying.
+	particles []world.Particle
 }
 
 // New returns a renderer for the cells of mats.
@@ -62,7 +64,8 @@ func New(mats *material.Table) *Renderer {
 }
 
 // DrawWorld draws the cells of w that the camera at (camX, camY) sees, one
-// pixel per cell, over the background; dst is the view. w must be the
+// pixel per cell, over the background, and then the particles flying, each
+// a pixel of its cell's color where it is; dst is the view. w must be the
 // world the renderer was made for, since the renderer keeps what it drew
 // of it. Cells of blocks not in memory are left as background.
 func (r *Renderer) DrawWorld(dst *ebiten.Image, w *world.World, camX, camY int) {
@@ -84,6 +87,25 @@ func (r *Renderer) DrawWorld(dst *ebiten.Image, w *world.World, camX, camY int) 
 			r.op.GeoM.Translate(float64(x-camX), float64(y-camY))
 			dst.DrawImage(c.img, &r.op)
 		}
+	}
+	r.drawParticles(dst, w, camX, camY)
+}
+
+// drawParticles draws the particles of w the camera at (camX, camY) sees.
+func (r *Renderer) drawParticles(dst *ebiten.Image, w *world.World, camX, camY int) {
+	vw, vh := dst.Bounds().Dx(), dst.Bounds().Dy()
+	r.particles = w.AppendParticles(r.particles[:0])
+	for i := range r.particles {
+		p := &r.particles[i]
+		x, y := p.At()
+		if x -= camX; x < 0 || x >= vw {
+			continue
+		}
+		if y -= camY; y < 0 || y >= vh {
+			continue
+		}
+		c := r.pal.RGBA(p.Cell)
+		vector.FillRect(dst, float32(x), float32(y), 1, 1, color.RGBA{R: c[0], G: c[1], B: c[2], A: c[3]}, false)
 	}
 }
 
@@ -154,8 +176,9 @@ type Status struct {
 // DrawOverlay draws the brush outline at the cursor, a status line with
 // the camera, the blocks in memory, how many chunks the last tick ran, the
 // bodies in memory and how many of them wait frozen for a block, the
-// cracks walking through them, the cells waiting to be put back, and what
-// the inventory holds of each slot's material, and a line of keys.
+// cracks walking through them, the cells waiting to be put back, the
+// particles flying, and what the inventory holds of each slot's material,
+// and a line of keys.
 func (r *Renderer) DrawOverlay(dst *ebiten.Image, g *game.Game, s *Status) {
 	sx, sy := float32(s.CursorX-s.CameraX), float32(s.CursorY-s.CameraY)
 	switch {
@@ -190,7 +213,7 @@ func (r *Renderer) DrawOverlay(dst *ebiten.Image, g *game.Game, s *Status) {
 		first,
 		{
 			fmt.Sprintf("%d bodies (%d frozen)", g.Bodies(), g.Frozen()), fmt.Sprintf("%d cracks", g.Walking()),
-			fmt.Sprintf("%d queued", w.QueueLen()),
+			fmt.Sprintf("%d queued", w.QueueLen()), fmt.Sprintf("%d particles", w.Particles()),
 		},
 		held,
 		keys,

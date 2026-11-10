@@ -621,6 +621,7 @@ func TestIceAndGlassTurnAsTheToolDigs(t *testing.T) {
 		n := make([]int, tab.Len())
 		g.world.Counts(n)
 		g.world.Queued(n)
+		g.world.Flying(n)
 		made, turned, pixels := make([]int, tab.Len()), make([]int, tab.Len()), make([]int, tab.Len())
 		g.Made(made)
 		g.Turned(turned)

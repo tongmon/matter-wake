@@ -24,9 +24,27 @@ const (
 
 // Salts that key a body's random choices apart from the world's.
 const (
-	toneSalt = 0x3c6ef372fe94f82b
-	sandSalt = 0xa54ff53a5f1d36f1
+	toneSalt   = 0x3c6ef372fe94f82b
+	sandSalt   = 0xa54ff53a5f1d36f1
+	splashSalt = 0x5be0cd19137e2179
 )
+
+// How a body splashes what it pushes away, Noita's rule (C134 5.1e in
+// docs/briefs/particles.md): a body moving down faster than splashSpeed,
+// in cells per second, throws each liquid or powder cell in its way back
+// against its motion as a particle, at splashSlow to splashSlow +
+// splashSpread of its speed, turned up to splashTurn radians either way.
+// Slower, the cells go into the queue of cells to put back. 🧪 Noita's.
+const (
+	splashSpeed  = 25
+	splashSlow   = 0.5
+	splashSpread = 0.25
+	splashTurn   = 0.5
+)
+
+// perTick turns cells per second into a particle's 1/world.ParticleOne
+// cells per tick.
+const perTick = float32(world.ParticleOne) / 60
 
 // body is a rigid body: its Box2D handle, its image of w × h pixels of one
 // material, some of which may be gone, and the cells it was last written
@@ -337,7 +355,8 @@ func abs32(f float32) float32 {
 // cell's offset from the body's center in cells, for its speed. Air and
 // the body's own cells take the pixel. Static terrain keeps its cell, as
 // does a powder at rest unless it has settled and the body hits it hard
-// enough (givesWay). Liquids and other powders are pushed into the
+// enough (givesWay). Liquids and other powders are pushed away (splash):
+// thrown off as particles if the body moves down fast, or else into the
 // world's queue of cells to put back; a liquid drags on the body as it
 // goes (C42, push). Another body's cell goes to the body
 // with the higher key: the one written later, which takes it. Either way
@@ -365,17 +384,38 @@ func (s *System) claim(b *body, slot uint16, k, x, y int, rx, ry float32) bool {
 		if c.Resting() && !s.givesWay(b, k, c, rx, ry) {
 			return false
 		}
-		s.w.Displace(x, y)
+		s.splash(b, x, y)
 	case material.Liquid:
 		b.dragN++
 		b.dragX += rx
 		b.dragY += ry
 		b.dragR2 += float32(rx*rx) + float32(ry*ry)
-		s.w.Displace(x, y)
+		s.splash(b, x, y)
 	}
 	px := b.px[k]
 	s.w.Put(x, y, world.BodyCell(b.mat, px.tone, px.shade(), slot, uint16(k)))
 	return true
+}
+
+// splash takes the liquid or powder cell at (x, y), in b's way, out of the
+// grid: if b moves down faster than splashSpeed, into a particle thrown
+// back against b's motion, as Noita throws it (C134 5.1e); otherwise into
+// the queue of cells to put back. The draws come from a hash of the cell
+// and the tick, so the order cells are written in does not matter.
+func (s *System) splash(b *body, x, y int) {
+	s.velocity(b)
+	vx, vy := float32(b.v.X*cellsPerMeter), float32(b.v.Y*cellsPerMeter)
+	if !(vy > splashSpeed) {
+		s.w.Displace(x, y)
+		return
+	}
+	r := rng.New(rng.Hash3(s.w.Seed()^splashSalt, uint64(s.w.Tick()), uint64(x), uint64(y)))
+	q := physics.MakeRot(float32(unit(&r)*(2*splashTurn)) - splashTurn)
+	k := float32(unit(&r)*splashSpread) + splashSlow
+	ux, uy := -float32(vx*k), -float32(vy*k)
+	px := float32(q.C*ux) - float32(q.S*uy)
+	py := float32(q.S*ux) + float32(q.C*uy)
+	s.w.Launch(x, y, int32(float32(px*perTick)), int32(float32(py*perTick)), r.Uint64())
 }
 
 // givesWay reports whether resting powder c gives way to pixel k of b, at

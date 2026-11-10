@@ -131,3 +131,15 @@ func BenchmarkFill(b *testing.B) {
 		p.Fill(dst, cells)
 	}
 }
+
+// A particle's color is its cell's, as Fill draws it.
+func TestRGBAMatchesFill(t *testing.T) {
+	p := testPalette(t)
+	for _, c := range []world.Cell{{Mat: 1, Tone: 77, Damage: world.DamageScale / 3}, {Mat: 2, Tone: 9}, {}} {
+		var want [4]byte
+		p.Fill(want[:], []world.Cell{c})
+		if got := p.RGBA(c); got != want {
+			t.Fatalf("RGBA(%+v) = %v, Fill draws %v", c, got, want)
+		}
+	}
+}

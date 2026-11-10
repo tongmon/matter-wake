@@ -175,11 +175,13 @@ func coldIDs(s *System) cold {
 }
 
 // cells returns how many cells of the world hold each material of
-// testTable, plus the cells waiting in its queue.
+// testTable, plus the cells waiting in its queue and those flying as
+// particles.
 func cells(w *world.World) []int {
 	c := make([]int, testMaterials)
 	w.Counts(c)
 	w.Queued(c)
+	w.Flying(c)
 	return c
 }
 

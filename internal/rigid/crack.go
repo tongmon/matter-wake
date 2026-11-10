@@ -8,6 +8,7 @@ import (
 	"github.com/tongmon/matter-wake/internal/material"
 	"github.com/tongmon/matter-wake/internal/physics"
 	"github.com/tongmon/matter-wake/internal/rng"
+	"github.com/tongmon/matter-wake/internal/world"
 )
 
 // Collision cracks and sleep conversion (docs/briefs/ice-glass.md, C138,
@@ -74,7 +75,13 @@ const crackShade = math.MaxUint16
 const (
 	crackSalt = 0x510e527fade682d1
 	pathSalt  = 0x9b05688c2b3e6c1f
+	speckSalt = 0xcbbb9d5dc1059ed8
 )
+
+// speckSpeed is how fast, in cells per second, a cell a crack takes out
+// flies off as a speck: up to half of it either way along each axis
+// (C139 4.2). 🧪 Noita's.
+const speckSpeed = 15.0
 
 // crackCheck is a point where a body of a material that cracks hit
 // something: the body's key, the point and the direction into the body, in
@@ -329,14 +336,28 @@ func (s *System) crumble(slot int) {
 }
 
 // takeOut takes pixel k out of b, at slot, for good: it leaves the image
-// and the cells that show it, and counts as lost. Step breaks b after the
-// cracks.
+// and the cells that show it, which fly off as specks, and counts as lost.
+// Step breaks b after the cracks.
 func (s *System) takeOut(b *body, slot, k int) {
 	b.n--
 	b.dirty, s.broken = true, true
 	s.lost[b.mat]++
 	s.showDamage(b, uint16(slot), uint16(k), true)
 	b.px[k] = pixel{}
+}
+
+// speck throws c, a cell at (x, y) that shows pixel k of b and that a
+// crack takes out, off as a speck that only shows it, as Noita does (C139
+// 4.2): its velocity along each axis is U × speckSpeed − speckSpeed/2 cells
+// per second. The draws come from a hash of the body, the pixel, the cell
+// and the tick.
+func (s *System) speck(b *body, k uint16, x, y int, c world.Cell) {
+	r := rng.New(rng.Hash3(s.w.Seed()^speckSalt, uint64(s.w.Tick()), uint64(b.key)<<16|uint64(k),
+		uint64(uint32(x))<<32|uint64(uint32(y))))
+	vx := float32(unit(&r)*speckSpeed) - speckSpeed/2
+	vy := float32(unit(&r)*speckSpeed) - speckSpeed/2
+	look := world.Cell{Mat: c.Mat, Tone: c.Tone, Damage: c.Damage}
+	s.w.Spray(look, x, y, int32(float32(vx*perTick)), int32(float32(vy*perTick)), r.Uint64())
 }
 
 // Walking returns how many cracks walk through the cells.

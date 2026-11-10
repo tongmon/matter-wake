@@ -33,9 +33,10 @@
 //
 // Between ticks, rigid bodies (internal/rigid) write their pixels as cells
 // of solid materials (BodyCell, Put), which the cell rules never move. A
-// cell in a body's way waits in a queue (Displace), and after each tick's
-// cell updates the queue puts what it can back, searching up from where
-// each cell was (reinsert.go).
+// cell in a body's way waits in a queue (Displace), or flies off as a
+// particle if the body hits it hard (Launch), and after each tick's cell
+// updates the particles move and the queue puts what it can back,
+// searching up from where each cell was (reinsert.go, particles.go).
 package world
 
 import (
@@ -214,6 +215,9 @@ type World struct {
 	// (reinsert.go).
 	fresh, retry, spare []Queued
 	retryBudget         int
+	// particles are the cells and specks flying out of the grid, in the
+	// order they move (particles.go).
+	particles []Particle
 	// scanAll makes every chunk scan all its cells every tick, for tests
 	// that check that sleeping changes nothing.
 	scanAll bool
@@ -439,8 +443,9 @@ func (w *World) tone(x, y int) uint8 {
 // Step advances the world by one tick. It runs the chunks whose change
 // rectangle is not empty, phase by phase, and after each phase merges what
 // the runs marked in the chunks around them, so a chunk that runs later in
-// the tick already sees it. Then it tries to put back the cells waiting in
-// the queue (Displace).
+// the tick already sees it. Then it moves the particles (Launch, Spray),
+// whose cells that stop join the queue, and tries to put back the cells
+// waiting in the queue (Displace).
 func (w *World) Step() {
 	w.Flush()
 	w.tick++
@@ -465,6 +470,7 @@ func (w *World) Step() {
 		}
 		end = start
 	}
+	w.moveParticles()
 	w.reinsertQueued()
 }
 

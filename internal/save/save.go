@@ -34,6 +34,14 @@
 //	                            float32 bits
 //	                          each pixel, row by row: has (0 or 1) and
 //	                            tone, uint8, and damage, uint16
+//	                        particles (version 6 on): uint32 count, then
+//	                          each:
+//	                          x, y, lx, ly: int64, in 1/65536 cells
+//	                          vx, vy: int32, in 1/65536 cells per tick
+//	                          seed: uint64
+//	                          life: int32
+//	                          density: uint8, pass: int8, flags: uint8
+//	                          each field of its cell, as above
 //	checksum              uint32, CRC-32 (IEEE) of everything before it
 //
 // Integers are little-endian. Cells and bodies name their material by its
@@ -72,9 +80,10 @@ import (
 // BlockVersion is the block layout this build writes. It also reads
 // version 1, which had no rest field: its cells read back with Rest 0, so
 // resting powders count their ticks at rest again; version 2, which held
-// no queued cells or bodies; version 3, whose bodies were all dynamic; and
-// version 4, whose bodies' pixels had no crack marks.
-const BlockVersion = 5
+// no queued cells or bodies; version 3, whose bodies were all dynamic;
+// version 4, whose bodies' pixels had no crack marks; and version 5, which
+// held no particles.
+const BlockVersion = 6
 
 // MetaVersion is the world header layout this build reads and writes.
 const MetaVersion = 1

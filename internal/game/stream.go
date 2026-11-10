@@ -228,9 +228,13 @@ func (g *Game) loadBlock(bx, by int) error {
 }
 
 // restore puts back the cells taken from block (bx, by) that wait to go
-// back, and makes its bodies again, once its cells are in memory.
+// back and the particles that flew in it, and makes its bodies again, once
+// its cells are in memory.
 func (g *Game) restore(bx, by int, b *save.Block) error {
 	if err := g.world.Requeue(b.Queued); err != nil {
+		return fmt.Errorf("game: block (%d, %d): %w", bx, by, err)
+	}
+	if err := g.world.Relaunch(b.Particles); err != nil {
 		return fmt.Errorf("game: block (%d, %d): %w", bx, by, err)
 	}
 	if err := g.bodies.Load(bx, by, b.Bodies); err != nil {
@@ -241,11 +245,12 @@ func (g *Game) restore(bx, by int, b *save.Block) error {
 
 // unload takes block (bx, by) out of memory into the store. The bodies that
 // touch it go first, whole, so none of their pixels is saved as a cell or
-// left behind; then the cells taken from it that wait to go back; then its
-// cells.
+// left behind; then the cells taken from it that wait to go back and the
+// particles flying in it; then its cells.
 func (g *Game) unload(bx, by int) error {
 	out := save.Block{Bodies: g.bodies.Unload(bx, by, nil)}
 	out.Queued = g.world.TakeQueued(bx, by, nil)
+	out.Particles = g.world.TakeParticles(bx, by, nil)
 	cells, err := g.world.UnloadBlock(bx, by)
 	if err != nil {
 		return fmt.Errorf("game: %w", err)

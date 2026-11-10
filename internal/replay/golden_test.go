@@ -22,7 +22,8 @@ const traceEvery = 30
 // TestGoldenReplays plays every testdata/*.rpl with the testdata materials
 // and compares its trace with NAME.golden. The trace pins each material's
 // cell count, what the inventory holds, how many cells wait in the queue
-// to be put back, how many bodies there are and the world checksum. CI runs it
+// to be put back, how many particles fly, how many bodies there are and
+// the world checksum, which covers the particles too. CI runs it
 // on Windows, macOS and Linux, so a passing golden means the replay gives
 // the same world on all three. After an intended change to the simulation
 // rules, rerun go test ./internal/replay/ -update and review the golden
@@ -79,6 +80,10 @@ func TestGoldenReplays(t *testing.T) {
 			"bodies apart, crack %d pixels out and turn %d pixels back into terrain; each must happen",
 			all.solidified, all.shattered, all.static, all.cracked, all.settled)
 	}
+	if all.flying[material.Liquid] == 0 || all.flying[material.Powder] == 0 || all.specks == 0 {
+		t.Fatalf("the replays end %d ticks with liquid flying, %d with powder flying and %d with specks; each must happen",
+			all.flying[material.Liquid], all.flying[material.Powder], all.specks)
+	}
 }
 
 // coverage counts what a replay's inputs did: broken counts the bodies
@@ -95,6 +100,10 @@ type coverage struct {
 	dug [material.Solid + 1]int
 	// queued counts the ticks that ended with cells in the queue.
 	queued int
+	// flying counts the ticks that ended with cells flying as particles,
+	// by their material's kind, and specks those that ended with specks.
+	flying [material.Solid + 1]int
+	specks int
 	// changed counts the ticks that changed the brush, the mode and the
 	// body tool to something new.
 	changed [3]int
@@ -113,8 +122,12 @@ func (c *coverage) add(o *coverage) {
 	c.cracked += o.cracked
 	c.settled += o.settled
 	c.queued += o.queued
+	c.specks += o.specks
 	for k, n := range o.dug {
 		c.dug[k] += n
+	}
+	for k, n := range o.flying {
+		c.flying[k] += n
 	}
 	for k, n := range o.changed {
 		c.changed[k] += n
@@ -123,10 +136,11 @@ func (c *coverage) add(o *coverage) {
 
 // trace plays r with tab on the given number of workers. It writes a line
 // with each material's cell count, the inventory, the cells in the queue,
-// the bodies and the checksum at tick 0, every traceEvery ticks and at the
-// end. In the rooms, after every tick it checks that nothing made or
-// destroyed a cell: each material's cells in the world, in the queue and
-// in the inventory are what they were at the start, plus what creative
+// the particles, the bodies and the checksum at tick 0, every traceEvery
+// ticks and at the end. In the rooms, after every tick it checks that
+// nothing made or destroyed a cell: each material's cells in the world, in
+// the queue, flying as particles and in the inventory are what they were
+// at the start, plus what creative
 // mode made (game.Game.Made), from whichever tick it was turned on, less
 // what turned into another material (game.Game.Turned): terrain dug into
 // turning into a body, a body shattering into powder and, in the terrain,
@@ -155,7 +169,8 @@ func trace(t *testing.T, r *Replay, tab *material.Table, workers int) (string, c
 		for id := 1; id < tab.Len(); id++ {
 			fmt.Fprintf(&b, " %s %d", tab.Def(material.ID(id)).Name, g.Inventory(material.ID(id)))
 		}
-		fmt.Fprintf(&b, " queued %d bodies %d checksum %016x\n", w.QueueLen(), g.Bodies(), w.Checksum())
+		fmt.Fprintf(&b, " queued %d particles %d bodies %d checksum %016x\n",
+			w.QueueLen(), w.Particles(), g.Bodies(), w.Checksum())
 	}
 	line()
 	held := make([]int, tab.Len())
@@ -202,6 +217,7 @@ func trace(t *testing.T, r *Replay, tab *material.Table, workers int) (string, c
 		if w.QueueLen() > 0 {
 			cov.queued++
 		}
+		cov.fly(g, tab)
 		// In the terrain, cells come and go with the blocks in memory.
 		if r.Scene != game.SceneTerrain {
 			if got := totals(g, tab); !slices.Equal(got, start) {
@@ -237,6 +253,23 @@ func (c *coverage) count(was, now *settings) {
 		if changed {
 			c.changed[k]++
 		}
+	}
+}
+
+// fly counts whether the tick g just ran ended with cells of each kind
+// flying, and with specks.
+func (c *coverage) fly(g *game.Game, tab *material.Table) {
+	n := make([]int, tab.Len())
+	g.World().Flying(n)
+	cells := 0
+	for id, k := range n {
+		if k > 0 {
+			c.flying[tab.Def(material.ID(id)).Kind]++
+			cells += k
+		}
+	}
+	if g.World().Particles() > cells {
+		c.specks++
 	}
 }
 
@@ -302,14 +335,16 @@ func staticBodies(g *game.Game) (n, pixels int) {
 	return n, pixels
 }
 
-// totals returns each material's cells in the world and in its queue plus
-// what the inventory holds of it, less what creative mode made and what
-// turned into it from another material, plus what cracks took out of it,
-// and for a solid the pixels of the bodies' images instead of its cells.
-// Air is left out: it is what digging and bodies leave.
+// totals returns each material's cells in the world, in its queue and
+// flying as particles plus what the inventory holds of it, less what
+// creative mode made and what turned into it from another material, plus
+// what cracks took out of it, and for a solid the pixels of the bodies'
+// images instead of its cells. Air is left out: it is what digging and
+// bodies leave.
 func totals(g *game.Game, tab *material.Table) []int {
 	n := countCells(g, tab)
 	g.World().Queued(n)
+	g.World().Flying(n)
 	n[material.Air] = 0
 	made, turned, lost := make([]int, len(n)), make([]int, len(n)), make([]int, len(n))
 	g.Made(made)

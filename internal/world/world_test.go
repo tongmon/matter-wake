@@ -168,11 +168,13 @@ func TestSleepMatchesScanningEverything(t *testing.T) {
 			for _, w := range []*World{sleeping, scanning} {
 				scatter(w, ids, 13)
 			}
+			flew := 0
 			for tick := range 500 {
 				for _, w := range []*World{sleeping, scanning} {
 					edit(w, ids, tick)
 					w.Step()
 				}
+				flew = max(flew, sleeping.Particles())
 				if a, b := sleeping.Checksum(), scanning.Checksum(); a != b {
 					t.Fatalf("tick %d: the sleeping world's checksum is %#x, the scanned world's %#x",
 						sleeping.Tick(), a, b)
@@ -181,16 +183,28 @@ func TestSleepMatchesScanningEverything(t *testing.T) {
 			if sleeping.Awake() >= scanning.Awake() {
 				t.Fatalf("at the end %d chunks are awake, as many as the %d a full scan runs", sleeping.Awake(), scanning.Awake())
 			}
+			if flew < 30 {
+				t.Fatalf("at most %d particles flew; the edits must throw some", flew)
+			}
 		})
 	}
 }
 
 // edit changes w before the given tick the way the player's tools do,
 // mostly where things have settled: it digs through the ledges, drops sand
-// and water, and wears cells down.
+// and water, and wears cells down; and the way bodies do: it throws cells
+// up out of the grid as particles, and specks.
 func edit(w *World, ids testIDs, tick int) {
 	ledge := w.Height() * 6 / 10
 	switch tick {
+	case 150, 270:
+		for x := range 40 {
+			w.Launch(w.Width()/4+x, ledge-1-x%3, perSecond(x%9-4), perSecond(-30-5*x), uint64(x))
+		}
+	case 160:
+		for x := range 20 {
+			w.Spray(Cell{Mat: ids.wood}, w.Width()/2+x, 10, perSecond(x%5-2), perSecond(x%3), uint64(x))
+		}
 	case 200:
 		w.Paint(w.Width()/2, ledge, 5, material.Air, false)
 	case 230:

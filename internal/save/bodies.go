@@ -17,13 +17,15 @@ import (
 
 // Block is what a block of a big world holds while it is out of memory:
 // its cells, the cells taken from them that wait in the world's queue to
-// go back (world.TakeQueued), and the rigid bodies that left with it
-// (Body). A block
-// saved before version 3 holds cells alone.
+// go back (world.TakeQueued), the rigid bodies that left with it (Body),
+// and the particles flying in it (world.TakeParticles). A block saved
+// before version 3 holds cells alone, and one before version 6 no
+// particles.
 type Block struct {
-	Cells  *world.Block
-	Queued []world.Queued
-	Bodies []Body
+	Cells     *world.Block
+	Queued    []world.Queued
+	Bodies    []Body
+	Particles []world.Particle
 }
 
 // Body is a rigid body out of memory (internal/rigid): what a block keeps
@@ -89,6 +91,10 @@ const maxBodies = 1 << 16
 // times its cells, so it only stops damage from claiming billions.
 const maxQueued = 1 << 24
 
+// maxParticles caps the particles a block may hold, as maxQueued does the
+// cells: more than the world lets fly at once.
+const maxParticles = 1 << 20
+
 // check reports what is wrong with b for a block of mats, or nil.
 func (b *Body) check(mats *material.Table) error {
 	switch {
@@ -140,13 +146,23 @@ func flagsOf(version uint16) uint64 {
 // fields: its x and y.
 const queuedBytes = 8
 
-// writeExtras writes the queued cells and the bodies of b, compressed
-// together with DEFLATE, to w, in the layout of the given version. The
-// cells' and bodies' materials are IDs of mats, whose order the block's
-// material list keeps.
+// particleBytes is how many bytes a particle takes before its cell's
+// fields: x, y, lx, ly, vx, vy, seed, life, density, pass and flags.
+const particleBytes = 4*8 + 2*4 + 8 + 4 + 3
+
+// writeExtras writes the queued cells, the bodies and, from version 6, the
+// particles of b, compressed together with DEFLATE, to w, in the layout of
+// the given version. The cells', bodies' and particles' materials are IDs
+// of mats, whose order the block's material list keeps.
 func writeExtras(w io.Writer, b *Block, mats *material.Table, version uint16) error {
 	if len(b.Queued) > maxQueued || len(b.Bodies) > maxBodies {
 		return fmt.Errorf("%d queued cells and %d bodies; a block holds at most %d and %d", len(b.Queued), len(b.Bodies), maxQueued, maxBodies)
+	}
+	if len(b.Particles) > 0 && version < 6 {
+		return fmt.Errorf("%d particles, which a block of version %d cannot hold", len(b.Particles), version)
+	}
+	if len(b.Particles) > maxParticles {
+		return fmt.Errorf("%d particles; a block holds at most %d", len(b.Particles), maxParticles)
 	}
 	zw, err := flate.NewWriter(w, flate.BestSpeed)
 	if err != nil {
@@ -185,10 +201,46 @@ func writeExtras(w io.Writer, b *Block, mats *material.Table, version uint16) er
 			return err
 		}
 	}
+	if version >= 6 {
+		if err := writeParticles(bw, b.Particles, mats, width); err != nil {
+			return err
+		}
+	}
 	if err := bw.Flush(); err != nil {
 		return err
 	}
 	return zw.Close()
+}
+
+// writeParticles writes ps after their count, each its head and then its
+// cell's fields, width bytes of them.
+func writeParticles(w *bufio.Writer, ps []world.Particle, mats *material.Table, width int) error {
+	writeUint(w, uint64(len(ps)), 4)
+	buf := make([]byte, particleBytes+width)
+	for i := range ps {
+		p := &ps[i]
+		switch {
+		case int(p.Cell.Mat) >= mats.Len():
+			return fmt.Errorf("a particle is of material %d, which the table does not have", p.Cell.Mat)
+		case p.Flags&^world.ParticleFlagsAll != 0:
+			return fmt.Errorf("a particle has flags %#x", p.Flags)
+		}
+		for k, v := range [...]int64{p.X, p.Y, p.LX, p.LY} {
+			binary.LittleEndian.PutUint64(buf[8*k:], uint64(v))
+		}
+		binary.LittleEndian.PutUint32(buf[32:], uint32(p.VX))
+		binary.LittleEndian.PutUint32(buf[36:], uint32(p.VY))
+		binary.LittleEndian.PutUint64(buf[40:], p.Seed)
+		binary.LittleEndian.PutUint32(buf[48:], uint32(p.Life))
+		buf[52], buf[53], buf[54] = p.Density, byte(p.Pass), byte(p.Flags)
+		at := particleBytes
+		for _, f := range fields {
+			f.put(buf[at:], &p.Cell)
+			at += f.width
+		}
+		_, _ = w.Write(buf)
+	}
+	return nil
 }
 
 // bodyHead is how many bytes a body takes before its pixels.
@@ -238,11 +290,13 @@ func (d *decoder) readExtras(b *Block, size uint64, ids []int, names []string, v
 	}
 	packed := io.NewSectionReader(d.r, d.r.Size()-int64(d.r.Len()), int64(size))
 	zr := flate.NewReader(packed)
-	e := &extras{r: bufio.NewReader(zr), ids: ids, names: names, flags: flagsOf(version), marks: version >= 5}
+	e := &extras{
+		r: bufio.NewReader(zr), ids: ids, names: names, flags: flagsOf(version), marks: version >= 5, particles: version >= 6,
+	}
 	err := e.read(b, d.fields)
 	if err == nil {
 		if n, end := e.r.Read(make([]byte, 1)); n != 0 || !errors.Is(end, io.EOF) {
-			err = errors.New("more data than its queued cells and bodies")
+			err = errors.New("more data than its queued cells, bodies and particles")
 		}
 	}
 	if cerr := zr.Close(); err == nil {
@@ -255,15 +309,15 @@ func (d *decoder) readExtras(b *Block, size uint64, ids []int, names []string, v
 	return err
 }
 
-// extras reads the queued cells and bodies of a block; flags are those a
-// body of its version may have, and marks is set if its pixels may have
-// crack marks.
+// extras reads the queued cells, bodies and particles of a block; flags
+// are those a body of its version may have, marks is set if its pixels may
+// have crack marks, and particles if it holds particles.
 type extras struct {
-	r     *bufio.Reader
-	ids   []int
-	names []string
-	flags uint64
-	marks bool
+	r                *bufio.Reader
+	ids              []int
+	names            []string
+	flags            uint64
+	marks, particles bool
 }
 
 func (e *extras) uint(size int) (uint64, error) {
@@ -327,6 +381,49 @@ func (e *extras) read(b *Block, fields []field) error {
 			return fmt.Errorf("body %d: %w", i, err)
 		}
 		b.Bodies = append(b.Bodies, body)
+	}
+	if !e.particles {
+		return nil
+	}
+	return e.readParticles(b, fields, width)
+}
+
+// readParticles reads the particles of a block, whose cells have fields,
+// width bytes of them.
+func (e *extras) readParticles(b *Block, fields []field, width int) error {
+	n, err := e.uint(4)
+	if err != nil {
+		return err
+	}
+	if n > maxParticles {
+		return fmt.Errorf("%d particles, at most %d", n, maxParticles)
+	}
+	buf := make([]byte, particleBytes+width)
+	for i := range n {
+		if _, err := io.ReadFull(e.r, buf); err != nil {
+			return noEOF(err)
+		}
+		i64 := func(at int) int64 { return int64(binary.LittleEndian.Uint64(buf[at:])) }
+		i32 := func(at int) int32 { return int32(binary.LittleEndian.Uint32(buf[at:])) }
+		p := world.Particle{
+			X: i64(0), Y: i64(8), LX: i64(16), LY: i64(24), VX: i32(32), VY: i32(36),
+			Seed: binary.LittleEndian.Uint64(buf[40:]), Life: i32(48),
+			Density: buf[52], Pass: int8(buf[53]), Flags: world.ParticleFlags(buf[54]),
+		}
+		if p.Flags&^world.ParticleFlagsAll != 0 {
+			return fmt.Errorf("particle %d: flags %#x", i, p.Flags)
+		}
+		at := particleBytes
+		for _, f := range fields {
+			if err := f.get(buf[at:], &p.Cell); err != nil {
+				return fmt.Errorf("particle %d: %w", i, err)
+			}
+			at += f.width
+		}
+		if p.Cell.Mat, err = e.material(uint64(p.Cell.Mat)); err != nil {
+			return fmt.Errorf("particle %d holds %w", i, err)
+		}
+		b.Particles = append(b.Particles, p)
 	}
 	return nil
 }
