@@ -183,6 +183,18 @@ func TestCrackWalksAboutItsAxis(t *testing.T) {
 				if a, b := math.Atan2(sl, cl), math.Atan2(sr, cr); a < -1.51 || a > -0.29 || b < 0.29 || b > 1.51 {
 					t.Fatalf("the branches turned %.2f and %.2f radians, want -1.5 to -0.3 and 0.3 to 1.5", a, b)
 				}
+				// Born at their branching energy, which a step spends before
+				// it checks, they never branch again, though one may have a
+				// branch left (C139 3.4, Codex review).
+				for g := 0; len(s.movers) > 0; g++ {
+					if g == 1000 {
+						t.Fatal("the branches walk on after 1000 ticks")
+					}
+					s.moveCracks()
+					if len(s.movers) > 2 {
+						t.Fatalf("a branch branched again: %d cracks", len(s.movers))
+					}
+				}
 				break
 			}
 			d := int(m.energy - s.movers[0].energy)
