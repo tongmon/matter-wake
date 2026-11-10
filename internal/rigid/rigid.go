@@ -154,6 +154,9 @@ type System struct {
 	hits   []physics.Hit
 	checks []crackCheck
 	lost   []int
+	// settling is Settle's scratch list of the bodies that turn back into
+	// terrain, by slot.
+	settling []int
 	// scratch holds the edges Box2D gives, for drawing (view.go).
 	scratch []physics.Edge
 }
@@ -402,7 +405,8 @@ func (s *System) sync() {
 // of those that no longer may (freeze), pushes each other dynamic body with
 // what liquid does to it (push), advances Box2D by one tick, then cracks
 // the bodies of materials that crack where they hit something fast
-// (crack.go); the next Break splits them.
+// (crack.go) and breaks them (Break): pieces too small to be bodies, and
+// powder of a shattered body with nowhere to go, count as lost.
 func (s *System) Step() error {
 	s.freeze()
 	for i := range s.bodies {
@@ -416,5 +420,9 @@ func (s *System) Step() error {
 	}
 	s.phys.Step(tickSeconds, subSteps)
 	s.crack()
-	return nil
+	// The bodies cracks took pixels out of split, or shatter, before the
+	// tick ends: a block that leaves memory or a save before the next one
+	// records them as they are (Codex review). The pieces too small to be
+	// bodies are lost with the crack.
+	return s.Break(s.lost)
 }
