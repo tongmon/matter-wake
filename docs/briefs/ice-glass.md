@@ -204,13 +204,13 @@ glass_brittle과 ice_glass를 합하면 생성 33개에 셀 129개, 생성 하�
 | 접촉 사건마다 균열 가능 쪽을 판정 | `internal/physics` `Hits`(Box2D 접촉 hit 사건), `internal/rigid` crack.go | 같음 | 사건은 균열 가능 재질의 형상에만 켜서(`enableHitEvents`), 다른 접촉은 사건을 만들지 않습니다 |
 | 접촉 직전 법선 상대 속도 | Box2D hit 사건의 `approachSpeed`: Step의 해를 구하기 전에 접촉점에서 잰 법선 방향 상대 속도, 그 접촉의 점 중 가장 큰 것 | 같음(재는 시점) | Box2D는 사건마다 한 값을 줍니다. 두 몸체가 같은 속도를 받습니다(Noita도 사건 하나의 벡터) |
 | 50 px/s 넘으면 U×100 ≤ 속도 | `crackMin` 50, `crackSure` 100칸/s 🧪 | 같음 | 칸 = px |
-| 난수 | (seed, 틱, 몸체 key, 그 몸체의 이번 틱 판정 번호) 해시 🔶 | 다름 | Noita는 전역 LCG 하나. 결정성을 위해 몸체마다 따로 뽑음 |
+| 난수 | (seed, 틱, 몸체 key, 그 몸체의 이번 틱 판정 번호) 해시 ✅ 2026-11-10 | 다름 | Noita는 전역 LCG 하나. 결정성을 위해 몸체마다 따로 뽑음 |
 | 910 px/s 한 Step 충돌에 판정 없음 | 따르지 않음: Box2D v3.2는 빠른 몸체를 연속 충돌로 멈춘 뒤 다음 Step의 접촉에서 큰 접근 속도로 사건을 냄 | 다름(개발자 결정 2026-11-10, "빠를수록 늘 균열") | `TestFastHitCracks` |
-| 이동체가 지나간 셀을 지움 | 균열 이동체(아래 "PR B 2") | 같음(C139) | 처음에는 5픽셀 임시 선이었음. 충돌당 4개를 점에 나누는 것, 난수, 저장은 🔶 |
+| 이동체가 지나간 셀을 지움 | 균열 이동체(아래 "PR B 2") | 같음(C139) | 처음에는 5픽셀 임시 선이었음. 충돌당 4개를 점에 나누는 것, 난수, 저장은 ✅ 2026-11-10 "모두 이대로 (추천)" |
 | 지운 셀은 돌아오지 않음 | 지운 픽셀을 재질별로 셈(`Game.Lost`) | 같음 + 셈 | 개발자 결정 2026-11-10, "Noita처럼 지우고 셈" |
 | 재구성 → 유리 통째로 | 다음 틱의 `Break`(shatter) | 같음 | |
 | 잠듦 변환: 카메라 512 px, 350 잠듦 / 750 | `game` 카메라 중심 점검, `rigid.System.Settle` 🧪 512, 350, 750 | 같음 | 지형 장면만(방은 카메라가 움직이지 않음) |
-| 몸체 원점과의 거리 | 질량 중심과의 거리 🔶 | 다름 | 우리 조각은 부모의 원점을 지녀 원점이 몸체 밖일 수 있음 |
+| 몸체 원점과의 거리 | 질량 중심과의 거리 ✅ 2026-11-10 | 다름 | 우리 조각은 부모의 원점을 지녀 원점이 몸체 밖일 수 있음 |
 | break_to 셀, 셀 수 그대로 | 재질 필드 `sleepTo`, 픽셀마다 칸 하나(유리 부서짐과 같은 자리 규칙) | 같음 | |
 
 ### 실제 수치 (PR B)
@@ -246,7 +246,7 @@ TPT에는 강체와 충돌 균열, 몸체의 잠듦 변환이 없습니다(tpt.m
 - (5픽셀 임시 선 때의 측정, "PR B 2"에서 바뀜) 균열 하나가 지우는 픽셀: 꽉 찬 얼음 안으로 39번 냈을 때 평균 4.9(Noita 3.9).
 - 측정: 깨짐 없는 틱의 몸체 몫 558.0 → 553.1 µs, Step 124.7 → 126.7 µs(main과 번갈아 5회 중앙값, 나무 몸체 450개).
 - 화면: [cracks.png](../images/cracks.png), [cracks-static.png](../images/cracks-static.png), [cracks-panel.png](../images/cracks-panel.png), [settle.png](../images/settle.png).
-- 남은 빈칸: 위 "자료에 없음"의 🔶(design.md 8절). 균열 이동체는 C139로 바꿨습니다(아래 "PR B 2").
+- 남은 빈칸: 없음. 위 "자료에 없음"의 결정은 2026-11-10에 모두 정했습니다(design.md 8절 ✅). 균열 이동체는 C139로 바꿨습니다(아래 "PR B 2").
 
 ## PR B 2: 균열 이동체 (C139, 2026-11-10, 같은 `feat/body-cracks`)
 
@@ -291,8 +291,8 @@ TPT에는 강체와 충돌 균열, 몸체의 잠듦 변환이 없습니다(tpt.m
 | 지운 칸은 입자 | 재질별로 셈(`Game.Lost`) | 다름(✅ "Noita처럼 지우고 셈") | |
 | 다음 프레임에 재구성 | 그 틱 끝에 `Break`(Codex 리뷰로 정한 대로) | 다름 | 같은 프레임 두 번째 제거의 입자 중복이 없음 |
 | 세계 좌표로 걸음 | 칸의 연결(`world.Cell.Body`)로 그 칸이 보이는 픽셀을 표시 | 같음 | |
-| 충돌당 4개 | `crackChecks` 4: 그 틱에 몸체가 부딪힌 점들에 돌아가며 판정 4번 | 다름(🔶) | 아래 |
-| 전역 LCG 하나 | 균열마다 자기 SplitMix64 스트림 | 다름(🔶) | 아래 |
+| 충돌당 4개 | `crackChecks` 4: 그 틱에 몸체가 부딪힌 점들에 돌아가며 판정 4번 | 다름(✅ 2026-11-10) | 아래 |
+| 전역 LCG 하나 | 균열마다 자기 SplitMix64 스트림 | 다름(✅ 2026-11-10) | 아래 |
 
 ### 실제 수치 (C139 5절과 우리 측정)
 
@@ -313,11 +313,11 @@ TPT에는 강체도 균열 이동체도 없습니다(tpt.md: rigid bodies, destr
 
 | 빈칸 | 자료 상태 | TPT 방식 | 우리 설계 | 측정 방법 | 추가 분석 제안 |
 |---|---|---|---|---|---|
-| 충돌당 이동체 4개의 출처 | OPEN(C139 9절: 접촉 수 구조) | 없음 | 🔶🧪 몸체가 부딪힌 틱에 판정 4번(`crackChecks`)을 그 틱의 점들에 정렬해 돌아가며. Box2D v3.2는 접촉마다 사건 하나라, `physics.World.Hits`가 사건의 접촉에서 문턱보다 빠르게 다가온 점을 모두 줌(평평하게 떨어진 상자는 두 아래 모서리). 우리 바닥 충돌은 청크마다 따로라 64칸 몸체는 접촉이 둘일 수 있는데, 판정 수를 점 수가 아닌 몸체마다 4로 두어 그 영향을 없앰 | `TestHitMakesFourCracks`, `physics.TestHitsListEveryPointOfTheContact` | 아니오 |
-| 이동체의 난수 | 전역 LCG(C139 8절: 다른 시스템의 사용 순서가 결과를 바꿈) | 없음 | 🔶 n번째 판정이 만든 균열은 (seed, 틱, key, n+1)에서 시작하는 자기 스트림(✅ 판정 순서와 난수의 열쇠 그대로). 곁가지는 부모 스트림에서 뽑은 씨앗. 균열은 만든 순서로 틱마다 한 번 걷고 곁가지는 다음 틱부터 | 리플레이 골든 1·4 worker | 아니오 |
-| 여러 틱에 사는 이동체와 저장·블록·몸체 | Noita는 저장 시 이동체 개체를 함께 저장(개체), 우리 조사 범위 밖 | 없음 | 🔶 걷는 균열은 세션 파일에(형식 6 `crack` 줄), 표시는 몸체 픽셀과 함께 블록에(형식 5). 저장을 사이에 둬도 같음(`TestSavedCracksGoOn`). 저장이 블록을 내렸다 올리며 Box2D를 새로 만들 때(`Reset`)도 균열은 그대로 걷는다. 블록이 나가면 그 위의 균열은 메모리에 없는 칸을 공기처럼 보고 끝남. 균열은 몸체에 묶이지 않아 몸체가 파이거나 부서지거나 지형으로 돌아가도 남은 칸을 보고 걸음. 리플레이는 처음부터 다시 돌아 같음 | `TestSavedCracksGoOn`, `save` 형식 시험 | 아니오 |
-| 표시 상태를 둘 곳 | Noita는 셀 계수(+4)를 줄임. 채굴·폭발과 공유하는지 OPEN(C139 9절) | 없음 | 🔶 몸체 픽셀의 표시 비트(`pixel.bits`의 `pixelMarked`, 픽셀은 4바이트 그대로). 손상과 따로라 채굴 손상이 표시가 되거나 그 반대가 되지 않음. 칸은 손상 가득으로 그려 흰색 쪽 60% | `TestCrackWalksAboutItsAxis`(표시 칸의 손상), `TestCrackTakesOutTheMarksOfItsBody` | 아니오 |
-| 지형 칸 표시 | 정적 판독: 표시만 되고 지워지지 않음(LIVE 없음) | 없음 | 🔶 하지 않음. 우리 `cracks`는 고체에만 둘 수 있고(4절), 지형 얼음·유리는 Noita ice_static·glass_static처럼 0. 균열 나는 지형 재질이 생기면 그때 정함 | 재질 검증 | 아니오 |
+| 충돌당 이동체 4개의 출처 | OPEN(C139 9절: 접촉 수 구조) | 없음 | ✅ 2026-11-10 🧪 몸체가 부딪힌 틱에 판정 4번(`crackChecks`)을 그 틱의 점들에 정렬해 돌아가며. Box2D v3.2는 접촉마다 사건 하나라, `physics.World.Hits`가 사건의 접촉에서 문턱보다 빠르게 다가온 점을 모두 줌(평평하게 떨어진 상자는 두 아래 모서리). 우리 바닥 충돌은 청크마다 따로라 64칸 몸체는 접촉이 둘일 수 있는데, 판정 수를 점 수가 아닌 몸체마다 4로 두어 그 영향을 없앰 | `TestHitMakesFourCracks`, `physics.TestHitsListEveryPointOfTheContact` | 아니오 |
+| 이동체의 난수 | 전역 LCG(C139 8절: 다른 시스템의 사용 순서가 결과를 바꿈) | 없음 | ✅ 2026-11-10 n번째 판정이 만든 균열은 (seed, 틱, key, n+1)에서 시작하는 자기 스트림(✅ 판정 순서와 난수의 열쇠 그대로). 곁가지는 부모 스트림에서 뽑은 씨앗. 균열은 만든 순서로 틱마다 한 번 걷고 곁가지는 다음 틱부터 | 리플레이 골든 1·4 worker | 아니오 |
+| 여러 틱에 사는 이동체와 저장·블록·몸체 | Noita는 저장 시 이동체 개체를 함께 저장(개체), 우리 조사 범위 밖 | 없음 | ✅ 2026-11-10 걷는 균열은 세션 파일에(형식 6 `crack` 줄), 표시는 몸체 픽셀과 함께 블록에(형식 5). 저장을 사이에 둬도 같음(`TestSavedCracksGoOn`). 저장이 블록을 내렸다 올리며 Box2D를 새로 만들 때(`Reset`)도 균열은 그대로 걷는다. 블록이 나가면 그 위의 균열은 메모리에 없는 칸을 공기처럼 보고 끝남. 균열은 몸체에 묶이지 않아 몸체가 파이거나 부서지거나 지형으로 돌아가도 남은 칸을 보고 걸음. 리플레이는 처음부터 다시 돌아 같음 | `TestSavedCracksGoOn`, `save` 형식 시험 | 아니오 |
+| 표시 상태를 둘 곳 | Noita는 셀 계수(+4)를 줄임. 채굴·폭발과 공유하는지 OPEN(C139 9절) | 없음 | ✅ 2026-11-10 몸체 픽셀의 표시 비트(`pixel.bits`의 `pixelMarked`, 픽셀은 4바이트 그대로). 손상과 따로라 채굴 손상이 표시가 되거나 그 반대가 되지 않음. 칸은 손상 가득으로 그려 흰색 쪽 60% | `TestCrackWalksAboutItsAxis`(표시 칸의 손상), `TestCrackTakesOutTheMarksOfItsBody` | 아니오 |
+| 지형 칸 표시 | 정적 판독: 표시만 되고 지워지지 않음(LIVE 없음) | 없음 | ✅ 2026-11-10 하지 않음. 우리 `cracks`는 고체에만 둘 수 있고(4절), 지형 얼음·유리는 Noita ice_static·glass_static처럼 0. 균열 나는 지형 재질이 생기면 그때 정함 | 재질 검증 | 아니오 |
 | 같은 프레임 두 번째 제거의 입자 중복 | LIVE 한 사례(C139 6절) | 없음 | 따르지 않음: 입자가 없고 몸체는 그 틱 끝에 나눔 | 해당 없음 | 아니오 |
 | 분기와 에너지 소진의 LIVE | OPEN(C139 9절) | 없음 | 정적 판독대로 구현(`fork`, `walk`). 큰 몸체 안에서 2/3가 에너지 끝에 분기함 | `TestCrackWalksAboutItsAxis` | 아니오(필요하면 큰 균열 영역의 LIVE를 제안) |
 
@@ -326,4 +326,5 @@ TPT에는 강체도 균열 이동체도 없습니다(tpt.md: rigid bodies, destr
 - 테스트: `internal/physics` `TestHitsListEveryPointOfTheContact`, `internal/rigid` `TestCrackWalksAboutItsAxis`, `TestCrackTakesOutTheMarksOfItsBody`, `TestHitMakesFourCracks`, `TestFastHitCracks`(이제 균열 4개가 생기는지), `TestCrackLossesMatchNoita`, `TestWalkingCracksDoesNotAllocate`, `internal/save` `TestBlockReadsVersion4`, 세션 형식 6, `internal/app` `TestSavedCracksGoOn`(저장 때 균열 3개, 저장 뒤 111픽셀을 같게 지움).
 - 리플레이 골든: 균열 나는 몸체가 있는 `cracks`, `ice_glass`, `terrain_settle`만 바뀜(1·4 worker 같음, 매 틱 셀 보존 통과).
 - 화면: [cracks.png](../images/cracks.png), [cracks-zoom.png](../images/cracks-zoom.png)(균열이 자라고 끝나며 지우는 모습), [cracks-static.png](../images/cracks-static.png), [cracks-panel.png](../images/cracks-panel.png), [settle.png](../images/settle.png)을 이 구현으로 다시 찍음.
-- 남은 빈칸: 위 표의 🔶(design.md 8절에서 물음), Noita에서도 OPEN인 4개의 출처와 분기의 LIVE.
+- 결정: 위 표의 우리 설계는 개발자가 2026-11-10 "모두 이대로 (추천)"로 정했습니다(design.md 8절 ✅).
+- 남은 빈칸: Noita에서도 OPEN인 4개의 출처와 분기의 LIVE. 필요해지면 추가 분석을 제안합니다.
