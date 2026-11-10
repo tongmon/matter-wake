@@ -69,7 +69,7 @@ func (s *System) record(b *body) save.Body {
 	}
 	r := save.Body{
 		Key: b.key, Mat: b.mat, W: b.w, H: b.h, Left: b.left, Top: b.top, CX: b.cx, CY: b.cy,
-		Pixels: make([]save.Pixel, len(b.px)), Whole: b.cover == nil,
+		Pixels: make([]save.Pixel, len(b.px)), Whole: b.cover == nil, Static: b.static,
 		X: p.X, Y: p.Y, C: q.C, S: q.S, VX: v.X, VY: v.Y, Spin: spin, Awake: awake,
 	}
 	for k, px := range b.px {
@@ -329,11 +329,12 @@ func finite(f float32) bool {
 
 // remake makes the body of record r, which checkRecord passed, in Box2D,
 // as it was: a whole body is the box it was made as, a body that lost
-// pixels gets shapes from them, both to the bit as before.
+// pixels or that the terrain turned into gets shapes from them, both to
+// the bit as before. A static body is static again.
 func (s *System) remake(r *save.Body) (body, error) {
 	b := body{
-		key: r.Key, mat: r.Mat, w: r.W, h: r.H, left: r.Left, top: r.Top, cx: r.CX, cy: r.CY,
-		px: make([]pixel, len(r.Pixels)), buoyancy: pieceBuoyancy(s.mats.Def(r.Mat)),
+		key: r.Key, mat: r.Mat, static: r.Static, w: r.W, h: r.H, left: r.Left, top: r.Top, cx: r.CX, cy: r.CY,
+		px: make([]pixel, len(r.Pixels)), buoyancy: s.pieceBuoyancy(r.Mat),
 	}
 	for k, p := range r.Pixels {
 		b.px[k] = pixel{dmg: p.Damage, tone: p.Tone, ok: p.OK}
@@ -343,7 +344,11 @@ func (s *System) remake(r *save.Body) (body, error) {
 	}
 	b.cells = make([]cellAt, 0, b.n+b.w+b.h+1)
 	at, rot := physics.Vec2{X: r.X, Y: r.Y}, physics.Rot{C: r.C, S: r.S}
-	id, err := s.phys.AddDynamicBody(at, rot)
+	add := s.phys.AddDynamicBody
+	if b.static {
+		add = s.phys.AddStaticBody
+	}
+	id, err := add(at, rot)
 	if err != nil {
 		return body{}, fmt.Errorf("rigid: %w", err)
 	}
@@ -362,8 +367,10 @@ func (s *System) remake(r *save.Body) (body, error) {
 		s.phys.DestroyBody(id)
 		return body{}, err
 	}
-	v, spin := restoreMotion(r)
-	s.phys.SetVelocity(id, v, spin)
+	if !b.static {
+		v, spin := restoreMotion(r)
+		s.phys.SetVelocity(id, v, spin)
+	}
 	return b, nil
 }
 
@@ -404,7 +411,7 @@ func (s *System) Reset() error {
 		s.nearHead[i] = -1
 	}
 	s.ticks = 0
-	s.worn, s.gone, s.freed = s.worn[:0], s.gone[:0], s.freed[:0]
+	s.worn, s.gone, s.freed, s.seeds = s.worn[:0], s.gone[:0], s.freed[:0], s.seeds[:0]
 	s.broken = false
 	return s.wall()
 }
@@ -438,14 +445,16 @@ func (s *System) Frozen() int {
 // one goes on with the velocity it had. Noita's go on and are lost (C137);
 // the developer chose to freeze them (2026-11-09). The cells do the same: a
 // chunk whose updates may reach a block not in memory does not run. With
-// every block in memory, as in the rooms, nothing freezes.
+// every block in memory, as in the rooms, nothing freezes. A static body
+// never does: it does not move, and it leaves memory with the first block
+// it touches, whole.
 func (s *System) freeze() {
 	s.cold = s.cold[:0]
 	whole := s.w.AllResident()
 	for i := range s.bodies {
 		b := &s.bodies[i]
 		b.cold = false
-		if whole || !b.written {
+		if whole || !b.written || b.static {
 			continue
 		}
 		b.reach = s.reach(b)
@@ -460,7 +469,7 @@ func (s *System) freeze() {
 	for k := 0; k < len(s.cold); k++ {
 		f := s.bodies[s.cold[k]].reach
 		for i := range s.bodies {
-			if o := &s.bodies[i]; !o.cold && o.written && o.reach.overlaps(f) {
+			if o := &s.bodies[i]; !o.cold && !o.static && o.written && o.reach.overlaps(f) {
 				o.cold = true
 				s.cold = append(s.cold, int32(i))
 			}

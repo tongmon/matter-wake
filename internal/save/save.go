@@ -28,7 +28,8 @@
 //	                          each field of the cell, as above
 //	                        bodies: uint32 count, then each:
 //	                          key, material, width, height, cx, cy: uint32
-//	                          flags: uint8, 1 whole, 2 awake
+//	                          flags: uint8, 1 whole, 2 awake,
+//	                            4 static (version 4 on)
 //	                          left, top, x, y, cos, sin, vx, vy, spin:
 //	                            float32 bits
 //	                          each pixel, row by row: has (0 or 1) and
@@ -70,9 +71,9 @@ import (
 
 // BlockVersion is the block layout this build writes. It also reads
 // version 1, which had no rest field: its cells read back with Rest 0, so
-// resting powders count their ticks at rest again; and version 2, which
-// held no queued cells or bodies.
-const BlockVersion = 3
+// resting powders count their ticks at rest again; version 2, which held
+// no queued cells or bodies; and version 3, whose bodies were all dynamic.
+const BlockVersion = 4
 
 // MetaVersion is the world header layout this build reads and writes.
 const MetaVersion = 1
@@ -182,7 +183,7 @@ func encodeBlock(w io.Writer, blk *Block, mats *material.Table, version uint16) 
 	var extra []byte
 	if version >= 3 {
 		var err error
-		if extra, err = compressExtras(blk, mats); err != nil {
+		if extra, err = compressExtras(blk, mats, version); err != nil {
 			return fmt.Errorf("save: %w", err)
 		}
 	} else if len(blk.Queued) > 0 || len(blk.Bodies) > 0 {
@@ -400,7 +401,7 @@ func (d *decoder) block(mats *material.Table, listBytes uint64, version uint16, 
 	}
 	blk := &Block{Cells: b}
 	if version >= 3 {
-		if err := d.readExtras(blk, binary.LittleEndian.Uint64(head), ids, names); err != nil {
+		if err := d.readExtras(blk, binary.LittleEndian.Uint64(head), ids, names, version); err != nil {
 			return nil, fmt.Errorf("queued cells and bodies: %w", err)
 		}
 	}

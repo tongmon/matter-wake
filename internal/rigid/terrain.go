@@ -73,6 +73,9 @@ func (s *System) Collide() error {
 	}
 	for i := range s.bodies {
 		b := &s.bodies[i]
+		if b.static {
+			continue
+		}
 		for _, c := range s.rebuilt {
 			if b.near.overlaps(s.chunkCells(c)) {
 				s.phys.Wake(b.id)
@@ -85,9 +88,11 @@ func (s *System) Collide() error {
 
 // want lists the chunks b, at slot, may touch in the coming Step: those
 // it covers, and those it would cover moved as far again as in the last
-// tick, widened by nearCells. It lists b among the bodies near each.
+// tick, widened by nearCells. It lists b among the bodies near each. A
+// static body wants none: Box2D does not collide it with the terrain, and
+// nothing pushes it out of what it reaches into.
 func (s *System) want(b *body, slot int32) {
-	if !b.written {
+	if !b.written || b.static {
 		return
 	}
 	r := b.box

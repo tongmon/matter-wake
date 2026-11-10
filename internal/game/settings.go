@@ -167,6 +167,15 @@ func (g *Game) Body() BodyTool {
 	return g.bodyTool
 }
 
+// Turned adds to n[id], for every material id, how many cells or pixels of
+// it turned into another material, less how many turned into it: terrain
+// turned into a body, and a body turned into powder (rigid.System.Turned).
+// Its sum over the materials is zero. n must have an entry for every
+// material.
+func (g *Game) Turned(n []int) {
+	g.bodies.Turned(n)
+}
+
 // Made adds to n[id], for every material id, how many cells of it
 // creative mode placed: it makes them from nothing. So each material's
 // cells, plus what the queue and the inventory hold, are what the session

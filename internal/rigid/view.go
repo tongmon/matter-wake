@@ -12,18 +12,20 @@ type Edge struct {
 
 // BodyEdges appends to out the edges of every body's collision shapes, in
 // cells, where Box2D has them now, in key order; frozen bodies' edges go
-// to frozen instead. It is for drawing what Box2D collides and changes
-// nothing.
-func (s *System) BodyEdges(out, frozen []Edge) ([]Edge, []Edge) {
+// to frozen and static bodies' to static instead. It is for drawing what
+// Box2D collides and changes nothing.
+func (s *System) BodyEdges(out, frozen, static []Edge) ([]Edge, []Edge, []Edge) {
 	for i := range s.bodies {
-		b := &s.bodies[i]
-		if b.frozen {
+		switch b := &s.bodies[i]; {
+		case b.static:
+			static = s.edges(b.id, static)
+		case b.frozen:
 			frozen = s.edges(b.id, frozen)
-		} else {
+		default:
 			out = s.edges(b.id, out)
 		}
 	}
-	return out, frozen
+	return out, frozen, static
 }
 
 // TerrainEdges appends to out the edges of the terrain collision of the

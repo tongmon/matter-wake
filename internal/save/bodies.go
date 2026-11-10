@@ -45,9 +45,12 @@ type Body struct {
 	// Pixels holds the image, row by row.
 	Pixels []Pixel
 	// Whole is set while the body is the box it was made as, its shape the
-	// rectangle of its image; a body that lost pixels has shapes made from
-	// them.
+	// rectangle of its image; a body that lost pixels, or that terrain
+	// turned into, has shapes made from them.
 	Whole bool
+	// Static is set for a body that never moves: one terrain turned into,
+	// or the piece of one that stayed (block version 4 on).
+	Static bool
 	// X and Y are where the body's origin is, and C and S the cosine and
 	// sine of its turn: Box2D's transform, to the bit.
 	X, Y, C, S float32
@@ -92,21 +95,32 @@ func (b *Body) check(mats *material.Table) error {
 	return nil
 }
 
-// Flags of a body as written.
+// Flags of a body as written. Version 3 has no flagStatic.
 const (
 	flagWhole = 1 << iota
 	flagAwake
-	flagAll = flagWhole | flagAwake
+	flagStatic
+	flagAll = flagWhole | flagAwake | flagStatic
 )
+
+// flagsOf returns the flags a body of a block of the given version may
+// have.
+func flagsOf(version uint16) uint64 {
+	if version < 4 {
+		return flagWhole | flagAwake
+	}
+	return flagAll
+}
 
 // queuedBytes is how many bytes a queued cell takes before its cell's
 // fields: its x and y.
 const queuedBytes = 8
 
 // writeExtras writes the queued cells and the bodies of b, compressed
-// together with DEFLATE, to w. The cells' and bodies' materials are IDs of
-// mats, whose order the block's material list keeps.
-func writeExtras(w io.Writer, b *Block, mats *material.Table) error {
+// together with DEFLATE, to w, in the layout of the given version. The
+// cells' and bodies' materials are IDs of mats, whose order the block's
+// material list keeps.
+func writeExtras(w io.Writer, b *Block, mats *material.Table, version uint16) error {
 	if len(b.Queued) > maxQueued || len(b.Bodies) > maxBodies {
 		return fmt.Errorf("%d queued cells and %d bodies; a block holds at most %d and %d", len(b.Queued), len(b.Bodies), maxQueued, maxBodies)
 	}
@@ -136,6 +150,9 @@ func writeExtras(w io.Writer, b *Block, mats *material.Table) error {
 	}
 	writeUint(bw, uint64(len(b.Bodies)), 4)
 	for i := range b.Bodies {
+		if b.Bodies[i].Static && version < 4 {
+			return fmt.Errorf("body %d is static, which a block of version %d cannot hold", b.Bodies[i].Key, version)
+		}
 		var err error
 		if buf, err = writeBody(bw, &b.Bodies[i], mats, buf); err != nil {
 			return err
@@ -168,6 +185,9 @@ func writeBody(w *bufio.Writer, b *Body, mats *material.Table, buf []byte) ([]by
 	if b.Awake {
 		flags |= flagAwake
 	}
+	if b.Static {
+		flags |= flagStatic
+	}
 	buf[24] = flags
 	for i, f := range [...]float32{b.Left, b.Top, b.X, b.Y, b.C, b.S, b.VX, b.VY, b.Spin} {
 		binary.LittleEndian.PutUint32(buf[25+4*i:], math.Float32bits(f))
@@ -181,16 +201,17 @@ func writeBody(w *bufio.Writer, b *Body, mats *material.Table, buf []byte) ([]by
 	return buf, nil
 }
 
-// readExtras reads what writeExtras wrote, from the size bytes of r,
-// into b. ids maps the block's material list onto the table it is read
-// against (-1 for a material it lacks) and names names them.
-func (d *decoder) readExtras(b *Block, size uint64, ids []int, names []string) error {
+// readExtras reads what writeExtras wrote for a block of the given
+// version, from the size bytes of r, into b. ids maps the block's material
+// list onto the table it is read against (-1 for a material it lacks) and
+// names names them.
+func (d *decoder) readExtras(b *Block, size uint64, ids []int, names []string, version uint16) error {
 	if size > uint64(d.r.Len()) {
 		return io.ErrUnexpectedEOF
 	}
 	packed := io.NewSectionReader(d.r, d.r.Size()-int64(d.r.Len()), int64(size))
 	zr := flate.NewReader(packed)
-	e := &extras{r: bufio.NewReader(zr), ids: ids, names: names}
+	e := &extras{r: bufio.NewReader(zr), ids: ids, names: names, flags: flagsOf(version)}
 	err := e.read(b, d.fields)
 	if err == nil {
 		if n, end := e.r.Read(make([]byte, 1)); n != 0 || !errors.Is(end, io.EOF) {
@@ -207,11 +228,13 @@ func (d *decoder) readExtras(b *Block, size uint64, ids []int, names []string) e
 	return err
 }
 
-// extras reads the queued cells and bodies of a block.
+// extras reads the queued cells and bodies of a block; flags are those a
+// body of its version may have.
 type extras struct {
 	r     *bufio.Reader
 	ids   []int
 	names []string
+	flags uint64
 }
 
 func (e *extras) uint(size int) (uint64, error) {
@@ -301,10 +324,10 @@ func (e *extras) body() (Body, error) {
 	if err != nil {
 		return Body{}, err
 	}
-	if flags&^flagAll != 0 {
+	if flags&^e.flags != 0 {
 		return Body{}, fmt.Errorf("flags %#x", flags)
 	}
-	b.Whole, b.Awake = flags&flagWhole != 0, flags&flagAwake != 0
+	b.Whole, b.Awake, b.Static = flags&flagWhole != 0, flags&flagAwake != 0, flags&flagStatic != 0
 	for _, f := range [...]*float32{&b.Left, &b.Top, &b.X, &b.Y, &b.C, &b.S, &b.VX, &b.VY, &b.Spin} {
 		v, err := e.uint(4)
 		if err != nil {
@@ -327,10 +350,11 @@ func (e *extras) body() (Body, error) {
 	return b, nil
 }
 
-// compressExtras returns the extras of b as writeExtras writes them.
-func compressExtras(b *Block, mats *material.Table) ([]byte, error) {
+// compressExtras returns the extras of b as writeExtras writes them for a
+// block of the given version.
+func compressExtras(b *Block, mats *material.Table, version uint16) ([]byte, error) {
 	var buf bytes.Buffer
-	if err := writeExtras(&buf, b, mats); err != nil {
+	if err := writeExtras(&buf, b, mats, version); err != nil {
 		return nil, err
 	}
 	return buf.Bytes(), nil

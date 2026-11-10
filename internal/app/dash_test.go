@@ -92,8 +92,9 @@ func TestParseDash(t *testing.T) {
 	}
 }
 
-// The slots are the materials the brush places, kind by kind: with the
-// shipped table, the three slots the game always had.
+// The slots are the materials the brush places, kind by kind and in the
+// table's order within a kind: with the shipped table, the powders sand
+// and glass powder, water, and the terrain of stone, ice and glass.
 func TestSlotsComeFromTheTable(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join("..", "..", "data", "materials.json"))
 	if err != nil {
@@ -103,8 +104,9 @@ func TestSlotsComeFromTheTable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := slotsOf(mats); !slices.Equal(got, []string{"sand", "water", "stone"}) {
-		t.Fatalf("slots %v, want sand water stone", got)
+	want := []string{"sand", "glass_powder", "water", "stone", "ice", "glass"}
+	if got := slotsOf(mats); !slices.Equal(got, want) {
+		t.Fatalf("slots %v, want %v", got, want)
 	}
 }
 

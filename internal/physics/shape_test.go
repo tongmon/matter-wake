@@ -99,6 +99,44 @@ func TestAddDynamicBody(t *testing.T) {
 	}
 }
 
+// A body made by AddStaticBody stays where it is told with the shapes it
+// is given, and a dynamic body falling on it comes to rest on them. It has
+// no mass and no velocity, and SetVelocity does not move it.
+func TestAddStaticBody(t *testing.T) {
+	w := newTestWorld(t)
+	q := Rot{C: 1}
+	s, err := w.AddStaticBody(Vec2{0, 5}, q)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A floor 4 m wide and 1 m thick, its top at y = 5: the test world's
+	// gravity points to -y.
+	floor := Polygons{Points: []Vec2{{-2, -1}, {2, -1}, {2, 0}, {-2, 0}}, Ends: []int{4}}
+	if n, err := w.SetShapes(s, floor, Surface{Density: 1, Friction: 0.6}); err != nil || n != 1 {
+		t.Fatalf("SetShapes made %d shapes, %v", n, err)
+	}
+	if m := w.Mass(s); m != 0 {
+		t.Fatalf("a static body weighs %v", m)
+	}
+	w.SetVelocity(s, Vec2{1, 0}, 1)
+	b, err := w.AddDynamicBox(Box{Center: Vec2{0, 7}, HalfW: 0.5, HalfH: 0.5, Density: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range 120 {
+		w.Step(1.0/60, 4)
+	}
+	if p, r := w.Transform(s); p != (Vec2{0, 5}) || r != q {
+		t.Fatalf("the static body moved to %v turned %v", p, r)
+	}
+	if v, spin := w.Velocity(s); v != (Vec2{}) || spin != 0 {
+		t.Fatalf("the static body moves at %v spinning %v", v, spin)
+	}
+	if p := w.Position(b); !near(p.Y, 5.5, 0.02) {
+		t.Fatalf("the box rests at y = %v, want 5.5 on the static floor", p.Y)
+	}
+}
+
 // Polygons whose corners Box2D cannot make a hull of, all on a line or
 // within its weld distance, are skipped; SetShapes reports how many it
 // made. Polygons of too many or too few corners are an error.

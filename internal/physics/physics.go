@@ -432,6 +432,19 @@ func checkChains(chains []Chain, friction float32) error {
 // turned by rot, awake and at rest. Give it shapes with SetShapes before
 // the next Step: without them it has no mass.
 func (w *World) AddDynamicBody(at Vec2, rot Rot) (Body, error) {
+	return w.addBody(at, rot, C.b2_dynamicBody)
+}
+
+// AddStaticBody adds a static body with no shapes, its origin at at and
+// turned by rot. It never moves; dynamic bodies collide with the shapes
+// SetShapes or SetBox give it. When it loses a shape, to SetShapes or
+// DestroyBody, Box2D wakes the bodies that touched that shape.
+func (w *World) AddStaticBody(at Vec2, rot Rot) (Body, error) {
+	return w.addBody(at, rot, C.b2_staticBody)
+}
+
+// addBody adds a body of the given type with no shapes.
+func (w *World) addBody(at Vec2, rot Rot, kind C.b2BodyType) (Body, error) {
 	w.mustBeOpen()
 	if !finiteVec(at) || !finite(rot.C) || !finite(rot.S) {
 		return 0, fmt.Errorf("physics: body at %v turned %v is not finite", at, rot)
@@ -441,7 +454,7 @@ func (w *World) AddDynamicBody(at Vec2, rot Rot) (Body, error) {
 		return 0, fmt.Errorf("physics: rotation %v is not of length 1", rot)
 	}
 	def := C.b2DefaultBodyDef()
-	def._type = C.b2_dynamicBody
+	def._type = kind
 	def.position = vec(at)
 	def.rotation = C.b2Rot{c: C.float(rot.C), s: C.float(rot.S)}
 	defp := &def
@@ -474,16 +487,17 @@ type Surface struct {
 	Restitution float32
 }
 
-// SetShapes replaces the shapes of dynamic body b with p's polygons, each
-// the convex hull of its corners, made of s, and gives b the mass, center
-// of mass and rotational inertia of those shapes. It wakes b first. The
+// SetShapes replaces the shapes of body b with p's polygons, each the
+// convex hull of its corners, made of s, and gives a dynamic b the mass,
+// center of mass and rotational inertia of those shapes; a static body
+// has none. It wakes a dynamic b first. The
 // origin stays where it is and so do the velocities of the points of b's
 // frame: the center of mass moves by some Δc, so its velocity becomes
 // v + ω × Δc. A polygon Box2D can make no hull of, its corners on a line or
 // within Box2D's weld distance of each other, is skipped; SetShapes
 // returns how many shapes it made. A polygon of fewer than 3 or more than
 // MaxPolygonVertices corners, a corner that is not finite, or a surface
-// that is not a dynamic body's is an error, and nothing changes.
+// without a positive density is an error, and nothing changes.
 func (w *World) SetShapes(b Body, p Polygons, s Surface) (int, error) {
 	id := w.body(b)
 	err := p.check()
@@ -535,11 +549,11 @@ func (s Surface) check() error {
 	return nil
 }
 
-// SetBox gives dynamic body b, which must have no shapes yet, a box of
+// SetBox gives body b, which must have no shapes yet, a box of
 // half size halfW × halfH meters centered on its origin, made of s, and
 // the box's mass. The box, its mass and its inertia are those AddDynamicBox
 // makes, to the bit, so a box body can be made again where it was. A size
-// that is not positive or a surface that is not a dynamic body's is an
+// that is not positive or a surface without a positive density is an
 // error, and nothing changes.
 func (w *World) SetBox(b Body, halfW, halfH float32, s Surface) error {
 	id := w.body(b)

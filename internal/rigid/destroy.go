@@ -98,15 +98,19 @@ func (s *System) showDamage(b *body, slot, k uint16) {
 
 // Break splits every body that lost pixels since the last Break, in key
 // order, into its 4-connected pieces; pixels that touch only at a corner
-// are apart (C77). The largest piece keeps the body: its slot, key and
-// Box2D body, which moves on as before. The other pieces become new
-// bodies, with keys in the order their first pixels come in the image's
-// rows, in the body's frame and with its velocity, awake (C35, C78). Each
-// body that changed gets shapes made from its pixels, and the next Write
-// writes it. Pieces smaller than minPiece, and the pixels of a new piece
-// whose cells static terrain or another body holds (C79), are no body's:
-// Break adds them to debris, by material. A body left with no piece is
-// removed, and the bodies after it move down a slot.
+// are apart (C77). One piece keeps the body: its slot, key and Box2D body,
+// which moves on as before. For a dynamic body it is the largest; a static
+// body stays static in the piece its material's anchor picks (keeps,
+// C136). The other pieces become new dynamic bodies, with keys in the
+// order their first pixels come in the image's rows, in the body's frame
+// and with its velocity, awake (C35, C78). Each body that changed gets
+// shapes made from its pixels, and the next Write writes it. Pieces
+// smaller than minPiece, and the pixels of a new piece whose cells static
+// terrain or another body holds (C79), are no body's: Break adds them to
+// debris, by material. A body of a material that shatters turns whole
+// into its powder instead (shatter). A body left with no piece is removed,
+// and the bodies after it move down a slot. Box2D wakes the bodies that
+// touched shapes a body lost, static or not.
 func (s *System) Break(debris []int) error {
 	s.worn = s.worn[:0]
 	if !s.broken {
@@ -135,24 +139,21 @@ func (s *System) Break(debris []int) error {
 func (s *System) split(slot int, debris []int) (bool, error) {
 	b := &s.bodies[slot]
 	b.dirty = false
+	if powder := s.mats.ShatterOf(b.mat); powder != material.Air {
+		return true, s.shatter(slot, powder, debris)
+	}
 	s.find(b)
 	keep := -1
 	for i := range s.pieces {
-		p := &s.pieces[i]
 		switch {
-		case p.size < minPiece:
+		case s.pieces[i].size < minPiece:
 			s.drop(b, i, debris)
-		case keep < 0 || p.size > s.pieces[keep].size:
+		case keep < 0 || s.keeps(b, i, keep):
 			keep = i
 		}
 	}
 	if keep < 0 {
-		s.erase(b, uint16(slot))
-		if b.written {
-			s.gone = append(s.gone, b.box)
-		}
-		s.phys.DestroyBody(b.id)
-		b.dead = true
+		s.remove(slot)
 		return true, nil
 	}
 	if len(s.pieces) > 1 {
@@ -169,6 +170,88 @@ func (s *System) split(slot int, debris []int) (bool, error) {
 	b = &s.bodies[slot]
 	s.crop(b, keep)
 	return false, s.reshape(b)
+}
+
+// keeps reports whether piece i, rather than piece keep, found before it,
+// keeps body b. A dynamic body keeps its largest piece. A static body
+// keeps the one its material's anchor picks, as Noita's static bodies do
+// (C136): the piece that reaches highest, so what hangs below a cut falls,
+// as ice does; the one that reaches lowest, so what stands on a cut falls
+// over, as wood does; or the largest. A static body never turns, so the
+// image's rows are the world's. Of pieces alike the first found keeps it.
+func (s *System) keeps(b *body, i, keep int) bool {
+	p, k := &s.pieces[i], &s.pieces[keep]
+	if b.static {
+		switch s.mats.Def(b.mat).Anchor {
+		case material.AnchorTop:
+			return p.y0 < k.y0
+		case material.AnchorBottom:
+			return p.y1 > k.y1
+		case material.NoAnchor, material.AnchorLargest:
+		}
+	}
+	return p.size > k.size
+}
+
+// remove erases the body at slot from the grid and from Box2D and marks it
+// dead, for compact to take out.
+func (s *System) remove(slot int) {
+	b := &s.bodies[slot]
+	s.erase(b, uint16(slot))
+	if b.written {
+		s.gone = append(s.gone, b.box)
+	}
+	s.phys.DestroyBody(b.id)
+	b.dead = true
+}
+
+// shatter turns the body at slot, which lost a pixel, into cells of
+// powder, one for each pixel it has left, as Noita's glass turns whole into
+// glass_broken (C136). Noita makes as many as the pixels it had; the
+// developer chose those it has (2026-11-10), so no cell is made or lost.
+// Each pixel's cell is the one its center falls in where the body was last
+// written, and keeps the pixel's tone. Where another cell holds that cell,
+// the powder goes into the world's queue, to go back as a cell pushed out
+// does; outside the world or memory it goes to debris. The body is
+// removed. Shatter counts what it turned (Turned).
+func (s *System) shatter(slot int, powder material.ID, debris []int) error {
+	b := &s.bodies[slot]
+	p, q := b.wp, b.wq
+	if !b.written {
+		p, q = s.phys.Transform(b.id)
+	}
+	s.erase(b, uint16(slot))
+	s.spill = s.spill[:0]
+	for j := range b.h {
+		for i := range b.w {
+			px := b.px[j*b.w+i]
+			if !px.ok {
+				continue
+			}
+			x, y := pixelCell(b, i, j, p, q)
+			cell := world.Cell{Mat: powder, Tone: px.tone}
+			switch c, ok := s.w.At(x, y); {
+			case !ok:
+				debris[powder]++
+			case s.kinds[c.Mat] == material.Empty:
+				s.w.Put(x, y, cell)
+			default:
+				s.spill = append(s.spill, world.Queued{Cell: cell, X: int32(x), Y: int32(y)})
+			}
+		}
+	}
+	s.w.Flush()
+	s.turned[b.mat] -= b.n
+	s.turned[powder] += b.n
+	if b.written {
+		s.gone = append(s.gone, b.box)
+	}
+	s.phys.DestroyBody(b.id)
+	b.dead = true
+	if err := s.w.Requeue(s.spill); err != nil {
+		return fmt.Errorf("rigid: %w", err)
+	}
+	return nil
 }
 
 // find lists in s.pieces the 4-connected pieces of b's image, in the order
@@ -235,7 +318,7 @@ func (s *System) detach(slot, i int, p physics.Vec2, q physics.Rot, v physics.Ve
 	nb := body{
 		key: s.nextKey, mat: par.mat, w: pc.x1 - pc.x0, h: pc.y1 - pc.y0,
 		left: par.left, top: par.top, cx: par.cx + pc.x0, cy: par.cy + pc.y0,
-		buoyancy: pieceBuoyancy(s.mats.Def(par.mat)),
+		buoyancy: s.pieceBuoyancy(par.mat),
 	}
 	n := nb.w * nb.h
 	nb.px = make([]pixel, n)
@@ -280,7 +363,6 @@ func (s *System) detach(slot, i int, p physics.Vec2, q physics.Rot, v physics.Ve
 // off (C79); powders and liquids are left to the write, which pushes them
 // away or stays out of them.
 func (s *System) clean(b *body, slot uint16, p physics.Vec2, q physics.Rot) int {
-	px, py := float32(p.X*cellsPerMeter), float32(p.Y*cellsPerMeter)
 	removed := 0
 	for j := range b.h {
 		for i := range b.w {
@@ -288,10 +370,7 @@ func (s *System) clean(b *body, slot uint16, p physics.Vec2, q physics.Rot) int 
 			if !b.px[k].ok {
 				continue
 			}
-			u := b.left + float32(b.cx+i) + 0.5
-			v := b.top + float32(b.cy+j) + 0.5
-			x := int(math.Floor(float64(px + float32(q.C*u) - float32(q.S*v))))
-			y := int(math.Floor(float64(py + float32(q.S*u) + float32(q.C*v))))
+			x, y := pixelCell(b, i, j, p, q)
 			c, ok := s.w.At(x, y)
 			if ok {
 				switch s.kinds[c.Mat] {

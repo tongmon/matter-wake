@@ -574,3 +574,98 @@ func TestBodyToolWorksInTheTerrain(t *testing.T) {
 		t.Fatalf("the terrain holds %d bodies after a drop", g.Bodies())
 	}
 }
+
+// coldMaterials are the materials the sandbox needs, then ice and glass,
+// terrain that turns into static bodies when dug, and the powder glass
+// shatters into.
+const coldMaterials = `{"materials": [
+	{"name": "air", "kind": "empty"},
+	{"name": "stone", "kind": "static", "density": 255, "hardness": 10, "hp": 1000},
+	{"name": "sand", "kind": "powder", "density": 30, "fallAccel": 0.225, "sinkChance": 25, "slideChance": 50,
+	 "hardness": 4, "hp": 300},
+	{"name": "water", "kind": "liquid", "density": 20, "fallAccel": 0.375, "sinkChance": 50,
+	 "flowSpeed": 0.9, "flowDamping": 0.8, "dispersion": 4},
+	{"name": "ice", "kind": "static", "density": 255, "hp": 600, "body": "ice_body"},
+	{"name": "glass", "kind": "static", "density": 255, "hp": 600, "body": "glass_body"},
+	{"name": "glass_powder", "kind": "powder", "density": 30, "fallAccel": 0.275, "sinkChance": 25, "slideChance": 50, "hp": 300},
+	{"name": "ice_body", "kind": "solid", "density": 6, "hp": 300, "friction": 0.05, "restitution": 0.2, "anchor": "top"},
+	{"name": "glass_body", "kind": "solid", "density": 6, "hp": 300, "friction": 0.3, "restitution": 0.2,
+	 "anchor": "largest", "shatter": "glass_powder"}
+]}`
+
+// Digging ice turns the rest of it into one static body; digging the body
+// keeps it where it is. Digging glass turns it into a static body too, and
+// digging that shatters it into powder. Each material's cells, its pixels
+// and the inventory, less what creative mode made and what turned into
+// another material, stay what they were.
+func TestIceAndGlassTurnAsTheToolDigs(t *testing.T) {
+	tab, err := material.ParseBytes([]byte(coldMaterials))
+	if err != nil {
+		t.Fatal(err)
+	}
+	g, err := New(&Config{
+		Width: 160, Height: 100, Seed: 1, Workers: 2, Materials: tab, Creative: true,
+		Slots: []string{"ice", "glass"}, Tool: Tool{Power: 10, Rate: 300, Radius: 4, Shape: ShapeSquare},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(g.Close)
+	account := func() []int {
+		n := make([]int, tab.Len())
+		g.world.Counts(n)
+		g.world.Queued(n)
+		made, turned, pixels := make([]int, tab.Len()), make([]int, tab.Len()), make([]int, tab.Len())
+		g.Made(made)
+		g.Turned(turned)
+		g.BodyPixels(pixels)
+		n[material.Air] = 0
+		for id := 1; id < tab.Len(); id++ {
+			if tab.Def(material.ID(id)).Kind == material.Solid {
+				n[id] = pixels[id]
+			}
+			n[id] += g.Inventory(material.ID(id)) - made[id] - turned[id]
+		}
+		return n
+	}
+	start := account()
+	check := func(when string) {
+		t.Helper()
+		if got := account(); !slices.Equal(got, start) {
+			t.Fatalf("%s: cells, pixels and inventory less what was made and turned are %v, want %v", when, got, start)
+		}
+	}
+	// Two blocks of 9 × 9 cells in the air between the sand and the water,
+	// ice above glass.
+	step(t, g, &Input{CursorX: 75, CursorY: 30, Place: true, Select: 1})
+	step(t, g, &Input{CursorX: 75, CursorY: 80, Place: true, Select: 2})
+	check("placed")
+	g.creative = false
+	for range 2 {
+		step(t, g, dig(75, 22))
+	}
+	if g.Bodies() != 1 || !g.BodyRecords(nil)[0].Static || g.world.Count(tab.MustLookup("ice")) != 0 {
+		t.Fatalf("after digging the ice: %d bodies, %d ice cells; want one static body and none", g.Bodies(), g.world.Count(tab.MustLookup("ice")))
+	}
+	check("ice dug")
+	for range 30 {
+		step(t, g, &Input{})
+	}
+	check("ice resting")
+	for range 2 {
+		step(t, g, dig(75, 72))
+	}
+	if g.Bodies() != 2 {
+		t.Fatalf("after digging the glass: %d bodies, want 2", g.Bodies())
+	}
+	step(t, g, dig(75, 76))
+	if g.Bodies() != 1 || g.world.Count(tab.MustLookup("glass_powder")) == 0 {
+		t.Fatalf("after digging the glass body: %d bodies and %d cells of powder; want the ice alone and the powder",
+			g.Bodies(), g.world.Count(tab.MustLookup("glass_powder")))
+	}
+	check("glass shattered")
+	for range 60 {
+		step(t, g, &Input{})
+		check("powder falling")
+	}
+}

@@ -81,6 +81,52 @@ func (k *Kind) UnmarshalText(text []byte) error {
 	return fmt.Errorf("unknown kind %q (want one of %s)", text, strings.Join(kindNames[:], ", "))
 }
 
+// Anchor says which piece of a solid's static body stays static when the
+// body breaks apart; the other pieces fall. A body made of terrain whose
+// cells turn into the solid (Def.Body) is static only if the solid has an
+// anchor. Noita's solid_static_type picks the same pieces (C136).
+type Anchor uint8
+
+// The anchors.
+const (
+	// NoAnchor: the solid's bodies are never static.
+	NoAnchor Anchor = iota
+	// AnchorTop keeps the piece that reaches highest, so what hangs below
+	// a cut falls, as Noita's ice does.
+	AnchorTop
+	// AnchorBottom keeps the piece that reaches lowest, so what stands on
+	// a cut falls over, as Noita's wood does.
+	AnchorBottom
+	// AnchorLargest keeps the piece with the most pixels.
+	AnchorLargest
+)
+
+var anchorNames = [...]string{
+	NoAnchor:      "",
+	AnchorTop:     "top",
+	AnchorBottom:  "bottom",
+	AnchorLargest: "largest",
+}
+
+// String returns the name used for the anchor in data files.
+func (a Anchor) String() string {
+	if int(a) < len(anchorNames) {
+		return anchorNames[a]
+	}
+	return fmt.Sprintf("Anchor(%d)", a)
+}
+
+// UnmarshalText parses an anchor name from a data file.
+func (a *Anchor) UnmarshalText(text []byte) error {
+	for i, name := range anchorNames {
+		if i > 0 && string(text) == name {
+			*a = Anchor(i)
+			return nil
+		}
+	}
+	return fmt.Errorf("unknown anchor %q (want one of %s)", text, strings.Join(anchorNames[1:], ", "))
+}
+
 // Color is an sRGB color with alpha.
 type Color struct {
 	R, G, B, A uint8
@@ -156,6 +202,19 @@ type Def struct {
 	// lifts it. 0 or more. Solids only.
 	Buoyancy fixed.Q8 `json:"buoyancy"`
 
+	// Body names the solid a static material's cells turn into, as one
+	// body, once a cell of theirs is destroyed: the cells of the material
+	// 4-connected to it (rigid package, C136). Empty for none. Statics
+	// only.
+	Body string `json:"body,omitempty"`
+	// Anchor says which piece of a static body of the solid stays static
+	// when it breaks apart. Solids only.
+	Anchor Anchor `json:"anchor,omitempty"`
+	// Shatter names the powder a body of the solid turns into, whole, once
+	// it loses a pixel, as Noita's glass does (C136). Empty for none.
+	// Solids only.
+	Shatter string `json:"shatter,omitempty"`
+
 	// Color is the base color; each cell varies it by its tone.
 	Color Color `json:"color"`
 	// ToneSpread is how much a cell's tone darkens the base color, 0..255.
@@ -166,6 +225,14 @@ type Def struct {
 type Table struct {
 	defs   []Def
 	byName map[string]ID
+	// links holds, by material, the materials its Body and Shatter name,
+	// Air for none.
+	links []link
+}
+
+// link is what a material's names of other materials resolve to.
+type link struct {
+	body, shatter ID
 }
 
 type file struct {
@@ -208,7 +275,8 @@ func NewTable(defs []Def) (*Table, error) {
 	}
 	t := &Table{defs: make([]Def, len(defs)), byName: make(map[string]ID, len(defs))}
 	copy(t.defs, defs)
-	for i, d := range defs {
+	for i := range t.defs {
+		d := &t.defs[i]
 		if err := validate(d); err != nil {
 			return nil, fmt.Errorf("material %d: %w", i, err)
 		}
@@ -217,10 +285,40 @@ func NewTable(defs []Def) (*Table, error) {
 		}
 		t.byName[d.Name] = ID(i)
 	}
+	t.links = make([]link, len(defs))
+	for i := range t.defs {
+		d := &t.defs[i]
+		l, err := t.resolve(d)
+		if err != nil {
+			return nil, fmt.Errorf("material %d: %q: %w", i, d.Name, err)
+		}
+		t.links[i] = l
+	}
 	return t, nil
 }
 
-func validate(d Def) error {
+// resolve finds the materials d names, and checks their kinds: a static
+// turns into a solid's body, and a solid's body shatters into a powder.
+func (t *Table) resolve(d *Def) (link, error) {
+	var l link
+	if d.Body != "" {
+		id, ok := t.byName[d.Body]
+		if !ok || t.defs[id].Kind != Solid {
+			return l, fmt.Errorf("body %q is not a solid of the table", d.Body)
+		}
+		l.body = id
+	}
+	if d.Shatter != "" {
+		id, ok := t.byName[d.Shatter]
+		if !ok || t.defs[id].Kind != Powder {
+			return l, fmt.Errorf("shatter %q is not a powder of the table", d.Shatter)
+		}
+		l.shatter = id
+	}
+	return l, nil
+}
+
+func validate(d *Def) error {
 	if d.Name == "" {
 		return errors.New("missing name")
 	}
@@ -240,8 +338,10 @@ func validate(d Def) error {
 }
 
 // validateSolid checks the values only solids have: a body needs mass, so
-// a solid needs a density.
-func validateSolid(d Def) error {
+// a solid needs a density. It checks what bodies come of too: only a
+// static turns into one, and only a solid's has an anchor or shatters.
+// NewTable checks the materials they name.
+func validateSolid(d *Def) error {
 	switch {
 	case d.Kind != Solid && (d.Friction != 0 || d.Restitution != 0 || d.Buoyancy != 0):
 		return errors.New("only solids may have friction, restitution or buoyancy")
@@ -251,6 +351,12 @@ func validateSolid(d Def) error {
 		return fmt.Errorf("friction %v must not be negative and restitution %v must be in [0, 1]", d.Friction, d.Restitution)
 	case d.Buoyancy < 0:
 		return fmt.Errorf("buoyancy %v must not be negative", d.Buoyancy)
+	case d.Kind != Static && d.Body != "":
+		return errors.New("only statics may turn into a body")
+	case d.Kind != Solid && (d.Anchor != NoAnchor || d.Shatter != ""):
+		return errors.New("only solids may have an anchor or shatter")
+	case int(d.Anchor) >= len(anchorNames):
+		return fmt.Errorf("invalid anchor %d", d.Anchor)
 	}
 	return nil
 }
@@ -262,7 +368,7 @@ var (
 	maxFlowSpeed = fixed.FromInt(8)
 )
 
-func validateMotion(d Def) error {
+func validateMotion(d *Def) error {
 	moving := d.Kind == Powder || d.Kind == Liquid
 	switch {
 	case !moving && (d.FallAccel != 0 || d.SinkChance != 0):
@@ -291,6 +397,18 @@ func (t *Table) Len() int {
 // Def returns the definition of id. It panics if id is not in the table.
 func (t *Table) Def(id ID) Def {
 	return t.defs[id]
+}
+
+// BodyOf returns the solid that cells of id turn into, as a body, once a
+// cell of theirs is destroyed (Def.Body), or Air if they do not.
+func (t *Table) BodyOf(id ID) ID {
+	return t.links[id].body
+}
+
+// ShatterOf returns the powder a body of id turns into once it loses a
+// pixel (Def.Shatter), or Air if it does not.
+func (t *Table) ShatterOf(id ID) ID {
+	return t.links[id].shatter
 }
 
 // Lookup returns the ID of the material called name.

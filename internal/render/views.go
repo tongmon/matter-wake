@@ -20,8 +20,8 @@ type Views uint8
 const (
 	// ViewCell shows the values of the cell under the cursor.
 	ViewCell Views = 1 << iota
-	// ViewBodies outlines the bodies' collision shapes, the frozen ones in
-	// another color.
+	// ViewBodies outlines the bodies' collision shapes, the frozen ones and
+	// the static ones each in another color.
 	ViewBodies
 	// ViewChains draws the terrain collision the bodies made.
 	ViewChains
@@ -44,6 +44,7 @@ var (
 	changeRect  = color.RGBA{R: 0xf0, G: 0xe0, B: 0x30, A: 0xe0}
 	bodyEdge    = color.RGBA{R: 0x40, G: 0xff, B: 0x80, A: 0xff}
 	frozenEdge  = color.RGBA{R: 0x60, G: 0xa0, B: 0xff, A: 0xff}
+	staticEdge  = color.RGBA{R: 0xff, G: 0xb0, B: 0x30, A: 0xff}
 	chainEdge   = color.RGBA{R: 0xff, G: 0x40, B: 0xc0, A: 0xff}
 	queuedCell  = color.RGBA{R: 0x40, G: 0xf0, B: 0xf0, A: 0xff}
 	boxFill     = color.RGBA{R: 0x10, G: 0x10, B: 0x18, A: 0xd8}
@@ -63,9 +64,10 @@ func (r *Renderer) DrawViews(dst *ebiten.Image, g *game.Game, views Views, camX,
 		r.strokeEdges(dst, r.edges, camX, camY, chainEdge)
 	}
 	if views&ViewBodies != 0 {
-		r.edges, r.frozen = g.BodyEdges(r.edges[:0], r.frozen[:0])
+		r.edges, r.frozen, r.static = g.BodyEdges(r.edges[:0], r.frozen[:0], r.static[:0])
 		r.strokeEdges(dst, r.edges, camX, camY, bodyEdge)
 		r.strokeEdges(dst, r.frozen, camX, camY, frozenEdge)
+		r.strokeEdges(dst, r.static, camX, camY, staticEdge)
 	}
 	if views&ViewQueue != 0 {
 		r.queued = g.World().AppendQueued(r.queued[:0])

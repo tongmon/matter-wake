@@ -40,8 +40,12 @@ type body struct {
 	id  physics.Body
 	key uint32
 	mat material.ID
-	w   int
-	h   int
+	// static is set for a body Box2D never moves: one the terrain turned
+	// into (Convert) whose solid has an anchor, or the piece of one that
+	// its anchor kept (Break).
+	static bool
+	w      int
+	h      int
 	// left and top are where, in the frame, the first body's image began,
 	// in cells from the origin; cx and cy are where this image begins in
 	// that one, in pixels. Pixel (i, j) covers the frame's cells from
