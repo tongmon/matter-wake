@@ -237,16 +237,26 @@ func (w *World) TakeParticles(bx, by int, out []Particle) []Particle {
 }
 
 // Relaunch puts particles TakeParticles took back into the world, after
-// their block is in memory again, to fly on after the others. It fails,
-// and adds none, if one is in a cell outside the world or not in memory,
-// or holds what no particle could.
+// their block is in memory again, to fly on after the others. Past the
+// most that may fly, a cell's particle hands its cell to the queue of
+// cells to put back, from the cell it is in, and a speck is dropped, as
+// when they are made (Codex review). It fails, and adds none, if one is in
+// a cell outside the world or not in memory, or holds what no particle
+// could.
 func (w *World) Relaunch(ps []Particle) error {
 	for i := range ps {
 		if err := w.checkParticle(&ps[i]); err != nil {
 			return err
 		}
 	}
-	w.particles = append(w.particles, ps...)
+	room := max(maxParticles-len(w.particles), 0)
+	w.particles = append(w.particles, ps[:min(room, len(ps))]...)
+	for i := room; i < len(ps); i++ {
+		if p := &ps[i]; p.Flags&Speck == 0 {
+			x, y := p.At()
+			w.fresh = append(w.fresh, Queued{Cell: p.Cell, X: int32(x), Y: int32(y)})
+		}
+	}
 	return nil
 }
 

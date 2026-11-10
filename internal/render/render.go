@@ -49,8 +49,14 @@ type Renderer struct {
 	path                  vector.Path
 	stroke                vector.StrokeOptions
 	drawPath              vector.DrawPathOptions
-	// particles is DrawWorld's buffer of the particles flying.
+	// particles is DrawWorld's buffer of the particles flying; dots and
+	// dotIndex are the triangles it draws them with, two to a particle,
+	// and dot the white pixel they take their color from.
 	particles []world.Particle
+	dots      []ebiten.Vertex
+	dotIndex  []uint32
+	dot       *ebiten.Image
+	dotOp     ebiten.DrawTrianglesOptions
 }
 
 // New returns a renderer for the cells of mats.
@@ -91,10 +97,28 @@ func (r *Renderer) DrawWorld(dst *ebiten.Image, w *world.World, camX, camY int) 
 	r.drawParticles(dst, w, camX, camY)
 }
 
-// drawParticles draws the particles of w the camera at (camX, camY) sees.
+// drawParticles draws the particles of w the camera at (camX, camY) sees,
+// in one draw call. Drawn one by one, each would box its color for the
+// call (Codex review).
 func (r *Renderer) drawParticles(dst *ebiten.Image, w *world.World, camX, camY int) {
-	vw, vh := dst.Bounds().Dx(), dst.Bounds().Dy()
+	r.buildDots(w, camX, camY, dst.Bounds().Dx(), dst.Bounds().Dy())
+	if len(r.dotIndex) == 0 {
+		return
+	}
+	if r.dot == nil {
+		r.dot = ebiten.NewImage(1, 1)
+		r.dot.Fill(color.White)
+		r.dotOp.ColorScaleMode = ebiten.ColorScaleModePremultipliedAlpha
+	}
+	dst.DrawTriangles32(r.dots, r.dotIndex, r.dot, &r.dotOp)
+}
+
+// buildDots lists in dots and dotIndex two triangles for each particle of
+// w in a view of vw × vh cells whose top-left cell is (camX, camY): the
+// square of the cell it is in, in its cell's premultiplied color.
+func (r *Renderer) buildDots(w *world.World, camX, camY, vw, vh int) {
 	r.particles = w.AppendParticles(r.particles[:0])
+	r.dots, r.dotIndex = r.dots[:0], r.dotIndex[:0]
 	for i := range r.particles {
 		p := &r.particles[i]
 		x, y := p.At()
@@ -105,7 +129,15 @@ func (r *Renderer) drawParticles(dst *ebiten.Image, w *world.World, camX, camY i
 			continue
 		}
 		c := r.pal.RGBA(p.Cell)
-		vector.FillRect(dst, float32(x), float32(y), 1, 1, color.RGBA{R: c[0], G: c[1], B: c[2], A: c[3]}, false)
+		cr, cg, cb, ca := float32(c[0])/255, float32(c[1])/255, float32(c[2])/255, float32(c[3])/255
+		n := uint32(len(r.dots))
+		for _, d := range [4][2]float32{{0, 0}, {1, 0}, {0, 1}, {1, 1}} {
+			r.dots = append(r.dots, ebiten.Vertex{
+				DstX: float32(x) + d[0], DstY: float32(y) + d[1], SrcX: 0.5, SrcY: 0.5,
+				ColorR: cr, ColorG: cg, ColorB: cb, ColorA: ca,
+			})
+		}
+		r.dotIndex = append(r.dotIndex, n, n+1, n+2, n+1, n+3, n+2)
 	}
 }
 

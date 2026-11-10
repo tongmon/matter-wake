@@ -436,3 +436,35 @@ func BenchmarkParticles(b *testing.B) {
 		w.moveParticles()
 	}
 }
+
+// Particles that come back with their block keep the limit too: past it a
+// cell's particle hands its cell to the queue, where it is, and a speck
+// is dropped (Codex review).
+func TestRelaunchKeepsTheLimit(t *testing.T) {
+	w, ids := newTestWorld(t, 1024, 512, 1)
+	for x := range 10 {
+		w.Set(600+x, 300, ids.water)
+		w.Launch(600+x, 300, 0, perSecond(-30), uint64(x))
+	}
+	w.Flush()
+	w.Spray(Cell{Mat: ids.wood}, 620, 300, 0, 0, 1)
+	gone := w.TakeParticles(1, 0, nil)
+	if len(gone) != 11 {
+		t.Fatalf("took %d particles, want 11", len(gone))
+	}
+	for len(w.particles) < maxParticles-4 {
+		w.particles = append(w.particles, Particle{X: 1 << particleShift, Y: 1 << particleShift, Cell: Cell{Mat: ids.wood}, Life: 10, Flags: Speck})
+	}
+	if err := w.Relaunch(gone); err != nil {
+		t.Fatal(err)
+	}
+	if w.Particles() != maxParticles {
+		t.Fatalf("%d particles fly after the block came back, want the limit %d", w.Particles(), maxParticles)
+	}
+	if n := totalOf(w, ids.water); n != 10 {
+		t.Fatalf("%d water in the grid, queue and particles, want 10", n)
+	}
+	if w.QueueLen() != 6 {
+		t.Fatalf("%d cells wait in the queue, want the 6 past the limit", w.QueueLen())
+	}
+}
