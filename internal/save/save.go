@@ -635,8 +635,9 @@ func (l *lines) end() {
 
 // SessionVersion is the session file layout this build writes. It reads
 // version 1, which had no stream line, version 2, which had no chunk
-// lines, and version 3, which had no bodies line.
-const SessionVersion = 4
+// lines, version 3, which had no bodies line, and version 4, which had no
+// settle line.
+const SessionVersion = 5
 
 const sessionMagic = "matter-wake-session"
 
@@ -678,6 +679,10 @@ type Session struct {
 	// NextKey is the key of the next rigid body made, 0 in a file older
 	// than version 4.
 	NextKey uint32
+	// Settle is where the camera's middle was when far bodies last turned
+	// back into terrain, as (x, y) in cells, or nil: a file older than
+	// version 5 has none.
+	Settle *[2]int
 	// Held is how many cells of each material the inventory holds.
 	Held map[string]int
 	// Blocks lists the blocks that were in memory, as (bx, by).
@@ -753,6 +758,9 @@ func WriteSession(w io.Writer, s *Session) error {
 		_, _ = fmt.Fprintf(bw, "stream %d %d %d %d %d %d\n", st.Area[0], st.Area[1], st.Area[2], st.Area[3], st.LastCheck, st.Interval)
 	}
 	_, _ = fmt.Fprintf(bw, "bodies %d\n", s.NextKey)
+	if s.Settle != nil {
+		_, _ = fmt.Fprintf(bw, "settle %d %d\n", s.Settle[0], s.Settle[1])
+	}
 	names := make([]string, 0, len(s.Held))
 	for name, n := range s.Held {
 		if n < 0 || name == "" {
@@ -870,6 +878,21 @@ func (l *lines) bodies(s *Session, f []string, v uint64, seen *bool) {
 	}
 }
 
+// settle reads the fields of a settle line of a session of version v into
+// s.
+func (l *lines) settle(s *Session, f []string, v uint64) {
+	switch {
+	case v < 5:
+		l.err = fmt.Errorf("line %q: a version %d session has no settle line", l.line, v)
+	case len(f) != 2:
+		l.err = fmt.Errorf("line %q, want %q", l.line, "settle <x> <y>")
+	case s.Settle != nil:
+		l.err = errors.New("the settle line is there twice")
+	default:
+		s.Settle = &[2]int{l.int("settle x", f[0]), l.int("settle y", f[1])}
+	}
+}
+
 // chunk reads the fields of a chunk line into s; seen holds the chunks
 // read so far.
 func (l *lines) chunk(s *Session, f []string, seen map[[2]int]bool) {
@@ -919,6 +942,8 @@ func ReadSession(r io.Reader) (*Session, error) {
 		switch {
 		case len(f) > 0 && f[0] == "bodies":
 			l.bodies(s, f[1:], v, &bodies)
+		case len(f) > 0 && f[0] == "settle":
+			l.settle(s, f[1:], v)
 		case strings.HasPrefix(l.line, "held "):
 			l.held(s.Held, strings.TrimPrefix(l.line, "held "))
 		case len(f) > 0 && f[0] == "stream":

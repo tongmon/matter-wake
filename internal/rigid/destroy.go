@@ -55,7 +55,7 @@ func (s *System) Wear(x, y int, amount uint32) (material.ID, bool) {
 	if !gone {
 		s.worn = append(s.worn, key)
 		b.px[k].dmg = damage
-		s.showDamage(b, slot, k)
+		s.showDamage(b, slot, k, false)
 		return 0, false
 	}
 	b.px[k] = pixel{}
@@ -67,20 +67,16 @@ func (s *System) Wear(x, y int, amount uint32) (material.ID, bool) {
 }
 
 // showDamage puts the damage of pixel k of b, at slot, into every cell
-// that shows the pixel. A turned body's pixel may show in two cells, and a
-// body that does not move is not written again. The cells that show it
-// have their centers inside the pixel, where b was last written: within
-// a cell of the cell its center is in.
-func (s *System) showDamage(b *body, slot, k uint16) {
+// that shows the pixel, or empties them if hide is set. A turned body's
+// pixel may show in two cells, and a body that does not move is not
+// written again. The cells that show it have their centers inside the
+// pixel, where b was last written: within a cell of the cell its center is
+// in.
+func (s *System) showDamage(b *body, slot, k uint16, hide bool) {
 	if !b.written {
 		return
 	}
-	i, j := int(k)%b.w, int(k)/b.w
-	u := b.left + float32(b.cx+i) + 0.5
-	v := b.top + float32(b.cy+j) + 0.5
-	px, py := float32(b.wp.X*cellsPerMeter), float32(b.wp.Y*cellsPerMeter)
-	cx := int(math.Floor(float64(px + float32(b.wq.C*u) - float32(b.wq.S*v))))
-	cy := int(math.Floor(float64(py + float32(b.wq.S*u) + float32(b.wq.C*v))))
+	cx, cy := pixelCell(b, int(k)%b.w, int(k)/b.w, b.wp, b.wq)
 	for y := cy - 1; y <= cy+1; y++ {
 		for x := cx - 1; x <= cx+1; x++ {
 			c, ok := s.w.At(x, y)
@@ -89,6 +85,9 @@ func (s *System) showDamage(b *body, slot, k uint16) {
 			}
 			if owner, pixel := c.Body(); owner == slot && pixel == k {
 				c.Damage = b.px[k].dmg
+				if hide {
+					c = world.Cell{}
+				}
 				s.w.Put(x, y, c)
 			}
 		}
@@ -209,12 +208,19 @@ func (s *System) remove(slot int) {
 // powder, one for each pixel it has left, as Noita's glass turns whole into
 // glass_broken (C136). Noita makes as many as the pixels it had; the
 // developer chose those it has (2026-11-10), so no cell is made or lost.
-// Each pixel's cell is the one its center falls in where the body was last
-// written, and keeps the pixel's tone. Where another cell holds that cell,
-// the powder goes into the world's queue, to go back as a cell pushed out
-// does; outside the world or memory it goes to debris. The body is
-// removed. Shatter counts what it turned (Turned).
+// Powder that has nowhere in the world or memory to go goes to debris.
 func (s *System) shatter(slot int, powder material.ID, debris []int) error {
+	return s.dissolve(slot, powder, debris)
+}
+
+// dissolve turns the body at slot into cells of material into, one for
+// each pixel it has left, and removes it. Each pixel's cell is the one its
+// center falls in where the body was last written, and keeps the pixel's
+// tone. Where another cell holds that cell, the new cell goes into the
+// world's queue, to go back as a cell pushed out does; outside the world or
+// memory it is counted in unplaced, by material. It counts what it turned
+// (Turned).
+func (s *System) dissolve(slot int, into material.ID, unplaced []int) error {
 	b := &s.bodies[slot]
 	p, q := b.wp, b.wq
 	if !b.written {
@@ -229,10 +235,10 @@ func (s *System) shatter(slot int, powder material.ID, debris []int) error {
 				continue
 			}
 			x, y := pixelCell(b, i, j, p, q)
-			cell := world.Cell{Mat: powder, Tone: px.tone}
+			cell := world.Cell{Mat: into, Tone: px.tone}
 			switch c, ok := s.w.At(x, y); {
 			case !ok:
-				debris[powder]++
+				unplaced[into]++
 			case s.kinds[c.Mat] == material.Empty:
 				s.w.Put(x, y, cell)
 			default:
@@ -242,7 +248,7 @@ func (s *System) shatter(slot int, powder material.ID, debris []int) error {
 	}
 	s.w.Flush()
 	s.turned[b.mat] -= b.n
-	s.turned[powder] += b.n
+	s.turned[into] += b.n
 	if b.written {
 		s.gone = append(s.gone, b.box)
 	}
@@ -413,7 +419,9 @@ func (s *System) crop(b *body, keep int) {
 // its mass. The next Write writes b again.
 func (s *System) reshape(b *body) error {
 	d := s.mats.Def(b.mat)
-	surface := physics.Surface{Density: float32(d.Density) * densityScale, Friction: q8(d.Friction), Restitution: q8(d.Restitution)}
+	surface := physics.Surface{
+		Density: float32(d.Density) * densityScale, Friction: q8(d.Friction), Restitution: q8(d.Restitution), Hits: d.Cracks,
+	}
 	s.shape.shape(b.px, b.w, b.h)
 	made, err := s.setShapes(b, surface)
 	if err != nil {

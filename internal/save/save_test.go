@@ -415,7 +415,7 @@ func TestBlockTakesAnyMaterialTable(t *testing.T) {
 
 func TestSessionRoundTrip(t *testing.T) {
 	in := &Session{
-		CameraX: 7952, CameraY: -3, Slot: 3, NextKey: 4000000001,
+		CameraX: 7952, CameraY: -3, Slot: 3, NextKey: 4000000001, Settle: &[2]int{8100, -40},
 		Held:   map[string]int{"stone": 15, "water": 0, "sand": 120},
 		Blocks: [][2]int{{16, 2}, {15, 1}, {16, 1}},
 		Stream: &SessionStream{Area: [4]int{7872, -64, 608, 398}, LastCheck: 4200, Interval: 15},
@@ -428,7 +428,7 @@ func TestSessionRoundTrip(t *testing.T) {
 	if err := WriteSession(&buf, in); err != nil {
 		t.Fatal(err)
 	}
-	want := "matter-wake-session 4\ncamera 7952 -3\nslot 3\nstream 7872 -64 608 398 4200 15\nbodies 4000000001\n" +
+	want := "matter-wake-session 5\ncamera 7952 -3\nslot 3\nstream 7872 -64 608 398 4200 15\nbodies 4000000001\nsettle 8100 -40\n" +
 		"held \"sand\" 120\nheld \"stone\" 15\nblock 15 1\nblock 16 1\nblock 16 2\n" +
 		"chunk 129 9 0 0 0 0 8256 590 8260 600 0\nchunk 130 9 8320 576 8384 600 0 0 0 0 3\n"
 	if got := buf.String(); got != want {
@@ -441,6 +441,7 @@ func TestSessionRoundTrip(t *testing.T) {
 	if got.CameraX != 7952 || got.CameraY != -3 || got.Slot != 3 || len(got.Held) != 2 ||
 		got.Held["sand"] != 120 || got.Held["stone"] != 15 || len(got.Blocks) != 3 || got.Blocks[2] != [2]int{16, 2} ||
 		got.Stream == nil || *got.Stream != *in.Stream || !got.Scheduled || got.NextKey != in.NextKey ||
+		got.Settle == nil || *got.Settle != *in.Settle ||
 		len(got.Chunks) != 2 || got.Chunks[0] != in.Chunks[1] || got.Chunks[1] != in.Chunks[0] {
 		t.Fatalf("ReadSession = %+v", got)
 	}
@@ -517,11 +518,16 @@ func TestSessionTakesAnyName(t *testing.T) {
 func TestSessionRefusesBadFiles(t *testing.T) {
 	const head = "matter-wake-session 3\ncamera 1 2\nslot 1\n"
 	const head4 = "matter-wake-session 4\ncamera 1 2\nslot 1\n"
+	const head5 = "matter-wake-session 5\ncamera 1 2\nslot 1\n"
 	tests := []struct {
 		name, text, wantErr string
 	}{
 		{"empty", "", "missing"},
-		{"newer version", "matter-wake-session 5\n", "format version 5"},
+		{"newer version", "matter-wake-session 6\n", "format version 6"},
+		{"settle in version 4", head4 + "settle 1 2\n", "version 4"},
+		{"settle twice", head5 + "settle 1 2\nsettle 1 2\n", "twice"},
+		{"short settle line", head5 + "settle 1\n", "settle <x>"},
+		{"bad settle", head5 + "settle 1 y\n", "settle y"},
 		{"bodies in version 3", head + "bodies 4\n", "version 3"},
 		{"bodies twice", head4 + "bodies 4\nbodies 4\n", "twice"},
 		{"bad next key", head4 + "bodies -1\n", "next key"},

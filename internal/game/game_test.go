@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/tongmon/matter-wake/internal/material"
+	"github.com/tongmon/matter-wake/internal/rigid"
 	"github.com/tongmon/matter-wake/internal/rng"
 	"github.com/tongmon/matter-wake/internal/scene"
 	"github.com/tongmon/matter-wake/internal/world"
@@ -588,10 +589,12 @@ const coldMaterials = `{"materials": [
 	{"name": "ice", "kind": "static", "density": 255, "hp": 600, "body": "ice_body"},
 	{"name": "glass", "kind": "static", "density": 255, "hp": 600, "body": "glass_slab"},
 	{"name": "glass_powder", "kind": "powder", "density": 30, "fallAccel": 0.275, "sinkChance": 25, "slideChance": 50, "hp": 300},
-	{"name": "ice_body", "kind": "solid", "density": 6, "hp": 300, "friction": 0.05, "restitution": 0.2, "anchor": "top"},
+	{"name": "ice_body", "kind": "solid", "density": 6, "hp": 300, "friction": 0.05, "restitution": 0.2, "anchor": "top",
+	 "cracks": true, "sleepTo": "ice"},
 	{"name": "glass_body", "kind": "solid", "density": 6, "hp": 300, "friction": 0.3, "restitution": 0.2,
-	 "anchor": "largest", "shatter": "glass_powder"},
-	{"name": "glass_slab", "kind": "solid", "density": 6, "hp": 300, "friction": 0.9, "anchor": "largest"}
+	 "anchor": "largest", "shatter": "glass_powder", "cracks": true},
+	{"name": "glass_slab", "kind": "solid", "density": 6, "hp": 300, "friction": 0.9, "anchor": "largest",
+	 "cracks": true, "sleepTo": "glass"}
 ]}`
 
 // Digging ice turns the rest of it into one static body; digging the body
@@ -688,5 +691,57 @@ func TestIceAndGlassTurnAsTheToolDigs(t *testing.T) {
 	for range 60 {
 		step(t, g, &Input{})
 		check("powder falling")
+	}
+}
+
+// In the terrain, a body of ice asleep 350 or more cells from the camera's
+// middle turns back into ice, cell for pixel, once the camera's middle has
+// moved more than rigid.SettleMove cells since the last check, and not
+// before (C138).
+func TestFarIceTurnsBackIntoTerrain(t *testing.T) {
+	tab, err := material.ParseBytes([]byte(coldMaterials))
+	if err != nil {
+		t.Fatal(err)
+	}
+	g, err := New(&Config{
+		Width: 4096, Height: 4096, Seed: 3, Workers: 2, Materials: tab,
+		Slots: []string{"sand", "water", "stone"}, Tool: testTool, Body: BodyTool{Material: "ice_body", Width: 16, Height: 6},
+		Scene: SceneTerrain, ViewWidth: 480, ViewHeight: 270, Stream: testStream,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(g.Close)
+	camX, camY := g.Spawn()
+	// Set down gently on a ledge of stone in the air of the view: the
+	// ground there may be loose sand, which would let it fall through, fast
+	// enough to crack.
+	x, y := camX+240, camY+40
+	g.world.Fill(x-30, y, x+30, y+4, tab.MustLookup("stone"))
+	in := Input{CameraX: camX, CameraY: camY, Drop: true, CursorX: x, CursorY: y - 4}
+	step(t, g, &in)
+	for range 240 {
+		step(t, g, &Input{CameraX: camX, CameraY: camY})
+	}
+	if g.Bodies() != 1 || g.BodyRecords(nil)[0].Awake {
+		t.Fatalf("%d bodies; the test needs the ice asleep on the ground", g.Bodies())
+	}
+	ice := tab.MustLookup("ice")
+	before := g.world.Count(ice)
+	// 500 cells right: far enough from the ice, not far enough to check.
+	for dx := 4; dx <= 500; dx += 4 {
+		step(t, g, &Input{CameraX: camX + dx, CameraY: camY})
+	}
+	if g.Bodies() != 1 {
+		t.Fatalf("the camera moved 500 cells and %d bodies are left; it should not check before %d", g.Bodies(), rigid.SettleMove)
+	}
+	for dx := 504; dx <= 600; dx += 4 {
+		step(t, g, &Input{CameraX: camX + dx, CameraY: camY})
+	}
+	if g.Bodies() != 0 || g.world.Count(ice)-before != 16*6 {
+		t.Fatalf("after the check: %d bodies and %d new cells of ice; want none and %d", g.Bodies(), g.world.Count(ice)-before, 16*6)
+	}
+	if sx, _ := g.SettlePoint(); sx <= camX+240+rigid.SettleMove {
+		t.Fatalf("the check was at x = %d, want past %d", sx, camX+240+rigid.SettleMove)
 	}
 }

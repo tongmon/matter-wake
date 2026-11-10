@@ -1,0 +1,48 @@
+matter-wake-replay 7
+# Collision cracks (docs/briefs/ice-glass.md, C138). Bodies of materials
+# that crack meet the floor at different speeds, in the free space between
+# the two ledges, thrown down from just over it so they land at about the
+# speed they were thrown at: glass that shatters set down too gently to
+# crack; the same glass thrown at 10 m/s, which always cracks, and then
+# turns into powder; ice thrown at 5 m/s, just over the 50 cells per
+# second from which a crack comes with a chance, and at 10 m/s; and glass
+# that does not shatter dropped from 20 cells, landing at about 70 cells
+# per second. Creative mode puts a block of ice in the air on the right;
+# dug from below, it turns into a static body, and a wooden box thrown up
+# into it at 20 m/s cracks it where it hits.
+seed 1
+size 480 270
+scene sandbox
+view 480 270
+stream 64 4 512 12 60
+budget 250000
+tool 10 2000 4 circle
+body wood 16 12 0 0 0
+mode play
+slots ice stone
+materials d839cbd7dd531865
+ticks 400
+
+# A block of ice in the air on the right, in creative mode.
+10 440 40 P 1 0 0 brush 8 square mode creative
+11 440 40 - 0 0 0 brush 2 square mode play
+# Glass that shatters, set down 3 cells over the floor: too slow to crack.
+20 250 259 B 0 0 0 body glass_body 12 8 0 0 0
+21 250 259 - 0 0 0
+# The same glass thrown down at 10 m/s: it cracks and shatters.
+40 205 260 B 0 0 0 body glass_body 12 8 0 0 100
+41 205 260 - 0 0 0
+# Ice thrown down at 5 m/s, then at 10 m/s.
+60 275 261 B 0 0 0 body ice_body 16 6 0 0 50
+61 275 261 - 0 0 0
+70 320 261 B 0 0 0 body ice_body 16 6 0 0 100
+71 320 261 - 0 0 0
+# Glass that does not shatter, dropped from 20 cells.
+80 225 243 B 0 0 0 body glass_slab 16 6 0 0 0
+81 225 243 - 0 0 0
+# Dig the bottom of the ice block: it turns into a static body.
+100 440 50 D 0 0 0
+120 440 50 - 0 0 0
+# A wooden box thrown up into it at 20 m/s.
+140 440 150 B 0 0 0 body wood 10 6 0 0 -200
+141 440 150 - 0 0 0

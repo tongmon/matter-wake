@@ -100,6 +100,9 @@ func TestParseRejectsBadTables(t *testing.T) {
 		{"empty anchor", `{"materials":[{"name":"air","kind":"empty"},{"name":"wood","kind":"solid","density":6,"anchor":""}]}`, "unknown anchor"},
 		{"shatter on stone", `{"materials":[{"name":"air","kind":"empty"},{"name":"sand","kind":"powder"},{"name":"stone","kind":"static","shatter":"sand"}]}`, "only solids"},
 		{"shatter to water", `{"materials":[{"name":"air","kind":"empty"},{"name":"water","kind":"liquid"},{"name":"glass","kind":"solid","density":6,"shatter":"water"}]}`, "not a powder"},
+		{"cracks on stone", `{"materials":[{"name":"air","kind":"empty"},{"name":"stone","kind":"static","cracks":true}]}`, "only solids"},
+		{"sleepTo on stone", `{"materials":[{"name":"air","kind":"empty"},{"name":"stone","kind":"static","sleepTo":"stone"}]}`, "only solids"},
+		{"sleepTo sand", `{"materials":[{"name":"air","kind":"empty"},{"name":"sand","kind":"powder"},{"name":"ice","kind":"solid","density":6,"sleepTo":"sand"}]}`, "not a static"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -117,7 +120,7 @@ func TestParseRejectsBadTables(t *testing.T) {
 func TestLinks(t *testing.T) {
 	tab, err := Parse(strings.NewReader(`{"materials":[{"name":"air","kind":"empty"},
 		{"name":"ice","kind":"static","body":"ice_body"},
-		{"name":"ice_body","kind":"solid","density":6,"anchor":"top","shatter":"powder"},
+		{"name":"ice_body","kind":"solid","density":6,"anchor":"top","shatter":"powder","cracks":true,"sleepTo":"ice"},
 		{"name":"powder","kind":"powder"},
 		{"name":"wood","kind":"solid","density":6,"anchor":"bottom"}]}`))
 	if err != nil {
@@ -129,6 +132,10 @@ func TestLinks(t *testing.T) {
 	}
 	if tab.ShatterOf(body) != powder || tab.ShatterOf(wood) != Air {
 		t.Errorf("ShatterOf: ice_body %d, wood %d; want %d, %d", tab.ShatterOf(body), tab.ShatterOf(wood), powder, Air)
+	}
+	if tab.SleepOf(body) != ice || tab.SleepOf(wood) != Air || !tab.Def(body).Cracks || tab.Def(wood).Cracks {
+		t.Errorf("SleepOf: ice_body %d, wood %d; cracks %t, %t; want %d, %d, true, false",
+			tab.SleepOf(body), tab.SleepOf(wood), tab.Def(body).Cracks, tab.Def(wood).Cracks, ice, Air)
 	}
 	if tab.Def(body).Anchor != AnchorTop || tab.Def(wood).Anchor != AnchorBottom || tab.Def(ice).Anchor != NoAnchor {
 		t.Errorf("anchors %v, %v, %v; want top, bottom and none", tab.Def(body).Anchor, tab.Def(wood).Anchor, tab.Def(ice).Anchor)
@@ -220,6 +227,8 @@ func TestFingerprint(t *testing.T) {
 		{"shatter", func(d []Def) []Def { d[2].Shatter = "sand"; return d }},
 		{"anchor", func(d []Def) []Def { d[2].Anchor = AnchorLargest; return d }},
 		{"body", func(d []Def) []Def { d[3].Body = "glass"; return d }},
+		{"cracks", func(d []Def) []Def { d[2].Cracks = true; return d }},
+		{"sleepTo", func(d []Def) []Def { d[2].SleepTo = "pane"; return d }},
 	}
 	for _, e := range edits {
 		other, err := NewTable(e.edit(slices.Clone(defs)))

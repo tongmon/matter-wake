@@ -214,6 +214,14 @@ type Def struct {
 	// it loses a pixel, as Noita's glass does (C136). Empty for none.
 	// Solids only.
 	Shatter string `json:"shatter,omitempty"`
+	// Cracks has the solid's bodies crack where they hit something fast
+	// enough, as Noita's materials with crackability do (C138). Solids
+	// only.
+	Cracks bool `json:"cracks,omitempty"`
+	// SleepTo names the static material a dynamic body of the solid turns
+	// back into, cell for pixel, once it lies far from the camera (C138).
+	// Empty for none. Solids only.
+	SleepTo string `json:"sleepTo,omitempty"`
 
 	// Color is the base color; each cell varies it by its tone.
 	Color Color `json:"color"`
@@ -232,7 +240,7 @@ type Table struct {
 
 // link is what a material's names of other materials resolve to.
 type link struct {
-	body, shatter ID
+	body, shatter, sleepTo ID
 }
 
 type file struct {
@@ -298,7 +306,8 @@ func NewTable(defs []Def) (*Table, error) {
 }
 
 // resolve finds the materials d names, and checks their kinds: a static
-// turns into a solid's body, and a solid's body shatters into a powder.
+// turns into a solid's body, a solid's body shatters into a powder, and
+// one far from the camera turns back into a static.
 func (t *Table) resolve(d *Def) (link, error) {
 	var l link
 	if d.Body != "" {
@@ -314,6 +323,13 @@ func (t *Table) resolve(d *Def) (link, error) {
 			return l, fmt.Errorf("shatter %q is not a powder of the table", d.Shatter)
 		}
 		l.shatter = id
+	}
+	if d.SleepTo != "" {
+		id, ok := t.byName[d.SleepTo]
+		if !ok || t.defs[id].Kind != Static {
+			return l, fmt.Errorf("sleepTo %q is not a static of the table", d.SleepTo)
+		}
+		l.sleepTo = id
 	}
 	return l, nil
 }
@@ -353,8 +369,8 @@ func validateSolid(d *Def) error {
 		return fmt.Errorf("buoyancy %v must not be negative", d.Buoyancy)
 	case d.Kind != Static && d.Body != "":
 		return errors.New("only statics may turn into a body")
-	case d.Kind != Solid && (d.Anchor != NoAnchor || d.Shatter != ""):
-		return errors.New("only solids may have an anchor or shatter")
+	case d.Kind != Solid && (d.Anchor != NoAnchor || d.Shatter != "" || d.Cracks || d.SleepTo != ""):
+		return errors.New("only solids may have an anchor, shatter, crack or sleepTo")
 	case int(d.Anchor) >= len(anchorNames):
 		return fmt.Errorf("invalid anchor %d", d.Anchor)
 	}
@@ -409,6 +425,12 @@ func (t *Table) BodyOf(id ID) ID {
 // pixel (Def.Shatter), or Air if it does not.
 func (t *Table) ShatterOf(id ID) ID {
 	return t.links[id].shatter
+}
+
+// SleepOf returns the static a body of id turns back into far from the
+// camera (Def.SleepTo), or Air if it does not.
+func (t *Table) SleepOf(id ID) ID {
+	return t.links[id].sleepTo
 }
 
 // Lookup returns the ID of the material called name.

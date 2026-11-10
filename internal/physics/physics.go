@@ -70,7 +70,7 @@ static void physicsPush( b2BodyId body, b2Vec2 force, float torque, bool wake )
 // polygon whose points make no hull is skipped. Box2D copies the points.
 // Returns how many shapes it made.
 static int physicsSetShapes( b2BodyId body, const b2Vec2* points, const int* counts, int n, float density,
-							 float friction, float restitution )
+							 float friction, float restitution, bool hitEvents )
 {
 	// Awake, the body has a velocity for Box2D to move with its center of
 	// mass when the mass is updated below.
@@ -84,6 +84,7 @@ static int physicsSetShapes( b2BodyId body, const b2Vec2* points, const int* cou
 	def.density = density;
 	def.material.friction = friction;
 	def.material.restitution = restitution;
+	def.enableHitEvents = hitEvents;
 	def.updateBodyMass = false;
 	int made = 0;
 	for ( int k = 0; k < n; ++k )
@@ -168,14 +169,36 @@ static int physicsEdges( b2BodyId body, b2ShapeId* ids, int n, float* out, int c
 // Gives a body without shapes a box centered on its origin, made the way
 // a box body is, and its mass.
 static void physicsSetBox( b2BodyId body, float halfW, float halfH, float density, float friction,
-						   float restitution )
+						   float restitution, bool hitEvents )
 {
 	b2ShapeDef def = b2DefaultShapeDef();
 	def.density = density;
 	def.material.friction = friction;
 	def.material.restitution = restitution;
+	def.enableHitEvents = hitEvents;
 	b2Polygon polygon = b2MakeBox( halfW, halfH );
 	b2CreatePolygonShape( body, &def, &polygon );
+}
+
+// Copies the last step's hit events, as many as fit in cap, into bodies,
+// two bodies an event, and out, five floats an event: the point, the
+// normal and the approach speed. Returns how many events there are, which
+// may be more than cap.
+static int physicsHits( b2WorldId world, b2BodyId* bodies, float* out, int cap )
+{
+	b2ContactEvents events = b2World_GetContactEvents( world );
+	for ( int i = 0; i < events.hitCount && i < cap; ++i )
+	{
+		const b2ContactHitEvent* e = events.hitEvents + i;
+		bodies[2 * i] = b2Shape_GetBody( e->shapeIdA );
+		bodies[2 * i + 1] = b2Shape_GetBody( e->shapeIdB );
+		out[5 * i] = e->point.x;
+		out[5 * i + 1] = e->point.y;
+		out[5 * i + 2] = e->normal.x;
+		out[5 * i + 3] = e->normal.y;
+		out[5 * i + 4] = e->approachSpeed;
+	}
+	return events.hitCount;
 }
 */
 import "C"
@@ -216,6 +239,10 @@ type Config struct {
 	// Gravity in meters per second squared, for example {0, -10} for down
 	// along -Y.
 	Gravity Vec2
+	// HitSpeed is how fast, in meters per second, two shapes of which one
+	// reports hits (Box.Hits, Surface.Hits) must approach for Hits to list
+	// their contact. 0 keeps Box2D's default, 1 m/s.
+	HitSpeed float32
 }
 
 // World is one Box2D world.
@@ -235,6 +262,10 @@ type World struct {
 	// floats an edge.
 	ids   []C.b2ShapeId
 	edges []C.float
+	// hitBodies and hitData are Hits's buffers: two bodies and five floats
+	// a hit.
+	hitBodies []C.b2BodyId
+	hitData   []C.float
 }
 
 // NewWorld makes a World. Close it when done: its memory is C memory.
@@ -242,8 +273,14 @@ func NewWorld(cfg Config) (*World, error) {
 	if !finite(cfg.Gravity.X) || !finite(cfg.Gravity.Y) {
 		return nil, fmt.Errorf("physics: gravity %v is not finite", cfg.Gravity)
 	}
+	if !finite(cfg.HitSpeed) || cfg.HitSpeed < 0 {
+		return nil, fmt.Errorf("physics: hit speed %v is not 0 or more", cfg.HitSpeed)
+	}
 	def := C.b2DefaultWorldDef()
 	def.gravity = vec(cfg.Gravity)
+	if cfg.HitSpeed > 0 {
+		def.hitEventThreshold = C.float(cfg.HitSpeed)
+	}
 	def.workerCount = 1 // single-threaded: Box2D starts no threads
 	// Pointers go to C through a variable, not as &def in the call, which
 	// cgo turns into code that gocritic flags (docs/pitfalls.md, cgo).
@@ -292,6 +329,9 @@ type Box struct {
 	// Restitution is how much of its speed the box keeps when it bounces,
 	// 0 to 1.
 	Restitution float32
+	// Hits has the box's contacts listed by Hits when they approach faster
+	// than the world's hit speed.
+	Hits bool
 }
 
 // Body is a handle to a body in a World. It is an integer, safe to copy and
@@ -333,6 +373,7 @@ func (w *World) addBox(b Box, kind C.b2BodyType) (Body, error) {
 	shapeDef.density = C.float(b.Density)
 	shapeDef.material.friction = C.float(b.Friction)
 	shapeDef.material.restitution = C.float(b.Restitution)
+	shapeDef.enableHitEvents = C.bool(b.Hits)
 	polygon := C.b2MakeBox(C.float(b.HalfW), C.float(b.HalfH))
 	shapep, polygonp := &shapeDef, &polygon
 	shape := C.b2CreatePolygonShape(id, shapep, polygonp)
@@ -485,6 +526,9 @@ type Surface struct {
 	// Restitution is how much of its speed a shape keeps when it bounces,
 	// 0 to 1.
 	Restitution float32
+	// Hits has the shapes' contacts listed by Hits when they approach
+	// faster than the world's hit speed.
+	Hits bool
 }
 
 // SetShapes replaces the shapes of body b with p's polygons, each the
@@ -518,7 +562,7 @@ func (w *World) SetShapes(b Body, p Polygons, s Surface) (int, error) {
 		start = end
 	}
 	points, counts := &w.points[0], &w.counts[0]
-	n := C.physicsSetShapes(id, points, counts, C.int(len(p.Ends)), C.float(s.Density), C.float(s.Friction), C.float(s.Restitution))
+	n := C.physicsSetShapes(id, points, counts, C.int(len(p.Ends)), C.float(s.Density), C.float(s.Friction), C.float(s.Restitution), C.bool(s.Hits))
 	return int(n), nil
 }
 
@@ -564,7 +608,7 @@ func (w *World) SetBox(b Body, halfW, halfH float32, s Surface) error {
 	if err != nil {
 		return err
 	}
-	C.physicsSetBox(id, C.float(halfW), C.float(halfH), C.float(s.Density), C.float(s.Friction), C.float(s.Restitution))
+	C.physicsSetBox(id, C.float(halfW), C.float(halfH), C.float(s.Density), C.float(s.Friction), C.float(s.Restitution), C.bool(s.Hits))
 	return nil
 }
 
@@ -665,6 +709,49 @@ func (w *World) Edges(b Body, out []Edge) []Edge {
 			return out
 		}
 		w.edges = make([]C.float, 4*n)
+	}
+}
+
+// Hit is a contact the last Step found two shapes in, one of which reports
+// hits, approaching faster than the world's hit speed (Config.HitSpeed).
+type Hit struct {
+	// A and B are the bodies of the two shapes.
+	A, B Body
+	// Point is where they hit, in meters, and Normal points from A to B.
+	Point, Normal Vec2
+	// Speed is how fast they approached along the normal at the contact
+	// point, in meters per second, as Box2D samples it before solving the
+	// step's contacts: the fastest of the contact's points.
+	Speed float32
+}
+
+// Hits appends to out the hits of the last Step, in Box2D's order: by
+// contact, which is the same on every run. A shape reports hits if made
+// with Box.Hits or Surface.Hits; either shape of a contact will do.
+func (w *World) Hits(out []Hit) []Hit {
+	w.mustBeOpen()
+	for {
+		capacity := len(w.hitBodies) / 2
+		var bodies *C.b2BodyId
+		var data *C.float
+		if capacity > 0 {
+			bodies, data = &w.hitBodies[0], &w.hitData[0]
+		}
+		n := int(C.physicsHits(w.id, bodies, data, C.int(capacity)))
+		if n <= capacity {
+			for k := range n {
+				d := w.hitData[5*k : 5*k+5]
+				out = append(out, Hit{
+					A: bodyOf(w.hitBodies[2*k]), B: bodyOf(w.hitBodies[2*k+1]),
+					Point:  Vec2{float32(d[0]), float32(d[1])},
+					Normal: Vec2{float32(d[2]), float32(d[3])},
+					Speed:  float32(d[4]),
+				})
+			}
+			return out
+		}
+		w.hitBodies = make([]C.b2BodyId, 2*n)
+		w.hitData = make([]C.float, 5*n)
 	}
 }
 

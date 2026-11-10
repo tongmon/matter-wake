@@ -63,9 +63,10 @@ func TestGoldenReplays(t *testing.T) {
 			"tool %d times, and drop %d bodies turned or moving; each must happen",
 			all.made, all.changed[0], all.changed[1], all.changed[2], all.moving)
 	}
-	if all.solidified == 0 || all.shattered == 0 || all.static == 0 {
-		t.Fatalf("the replays turn %d cells of terrain into bodies, shatter %d pixels into powder and break %d static "+
-			"bodies apart; each must happen", all.solidified, all.shattered, all.static)
+	if all.solidified == 0 || all.shattered == 0 || all.static == 0 || all.cracked == 0 || all.settled == 0 {
+		t.Fatalf("the replays turn %d cells of terrain into bodies, shatter %d pixels into powder, break %d static "+
+			"bodies apart, crack %d pixels out and turn %d pixels back into terrain; each must happen",
+			all.solidified, all.shattered, all.static, all.cracked, all.settled)
 	}
 }
 
@@ -74,9 +75,11 @@ func TestGoldenReplays(t *testing.T) {
 // bodies dropped turned or moving. solidified counts the cells of terrain
 // that turned into bodies, shattered the pixels of bodies that turned into
 // powder, and static the ticks in which a static body broke into pieces.
+// cracked counts the pixels cracks took out, and settled the pixels of
+// bodies far from the camera that turned back into terrain.
 type coverage struct {
 	placed, selected, dropped, broken, made, moving int
-	solidified, shattered, static                   int
+	solidified, shattered, static, cracked, settled int
 	// dug counts the cells dug out by their material's kind.
 	dug [material.Solid + 1]int
 	// queued counts the ticks that ended with cells in the queue.
@@ -96,6 +99,8 @@ func (c *coverage) add(o *coverage) {
 	c.solidified += o.solidified
 	c.shattered += o.shattered
 	c.static += o.static
+	c.cracked += o.cracked
+	c.settled += o.settled
 	c.queued += o.queued
 	for k, n := range o.dug {
 		c.dug[k] += n
@@ -111,9 +116,11 @@ func (c *coverage) add(o *coverage) {
 // end. In the rooms, after every tick it checks that nothing made or
 // destroyed a cell: each material's cells in the world, in the queue and
 // in the inventory are what they were at the start, plus what creative
-// mode made (game.Game.Made), from whichever tick it was turned on, and
-// less what turned into another material (game.Game.Turned): terrain dug
-// into turning into a body, and a body shattering into powder. The
+// mode made (game.Game.Made), from whichever tick it was turned on, less
+// what turned into another material (game.Game.Turned): terrain dug into
+// turning into a body, a body shattering into powder and, in the terrain,
+// a far body turning back into terrain; and less what cracks took out
+// (game.Game.Lost), which is gone. The
 // tools only move cells between the world and the inventory, the world's
 // own tick neither makes nor destroys them, and a body pushes cells into
 // the queue. Solids are counted in the bodies' images instead, since a
@@ -150,17 +157,20 @@ func trace(t *testing.T, r *Replay, tab *material.Table, workers int) (string, c
 			held[id] = g.Inventory(material.ID(id))
 		}
 		bodies, dropped, made := g.Bodies(), g.Dropped(), madeCells(g, tab)
-		solid, powder := turnedInto(g, tab)
+		solid, powder, terrain := turnedInto(g, tab)
 		statics, staticPx := staticBodies(g)
+		lost := lostPixels(g, tab)
 		was := settings{g.Tool(), g.Creative(), g.Body()}
 		if err := g.Step(in); err != nil {
 			t.Fatal(err)
 		}
 		cov.count(&was, &settings{g.Tool(), g.Creative(), g.Body()})
 		cov.made += madeCells(g, tab) - made
-		nowSolid, nowPowder := turnedInto(g, tab)
+		nowSolid, nowPowder, nowTerrain := turnedInto(g, tab)
 		cov.solidified += nowSolid - solid
 		cov.shattered += nowPowder - powder
+		cov.settled += max(nowTerrain-terrain, 0)
+		cov.cracked += lostPixels(g, tab) - lost
 		// A static body that lost pixels while dynamic bodies came that
 		// the body tool did not drop: pieces of it.
 		nowStatics, nowStaticPx := staticBodies(g)
@@ -232,8 +242,10 @@ func madeCells(g *game.Game, tab *material.Table) int {
 
 // turnedInto returns how many cells or pixels have turned into solids, the
 // terrain that became bodies, and into powders, the bodies that shattered,
-// in all (game.Game.Turned).
-func turnedInto(g *game.Game, tab *material.Table) (solid, powder int) {
+// in all (game.Game.Turned), and the sum of what turned into and out of
+// statics: terrain turned into bodies less bodies turned back into
+// terrain.
+func turnedInto(g *game.Game, tab *material.Table) (solid, powder, terrain int) {
 	n := make([]int, tab.Len())
 	g.Turned(n)
 	for id, k := range n {
@@ -242,10 +254,24 @@ func turnedInto(g *game.Game, tab *material.Table) (solid, powder int) {
 			solid += max(k, 0)
 		case material.Powder:
 			powder += k
-		case material.Empty, material.Static, material.Liquid:
+		case material.Static:
+			terrain += k
+		case material.Empty, material.Liquid:
 		}
 	}
-	return solid, powder
+	return solid, powder, terrain
+}
+
+// lostPixels returns how many pixels cracks have taken out in all
+// (game.Game.Lost).
+func lostPixels(g *game.Game, tab *material.Table) int {
+	n := make([]int, tab.Len())
+	g.Lost(n)
+	sum := 0
+	for _, k := range n {
+		sum += k
+	}
+	return sum
 }
 
 // staticBodies returns how many of g's bodies are static and how many
@@ -267,21 +293,22 @@ func staticBodies(g *game.Game) (n, pixels int) {
 
 // totals returns each material's cells in the world and in its queue plus
 // what the inventory holds of it, less what creative mode made and what
-// turned into it from another material, and for a solid the pixels of the
-// bodies' images instead of its cells. Air is left out: it is what digging
-// and bodies leave.
+// turned into it from another material, plus what cracks took out of it,
+// and for a solid the pixels of the bodies' images instead of its cells.
+// Air is left out: it is what digging and bodies leave.
 func totals(g *game.Game, tab *material.Table) []int {
 	n := countCells(g, tab)
 	g.World().Queued(n)
 	n[material.Air] = 0
-	made, turned := make([]int, len(n)), make([]int, len(n))
+	made, turned, lost := make([]int, len(n)), make([]int, len(n)), make([]int, len(n))
 	g.Made(made)
 	g.Turned(turned)
+	g.Lost(lost)
 	for id := 1; id < len(n); id++ {
 		if tab.Def(material.ID(id)).Kind == material.Solid {
 			n[id] = 0
 		}
-		n[id] += g.Inventory(material.ID(id)) - made[id] - turned[id]
+		n[id] += g.Inventory(material.ID(id)) - made[id] - turned[id] + lost[id]
 	}
 	g.BodyPixels(n)
 	return n

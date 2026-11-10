@@ -42,17 +42,23 @@ func testTable(tb testing.TB, b float64) *material.Table {
 			Anchor: material.AnchorBottom,
 		},
 		{Name: "ice", Kind: material.Static, Density: 255, HP: 30000, Body: "ice_body"},
-		{Name: "ice_body", Kind: material.Solid, Density: 6, HP: 10000, Friction: q(0.05), Restitution: q(0.2), Anchor: material.AnchorTop},
+		{
+			Name: "ice_body", Kind: material.Solid, Density: 6, HP: 10000, Friction: q(0.05), Restitution: q(0.2),
+			Anchor: material.AnchorTop, Cracks: true, SleepTo: "ice",
+		},
 		{Name: "glass", Kind: material.Static, Density: 255, HP: 30000, Body: "glass_slab"},
 		{
 			Name: "glass_body", Kind: material.Solid, Density: 6, HP: 200, Friction: q(0.3), Restitution: q(0.2),
-			Anchor: material.AnchorLargest, Shatter: "glass_powder",
+			Anchor: material.AnchorLargest, Shatter: "glass_powder", Cracks: true,
 		},
 		{Name: "glass_powder", Kind: material.Powder, Density: 30, FallAccel: q(0.275), SinkChance: 25, SlideChance: 50, HP: 1000},
 		{Name: "trunk", Kind: material.Static, Density: 255, Hardness: 8, HP: 5000, Body: "wood"},
 		{Name: "rock", Kind: material.Static, Density: 255, HP: 1000, Body: "rock_body"},
 		{Name: "rock_body", Kind: material.Solid, Density: 10, HP: 1000, Friction: q(0.6), Anchor: material.AnchorLargest},
-		{Name: "glass_slab", Kind: material.Solid, Density: 6, HP: 10000, Friction: q(0.9), Anchor: material.AnchorLargest},
+		{
+			Name: "glass_slab", Kind: material.Solid, Density: 6, HP: 10000, Friction: q(0.9),
+			Anchor: material.AnchorLargest, Cracks: true, SleepTo: "glass",
+		},
 		{Name: "pane", Kind: material.Static, Density: 255, HP: 30000, Body: "glass_body"},
 	})
 	if err != nil {
