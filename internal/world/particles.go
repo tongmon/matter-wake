@@ -2,6 +2,7 @@ package world
 
 import (
 	"fmt"
+	"math"
 	"math/bits"
 
 	"github.com/tongmon/matter-wake/internal/material"
@@ -18,8 +19,8 @@ import (
 // meets stops it, and it hands its cell to the queue of cells to put back,
 // which puts it in the grid in that same tick if it can. A speck is a
 // particle without a cell, only a look: the dust a crack throws off
-// (Spray). A speck of a solid bounces off matter a few times, and it
-// lives a few seconds at most.
+// (Spray), the spray of matter a body pushes (Spatter). A speck of a solid
+// bounces off matter a few times, and it lives a few seconds at most.
 //
 // Particles move after the cells' tick and before the queue, one after
 // another in the order they were made, on the caller's goroutine. Each
@@ -56,10 +57,12 @@ const (
 	// 10 s.
 	speckLife       = 300
 	speckLifeSpread = 301
-	// maxParticles is the most particles that fly at once, Noita's pool.
-	// Past it a cell goes into the queue instead, and a speck is not made
-	// (🔶: Noita's is not known).
+	// maxParticles is the most particles a pool holds, Noita's (C140 7).
+	// Past it a cell goes into the queue instead, and a speck is not made.
 	maxParticles = 100_000
+	// speckDensity is a speck's density while it passes: denser than any
+	// matter, as Noita's 1000 is, so the first matter it meets ends that.
+	speckDensity = math.MaxUint8
 	// maxSpeed bounds a particle's speed along each axis: 64 cells a tick,
 	// faster than anything throws one or than one falls across the biggest
 	// world. It only keeps the arithmetic in range; Noita has none.
@@ -87,6 +90,25 @@ const (
 // first ones.
 const particleSalt = 0x1f83d9abfb41bd6b
 
+// Particles count against pools as Noita's do, each holding at most
+// maxParticles (C140 7): cellPool holds the cells' particles and specks
+// such as a crack's, pushPool the specks a body pushing matter throws
+// (Spatter). Noita's third pool, for matter that glows, comes with the first
+// material that glows.
+const (
+	cellPool = iota
+	pushPool
+	pools
+)
+
+// poolOf returns the pool a particle with flags f counts against.
+func poolOf(f ParticleFlags) int {
+	if f&Pushed != 0 {
+		return pushPool
+	}
+	return cellPool
+}
+
 // ParticleFlags say what a particle is and how it moves.
 type ParticleFlags uint8
 
@@ -99,8 +121,11 @@ const (
 	Passing
 	// Bounces marks a speck that bounces off matter rather than stopping.
 	Bounces
+	// Pushed marks a speck a body pushing matter threw (Spatter): it counts
+	// against a pool of its own.
+	Pushed
 	// ParticleFlagsAll are all the flags.
-	ParticleFlagsAll = Speck | Passing | Bounces
+	ParticleFlagsAll = Speck | Passing | Bounces | Pushed
 )
 
 // Particle is a cell, or a speck, out of the grid and flying.
@@ -137,8 +162,9 @@ func (p *Particle) At() (x, y int) {
 // the random numbers of seed: a liquid or powder a body hits hard. A
 // particle leaving upward faster than 50 cells/s passes, half the time,
 // only through matter denser than its cell, otherwise through any (C81).
-// When as many particles fly as may, the cell goes into the queue of cells
-// to put back instead (Displace). Air, a body's pixel and positions
+// When its pool is full, the cell goes into the queue of cells to put back
+// instead (Displace): Noita loses it (C140 7), and a cell that vanished
+// would break the count of matter. Air, a body's pixel and positions
 // outside the grid or memory are left alone. The change waits for Flush,
 // as Displace's does.
 func (w *World) Launch(x, y int, vx, vy int32, seed uint64) {
@@ -149,7 +175,7 @@ func (w *World) Launch(x, y int, vx, vy int32, seed uint64) {
 	if k := w.mats[c.Mat].kind; k == material.Empty || k == material.Solid {
 		return
 	}
-	if len(w.particles) >= maxParticles {
+	if w.pooled[cellPool] >= maxParticles {
 		w.Displace(x, y)
 		return
 	}
@@ -163,33 +189,60 @@ func (w *World) Launch(x, y int, vx, vy int32, seed uint64) {
 		X: px, Y: py, LX: px, LY: py, VX: clampSpeed(vx), VY: clampSpeed(vy),
 		Cell: *c, Seed: s.Uint64(), Density: density, Pass: passCells, Flags: Passing,
 	})
+	w.pooled[cellPool]++
 	*c = Cell{}
 	w.pending.add(rect{x, y, x + 1, y + 1})
 }
 
 // Spray adds a speck that shows c, flying from the middle of cell (x, y)
 // at (vx, vy), in 1/ParticleOne cells per tick, with the random numbers of
-// seed: the dust of a pixel a crack took out. It lives 5 to 10 s, bounces
-// off matter if c is not a liquid or powder, and changes no cell. When as
-// many particles fly as may, or (x, y) is outside the grid or memory, it
-// adds nothing.
+// seed: the dust of a pixel a crack took out (C139 4.2). It lives 5 to 10
+// s, bounces off matter if c is not a liquid or powder, and changes no
+// cell. When its pool, the cells' particles', is full, or (x, y) is
+// outside the grid or memory, it adds nothing.
 func (w *World) Spray(c Cell, x, y int, vx, vy int32, seed uint64) {
-	if !w.has(x, y) || len(w.particles) >= maxParticles || int(c.Mat) >= len(w.mats) {
+	w.speck(c, int64(x)<<particleShift+ParticleOne/2, int64(y)<<particleShift+ParticleOne/2, vx, vy, seed, Speck)
+}
+
+// Spatter adds a speck that shows c, flying from (x, y), in 1/ParticleOne
+// cells, at (vx, vy), in 1/ParticleOne cells per tick, with the random
+// numbers of seed: matter a body pushes, or fails to push, sprayed as
+// Noita sprays it (C140 3, 4). It counts against a pool of its own. One
+// that passes starts out passing through matter, but it is denser than
+// anything, so the first matter it meets ends that. It lives 5 to 10 s,
+// bounces off matter if c is not a liquid or powder, and changes no cell.
+// When its pool is full, or (x, y) is outside the grid or memory, it adds
+// nothing.
+func (w *World) Spatter(c Cell, x, y int64, vx, vy int32, seed uint64, passing bool) {
+	flags := Speck | Pushed
+	if passing {
+		flags |= Passing
+	}
+	w.speck(c, x, y, vx, vy, seed, flags)
+}
+
+// speck adds a speck that shows c at (x, y), moving at (vx, vy), with the
+// random numbers of seed and the given flags, unless its pool is full or
+// (x, y) is outside the grid or memory. It bounces if c is neither a
+// liquid nor a powder.
+func (w *World) speck(c Cell, x, y int64, vx, vy int32, seed uint64, flags ParticleFlags) {
+	pool := poolOf(flags)
+	if !w.has(int(x>>particleShift), int(y>>particleShift)) || w.pooled[pool] >= maxParticles ||
+		int(c.Mat) >= len(w.mats) {
 		return
 	}
 	s := rng.New(seed)
-	flags := Speck
 	if k := w.mats[c.Mat].kind; k != material.Liquid && k != material.Powder {
 		flags |= Bounces
 	}
-	px, py := int64(x)<<particleShift+ParticleOne/2, int64(y)<<particleShift+ParticleOne/2
 	w.particles = append(w.particles, Particle{
-		X: px, Y: py, LX: px, LY: py, VX: clampSpeed(vx), VY: clampSpeed(vy),
-		Cell: c, Seed: s.Uint64(), Life: int32(speckLife + s.IntN(speckLifeSpread)), Flags: flags,
+		X: x, Y: y, LX: x, LY: y, VX: clampSpeed(vx), VY: clampSpeed(vy), Cell: c, Seed: s.Uint64(),
+		Life: int32(speckLife + s.IntN(speckLifeSpread)), Density: speckDensity, Pass: passCells, Flags: flags,
 	})
+	w.pooled[pool]++
 }
 
-// Particles returns how many particles fly, specks too.
+// Particles returns how many particles fly, specks too, in all pools.
 func (w *World) Particles() int {
 	return len(w.particles)
 }
@@ -220,6 +273,7 @@ func (w *World) TakeParticles(bx, by int, out []Particle) []Particle {
 	for _, p := range w.particles {
 		if r.has(p.At()) {
 			out = append(out, p)
+			w.pooled[poolOf(p.Flags)]--
 		} else {
 			kept = append(kept, p)
 		}
@@ -230,11 +284,11 @@ func (w *World) TakeParticles(bx, by int, out []Particle) []Particle {
 }
 
 // Relaunch puts particles TakeParticles took back into the world, after
-// their block is in memory again, to fly on after the others. Past the
-// most that may fly, a cell's particle hands its cell to the queue of
-// cells to put back, from the cell it is in, and a speck is dropped, as
-// when they are made (Codex review). It fails, and adds none, if one is in
-// a cell outside the world or not in memory, or holds what no particle
+// their block is in memory again, to fly on after the others. Past what
+// its pool holds, a cell's particle hands its cell to the queue of cells
+// to put back, from the cell it is in, and a speck is dropped, as when
+// they are made (Codex review). It fails, and adds none, if one is in a
+// cell outside the world or not in memory, or holds what no particle
 // could.
 func (w *World) Relaunch(ps []Particle) error {
 	for i := range ps {
@@ -242,10 +296,12 @@ func (w *World) Relaunch(ps []Particle) error {
 			return err
 		}
 	}
-	room := max(maxParticles-len(w.particles), 0)
-	w.particles = append(w.particles, ps[:min(room, len(ps))]...)
-	for i := room; i < len(ps); i++ {
-		if p := &ps[i]; p.Flags&Speck == 0 {
+	for i := range ps {
+		p := &ps[i]
+		if pool := poolOf(p.Flags); w.pooled[pool] < maxParticles {
+			w.particles = append(w.particles, *p)
+			w.pooled[pool]++
+		} else if p.Flags&Speck == 0 {
 			x, y := p.At()
 			w.fresh = append(w.fresh, Queued{Cell: p.Cell, X: int32(x), Y: int32(y)})
 		}
@@ -263,9 +319,9 @@ func (w *World) checkParticle(p *Particle) error {
 		return fmt.Errorf("world: a particle of material %d, which the table does not have", p.Cell.Mat)
 	case p.Flags&^ParticleFlagsAll != 0:
 		return fmt.Errorf("world: a particle with flags %#x", p.Flags)
-	case p.Flags&Speck != 0 && (p.Life < 0 || p.Flags&Passing != 0):
-		return fmt.Errorf("world: a speck with %d ticks to live and flags %#x", p.Life, p.Flags)
-	case p.Flags&Speck == 0 && (p.Life != 0 || p.Flags&Bounces != 0 || w.mats[p.Cell.Mat].kind == material.Empty):
+	case p.Flags&Speck != 0 && p.Life < 0:
+		return fmt.Errorf("world: a speck with %d ticks to live", p.Life)
+	case p.Flags&Speck == 0 && (p.Life != 0 || p.Flags&(Bounces|Pushed) != 0 || w.mats[p.Cell.Mat].kind == material.Empty):
 		return fmt.Errorf("world: a cell's particle of material %d with %d ticks to live and flags %#x",
 			p.Cell.Mat, p.Life, p.Flags)
 	case p.Pass < -2 || p.Pass > passCells:
@@ -292,6 +348,7 @@ func (w *World) moveParticles() {
 			kept = append(kept, p)
 			continue
 		}
+		w.pooled[poolOf(p.Flags)]--
 		if p.Flags&Speck == 0 {
 			x, y := p.At()
 			w.fresh = append(w.fresh, Queued{Cell: p.Cell, X: int32(x), Y: int32(y)})
@@ -327,28 +384,27 @@ func (w *World) move(p *Particle) bool {
 
 // sweep moves p toward (tx, ty) along its path, as Noita's does (C82). A
 // target outside the grid or memory stops p where it is. Otherwise the
-// path goes a cell's length at a time from p toward the target, as many
-// steps as the distance from the last point it checked, rounded, and at
-// most maxSweep, checking each cell it steps into but the one p is in.
-// Empty space ends passing. While p passes, matter costs a cell of its
-// passing, and matter no denser than p ends it; p still steps in. Matter
-// stops p where it is, or bounces it if it bounces. A path that is not
-// stopped ends at the target, whatever it checked. It reports whether p
-// flies on.
+// path goes a cell's length at a time from p, along the line from the last
+// point it checked to the target, as many steps as that line is long,
+// rounded, and at most maxSweep, checking each cell it steps into but the
+// one p is in. Empty space ends passing. While p passes, matter costs a
+// cell of its passing, and matter no denser than p ends it; p still steps
+// in. Matter stops p where it is, or bounces it if it bounces. A path that
+// is not stopped ends at the target, whatever it checked. It reports
+// whether p flies on.
 //
-// 🔶 Noita steps along the line from the last point it checked, the
-// corner of a cell, to the target, starting from the particle. For a slow
-// particle the two are apart, and the steps swing further aside each tick:
-// a drop thrown straight up checked cells 30 to the side at the top. So
-// the steps here go from the particle straight to the target; their count
-// is still Noita's.
+// The last point checked is the corner of a cell, and p is anywhere in its
+// cell, so the steps of a slow particle lean aside, and further each tick
+// as they swing from one side to the other: Noita's do too, by the same
+// rule (C140 6). Checked cells that far aside stop p only where they meet
+// matter or leave the grid.
 func (w *World) sweep(p *Particle, tx, ty int64) bool {
 	if !w.has(int(tx>>particleShift), int(ty>>particleShift)) {
 		return false
 	}
-	steps := min(int((distance(tx-p.LX, ty-p.LY)+ParticleOne/2)>>particleShift), maxSweep)
-	if dx, dy := tx-p.X, ty-p.Y; steps > 0 && (dx != 0 || dy != 0) {
-		length := distance(dx, dy)
+	dx, dy := tx-p.LX, ty-p.LY
+	length := distance(dx, dy)
+	if steps := min(int((length+ParticleOne/2)>>particleShift), maxSweep); steps > 0 {
 		ux, uy := dx*ParticleOne/length, dy*ParticleOne/length
 		x, y := p.X, p.Y
 		for k := range steps {

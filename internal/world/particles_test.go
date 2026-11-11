@@ -26,14 +26,16 @@ func totalOf(w *World, id material.ID) int {
 
 // A launched cell leaves the grid, flies as a particle on Noita's
 // gravity, and goes back into the grid through the queue where it stops:
-// on the floor. It is counted all the way.
+// on the floor. It is counted all the way. The world is wide enough that
+// the cells its path checks, which swing aside (TestPathSwingsAside), stay
+// in it.
 func TestLaunchedCellFliesAndLands(t *testing.T) {
-	w, ids := newTestWorld(t, 64, 128, 1)
-	w.Fill(0, 120, 64, 128, ids.stone)
-	w.Set(32, 100, ids.water)
-	w.Launch(32, 100, 0, perSecond(-120), 1)
+	w, ids := newTestWorld(t, 256, 128, 1)
+	w.Fill(0, 120, 256, 128, ids.stone)
+	w.Set(128, 100, ids.water)
+	w.Launch(128, 100, 0, perSecond(-120), 1)
 	w.Flush()
-	if c, _ := w.At(32, 100); c.Mat != material.Air {
+	if c, _ := w.At(128, 100); c.Mat != material.Air {
 		t.Fatalf("the launched cell left %d behind, want air", c.Mat)
 	}
 	if w.Particles() != 1 || totalOf(w, ids.water) != 1 {
@@ -59,8 +61,41 @@ func TestLaunchedCellFliesAndLands(t *testing.T) {
 	if top != 25 {
 		t.Fatalf("the particle rose to row %d, want 25", top)
 	}
-	if x, y, ok := find(w, ids.water); !ok || y != 119 || x != 32 {
-		t.Fatalf("the water came back at (%d, %d), %v; want (32, 119) on the floor", x, y, ok)
+	// On the way down the checked cells reach the floor before the
+	// particle does, far aside: it stops on the last step it passed, and
+	// its cell comes back 42 cells aside.
+	if x, y, ok := find(w, ids.water); !ok || y != 119 || x != 86 {
+		t.Fatalf("the water came back at (%d, %d), %v; want (86, 119) on the floor", x, y, ok)
+	}
+}
+
+// The cells a path checks lean aside, as Noita's do (C82, C140 6): the
+// last point checked is a cell's corner, while the particle is anywhere in
+// its cell, and the steps go along the line from that corner to the
+// target, from the particle. A drop thrown straight up checks cells
+// further aside each tick, from one side to the other, until near the top
+// they leave the grid: it stops there, and its cell comes back 31 cells
+// aside, as Noita's stopped 28 cells aside at the edge of the area it
+// keeps particles in.
+func TestPathSwingsAside(t *testing.T) {
+	w, ids := newTestWorld(t, 64, 128, 1)
+	w.Set(32, 100, ids.water)
+	w.Launch(32, 100, 0, perSecond(-120), 1)
+	w.Flush()
+	widest := int64(0)
+	for w.Particles() > 0 {
+		if w.Tick() > 300 {
+			t.Fatal("the particle still flies after 300 ticks")
+		}
+		p := &w.particles[0]
+		widest = max(widest, abs64(p.LX>>particleShift-p.X>>particleShift))
+		w.Step()
+	}
+	if widest != 31 {
+		t.Fatalf("the checked cells swung %d cells aside, want 31", widest)
+	}
+	if c, _ := w.At(63, 24); c.Mat != ids.water {
+		t.Fatalf("(63, 24) holds %d after the particle stopped, want its water", c.Mat)
 	}
 }
 
@@ -194,8 +229,10 @@ func TestFallingParticleStopsOnTheSurface(t *testing.T) {
 	if w.Particles() != 0 {
 		t.Fatal("the particle never landed")
 	}
-	if c, _ := w.At(30, 199); c.Mat != ids.water {
-		t.Fatalf("(30, 199) holds %d after the landing, want water on the surface", c.Mat)
+	// The checked cells lean aside (TestPathSwingsAside): it lands a cell
+	// aside.
+	if c, _ := w.At(29, 199); c.Mat != ids.water {
+		t.Fatalf("(29, 199) holds %d after the landing, want water on the surface", c.Mat)
 	}
 	if n := totalOf(w, ids.water); n != 64*56+1 {
 		t.Fatalf("%d water, want %d", n, 64*56+1)
@@ -239,19 +276,70 @@ func TestLaunchTakesOnlyCellsThatMove(t *testing.T) {
 	}
 }
 
-// When as many particles fly as may, a launched cell goes into the queue
-// instead, and no speck is made.
+// fill adds specks with flags until the pool they count against is full.
+// They go in the next tick.
+func fill(w *World, flags ParticleFlags, mat material.ID) {
+	for w.pooled[poolOf(flags)] < maxParticles {
+		w.particles = append(w.particles, Particle{X: 1 << particleShift, Y: 1 << particleShift, Cell: Cell{Mat: mat}, Flags: flags})
+		w.pooled[poolOf(flags)]++
+	}
+}
+
+// Particles count against pools, as Noita's do (C140 7): a cell's particle
+// and a crack's speck against one, a speck a body pushing matter throws
+// against another. When a pool is full, a launched cell goes into the
+// queue instead, and no speck is made; the other pool still takes its own.
 func TestFullPoolQueuesTheCell(t *testing.T) {
 	w, ids := newTestWorld(t, 64, 64, 1)
-	w.particles = make([]Particle, maxParticles)
-	for i := range w.particles {
-		w.particles[i] = Particle{X: 1 << particleShift, Y: 1 << particleShift, Cell: Cell{Mat: ids.wood}, Life: 10, Flags: Speck}
-	}
+	fill(w, Speck, ids.wood)
 	w.Set(30, 30, ids.water)
 	w.Launch(30, 30, 0, 0, 1)
 	w.Spray(Cell{Mat: ids.wood}, 30, 30, 0, 0, 1)
 	if w.Particles() != maxParticles || w.QueueLen() != 1 {
 		t.Fatalf("%d particles and %d queued, want %d and 1", w.Particles(), w.QueueLen(), maxParticles)
+	}
+	at := int64(30)<<particleShift + ParticleOne/2
+	w.Spatter(Cell{Mat: ids.water}, at, at, 0, 0, 1, true)
+	if w.Particles() != maxParticles+1 {
+		t.Fatalf("%d particles after a body's speck, want %d: it has its own pool", w.Particles(), maxParticles+1)
+	}
+	fill(w, Speck|Pushed, ids.water)
+	w.Spatter(Cell{Mat: ids.water}, at, at, 0, 0, 1, true)
+	if w.Particles() != 2*maxParticles {
+		t.Fatalf("%d particles, want both pools full at %d", w.Particles(), 2*maxParticles)
+	}
+	w.Step()
+	if w.pooled != [pools]int{0, 1} || w.Particles() != 1 {
+		t.Fatalf("pools hold %v and %d particles after the filling specks went, want [0 1] and 1", w.pooled, w.Particles())
+	}
+}
+
+// A body's speck passes from the start, as Noita's (C140 4.1), but it is
+// denser than anything: the first matter it meets ends its passing, and,
+// a speck of a liquid, the next stops it and it goes. It changes no cell.
+func TestBodySpeckStopsAtTheSecondMatter(t *testing.T) {
+	w, ids := newTestWorld(t, 64, 128, 1)
+	w.Fill(0, 40, 64, 128, ids.water)
+	w.Step()
+	cells := snapshot(w)
+	// From the middle of the water, flying up at 60 cells/s: a cell a tick.
+	at := int64(30)<<particleShift + ParticleOne/2
+	w.Spatter(Cell{Mat: ids.water}, at, int64(80)<<particleShift+ParticleOne/2, 0, perSecond(-60), 1, true)
+	p := &w.particles[0]
+	if p.Flags != Speck|Pushed|Passing || p.Density != speckDensity || p.Pass != passCells {
+		t.Fatalf("a body's speck has flags %#x, density %d and %d cells to pass; want passing, %d and %d",
+			p.Flags, p.Density, p.Pass, speckDensity, passCells)
+	}
+	w.Step()
+	if w.Particles() != 1 || w.particles[0].Flags&Passing != 0 {
+		t.Fatal("the first water did not end the speck's passing")
+	}
+	w.Step()
+	if w.Particles() != 0 {
+		t.Fatal("the next water did not stop the speck")
+	}
+	if got := snapshot(w); !slices.EqualFunc(got, cells, func(a, b Cell) bool { return a.Mat == b.Mat && a.Tone == b.Tone }) {
+		t.Fatal("a speck changed a cell")
 	}
 }
 
@@ -360,6 +448,11 @@ func TestParticlesLeaveWithTheirBlock(t *testing.T) {
 		t.Fatal("Relaunch took a cell's particle that bounces")
 	}
 	bad = got[0]
+	bad.Flags |= Pushed
+	if err := w.Relaunch([]Particle{bad}); err == nil {
+		t.Fatal("Relaunch took a cell's particle in the pool of a body's specks")
+	}
+	bad = got[0]
 	bad.VY = maxSpeed + 1
 	if err := w.Relaunch([]Particle{bad}); err == nil {
 		t.Fatal("Relaunch took a particle faster than any")
@@ -451,8 +544,9 @@ func TestRelaunchKeepsTheLimit(t *testing.T) {
 	if len(gone) != 11 {
 		t.Fatalf("took %d particles, want 11", len(gone))
 	}
-	for len(w.particles) < maxParticles-4 {
+	for w.pooled[cellPool] < maxParticles-4 {
 		w.particles = append(w.particles, Particle{X: 1 << particleShift, Y: 1 << particleShift, Cell: Cell{Mat: ids.wood}, Life: 10, Flags: Speck})
+		w.pooled[cellPool]++
 	}
 	if err := w.Relaunch(gone); err != nil {
 		t.Fatal(err)

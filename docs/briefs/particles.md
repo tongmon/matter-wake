@@ -1,6 +1,6 @@
 # 튀는 입자 참고 요약
 
-작성: 2026-11-11 · 관련 작업: `feat/particles`(로드맵 4단계 "튀는 액체 입자(C81~C84)"와 그 아래 "재질 입자와 기류(C85~C87)", 균열 조각 입자(C139 4.2))
+작성: 2026-11-11 · 관련 작업: `feat/particles`(로드맵 4단계 "튀는 액체 입자(C81~C84)"와 그 아래 "재질 입자와 기류(C85~C87)", 균열 조각 입자(C139 4.2)) · 같은 날 C140 추가 분석(BODY_SPLASH)과 개발자 결정을 반영
 
 ## 범위
 
@@ -16,7 +16,8 @@
   - "Static solids" 행의 `doc CRACK_MOVER` 4.2(지운 셀 → 장식 입자), `doc BODY_CRACK_SLEEP` 3.5
   - "Liquid collisions" 행: 입자가 멈추면 셀이 가는 재삽입 대기열(C50, C114, C115, 이미 `world` reinsert.go)
   - "Explosions" 행(C66, C67, C75): 폭발이 입자를 가장 많이 만드는 곳이지만 matter-wake에 폭발이 아직 없어 이번에는 읽기만 함
-- 원시 자료도 봤습니다. 산문이 비워 둔 값(입자 통과 횟수, 장식 입자의 수명·플래그·속도)을 확인하려고 `analysis-detail/runtime-completion/particle-sweep-explosion-live-writes.json`(실제 982호출), `analysis-detail/bodygrid-c134/pool-c-snapshots.json`, `analysis-detail/crack-c138/crack-r300·r600-snapshots.json`을 저장소 밖 임시 스크립트로 셌습니다.
+  - 개발자가 승인한 추가 분석 C140 `doc BODY_SPLASH`(2026-11-11): 몸체가 밀 때의 장식 입자 속도식, 셀 입자의 경로 벌어짐, 풀이 찼을 때
+- 원시 자료도 봤습니다. 산문이 비워 둔 값(입자 통과 횟수, 장식 입자의 수명·플래그·속도)을 확인하려고 `analysis-detail/runtime-completion/particle-sweep-explosion-live-writes.json`(실제 982호출), `analysis-detail/bodygrid-c134/pool-c-snapshots.json`, `analysis-detail/crack-c138/crack-r300·r600-snapshots.json`을 저장소 밖 임시 스크립트로 셌습니다. C140 뒤에는 `analysis-detail/splash-c140/{lanes-v130,lanes-v200,mix-v130}-snapshots.json`의 셀 입자 기록으로 우리 경로 검사를 대조했습니다(아래 "검증 결과").
 
 ## 관측 규칙
 
@@ -40,9 +41,15 @@
 | 기류: 입자의 방출기가 진폭을 준 입자만 고정 3D simplex 잡음의 각도로 속도를 더한다. 실제 관측은 방출기(ParticleEmitter)의 airflow 설정을 켠 시각 입자뿐이다 | C87:2631-2644 | NATIVE + LIVE |
 | C85는 큰 폭발 구멍 경계의 요철이고, 입자에서는 gfx_glow인 재질의 입자를 다른 풀에 담는다는 것뿐이다 | C85:2582-2598 | NATIVE + LIVE |
 | 균열 이동체가 끝나며 지우는 셀마다 (U×15−7.5, U×15−7.5) px/s 속도의 장식 입자를 만들고, 그다음 격자에서 지운다. 입자는 셀이 없다 | CRACK_MOVER:113-115, BODY_CRACK_SLEEP:71-72 | STATIC + LIVE |
-| 균열 조각 입자는 처음 보일 때부터 보통 모드, 튀기 표시와 수명 표시가 켜져 있다(r300·r600에서 처음 나타난 입자 모두 +6a 0x60). 중력은 (0, 100) px/s² 그대로(프레임마다 vy +1.67) | 원시 자료 crack-r300·r600 | LIVE |
+| 균열 조각 입자는 처음 보일 때부터 보통 모드이고 튀기 표시(+6a 0x20, C86)가 켜져 있다(r300·r600에서 처음 나타난 입자 모두 +6a 0x60. 0x40의 쓰임은 OPEN, BODY_SPLASH:291). 중력은 (0, 100) px/s² 그대로(프레임마다 vy +1.67) | 원시 자료 crack-r300·r600 | LIVE |
 | 장식 입자의 수명은 U[5, 10] s다(C134 5.4). 균열 조각은 대부분 몇 프레임 안에 사라지고, 일부는 30프레임쯤 남았다 | BODY_GRID_COUPLING:209-213, 원시 자료 crack-r300 | STATIC + LIVE |
-| 몸체가 액체를 밀 때 픽셀 속도² > 4 (m/s)²이면 셀 없는 장식 입자를 하나 더 만든다(정착 모래처럼 쓰지 않은 칸은 > 9). 그 속도식은 자료에 없다 | BODY_GRID_COUPLING:148-149, 161, 208-213 | STATIC + LIVE(개수만) |
+| 몸체 픽셀이 액체·움직이는 모래·밀려난 정착 모래 칸에 써질 때, 그 픽셀의 속도²(선속도 + ω×r, m/s)가 4를 넘으면 장식 입자 하나. 축마다 U[−1.5, 1.5]를 더한 (a, b)로 옆은 [−2.2\|a\|, 2.2\|a\|], 세로는 −1.1b와 −0.3b 사이에서 고르게 뽑고, 둘 다 몸체 이미지의 짧은 변 m의 1/4을 곱한다(단위는 px/s). 문턱 LIVE: 장식 입자가 없던 넘기기의 속도² 최대 3.84, 있던 것 최소 5.31 | BODY_SPLASH:12-20, 85-111 | STATIC + LIVE(8,270호출 재생 일치) |
+| 몸체 픽셀을 쓰지 못하고 남는 칸(고정 셀, 밀리지 않은 정착 모래. 몸체 칸·불은 아님)은 속도² > 9이면 장식 입자 하나. 노이즈 없이 옆은 −1.2vx와 0.8vx 사이, 세로는 −1.1vy와 −0.3vy 사이, 속도² ≤ 25·≤ 49·그 위에서 × 0.5·5·10, 칸보다 0.1·1·2 위. 통과 모드로 바꾸지 않는다 | BODY_SPLASH:21-24, 113-123 | STATIC + LIVE(12호출 재생, 할당 0개) |
+| 미는 분기의 장식 입자는 칸 x + 0.5, 칸 y − m/20 + 0.5에서 출발한다. 재질과 색은 그 칸의 셀의 것. 셀이 없다. 처음부터 통과 모드, 통과 횟수 20, 밀도 1000, 가속 (0, 100), 수명 U[5, 10] s. 튀기 표시(+6a 0x20)는 모두 켜지고, +6b 0x80은 26.3%에만 남는다(쓰임 OPEN) | BODY_SPLASH:25-31, 125-140 | STATIC + LIVE(7,640개) |
+| 같은 칸에서 물 저항 → 장식 입자 → 칸 비우기 → 셀 입자 또는 대기열 순서다. 장식 입자는 셀의 행방과 상관없이 속도²로만 정한다. 모래도 같은 식이다 | BODY_SPLASH:37-41, 159-171 | STATIC + LIVE |
+| 장식 입자는 대부분 몇 프레임 안에 사라진다(차선별 살아 있던 프레임 중앙값 1~7, 최대 66, 올라간 높이 중앙값 0.5~0.7 px). 몸체 앞줄(물속·몸체 안)에서 태어나 처음 만난 물질에서 통과가 끝나고 다음 물질에서 멈춘다는 해석 | BODY_SPLASH:33-36, 141-157 | LIVE(관측) + STATIC(해석) |
+| Noita에서도 경로 검사의 본 칸이 옆으로 벌어진다. 셀 입자 7,267개 중 3칸 이상 1,045개, 10칸 이상 4개, 최대 29칸. 29칸 사례는 입자 영역 끝에 닿아 그 자리에서 멈췄고, 셀은 궤적에서 28.4 px 옆에 돌아왔다 | BODY_SPLASH:42-48, 173-209 | STATIC + LIVE(16,171프레임 재생 일치) |
+| 풀(셀 입자 +34, 장식 입자 +40, 빛나는 재질 +4c)마다 100,000개면 할당이 실패한다. 칸을 먼저 비운 셀은 그때 격자·입자·대기열 어디에도 없게 된다(강제 실패에서 3,459칸이 사라짐). 장식 입자는 그냥 만들어지지 않는다. 균열 조각은 셀 입자와 같은 풀을 쓴다 | BODY_SPLASH:49-59, 211-255 | STATIC + C81 NATIVE + LIVE(강제 실패) |
 
 ## 현재 코드 대조
 
@@ -52,12 +59,15 @@
 | 카메라 입자 영역 | 없음 | 다름(일부러) | 적혀 있음: design.md 8절 ✅ 2026-11-07 "Noita의 카메라 의존(입자 영역)은 따르지 않습니다", references.md "강체↔격자 연동". 기록이 맞음 |
 | 셀이 입자로 넘어감, 처음 위치·속도·밀도·튀기 표시·통과 횟수 | 바꾼 뒤: `internal/world/particles.go` `Launch` | 같음 | 위치·속도는 정수 고정소수점(아래) |
 | 적분 순서 | `internal/world/particles.go` `move` | 같음 | dt = 1틱으로 정확히 1/60 s(Noita 실측 dt는 0.0166665…). 나이는 쓰는 곳(C83 사각형)이 없어 두지 않음 |
-| 경로 검사(60걸음, 마지막 본 칸에서 잰 거리, 같은 칸 건너뛰기, 모드 전환) | `internal/world/particles.go` `sweep` | 다름(걸음 방향) | 🔶 걸음 수는 같고, 걸음 방향만 입자에서 목적지로 잡음. Noita처럼 마지막 본 칸의 모서리에서 목적지로 잡으면 느린 입자의 걸음이 틱마다 옆으로 벌어짐(아래 "증상 재현"). 메모리에 없는 칸은 영역 밖처럼 멈춤. 몸체 칸의 밀도 척도는 아래 빈칸 |
+| 경로 검사(60걸음, 마지막 본 칸의 모서리에서 잰 방향과 거리, 걸음은 입자에서, 같은 칸 건너뛰기, 모드 전환) | `internal/world/particles.go` `sweep` | 같음 | ✅ 2026-11-11 Noita 그대로(처음에는 🔶 방향만 입자에서 목적지로 잡았음, 아래 "증상 재현"). 메모리에 없는 칸은 영역 밖처럼 멈춤 |
 | 멈춘 셀 입자 → 대기열 → 같은 틱 재삽입 | `internal/world/particles.go` `moveParticles`, `World.Step`에서 `reinsertQueued` 바로 앞 | 같음 | |
 | 튀기(C86) | `internal/world/particles.go` `bounce` | 같음 | 난수는 입자마다의 해시 스트림 |
 | 균열 조각 장식 입자 | 바꾸기 전: `internal/rigid/crack.go:334-340` `takeOut`은 픽셀을 지우기만 함 | 없음 → 이번에 넣음 | |
-| 장식 입자 수명 U[5, 10] s | `internal/world/particles.go` `Spray` | 같음 | |
-| 몸체가 액체를 밀 때의 장식 입자 | 없음 | 없음 | 속도식이 자료에 없어 이번에 넣지 않음(빈칸 표) |
+| 장식 입자 수명 U[5, 10] s | `internal/world/particles.go` `speck`(`Spray`, `Spatter`) | 같음 | |
+| 몸체가 밀 때의 장식 입자(미는 분기) | `internal/rigid/body.go` `spray`, `claim`이 셀 입자·대기열(`splash`)보다 먼저 부름. `internal/world/particles.go` `Spatter` | 같음 | 통과 밀도 1000 대신 255(우리 밀도는 8비트, 어떤 재질보다 큰 것은 같음). 난수는 (seed, 틱, 칸) 해시라 셀 입자의 난수와 따로 |
+| 남는 칸의 장식 입자 | `internal/rigid/body.go` `stuck`(`claim`의 고정 재질과 밀리지 않은 쉬는 가루) | 같음 | 다른 몸체의 칸에서는 만들지 않음(Noita의 몸체 칸 제외와 같음) |
+| 풀(Noita는 셋), 풀마다 100,000 | `internal/world/particles.go` `cellPool`, `pushPool`, `poolOf` | 다름(일부러) | 우리는 둘. 빛나는 재질의 풀은 그 재질이 없어 아직 없음. 풀이 차면 셀은 대기열로(Noita는 잃음, ✅ 2026-11-11 개발자 결정, 빈칸 표) |
+| +6b 0x80(26.3%) | 없음 | 다름 | 쓰임이 OPEN. 두지 않음 |
 | 기류(C87) | 없음 | 없음 | 만드는 쪽(방출기)이 없음. 빈칸 표 |
 
 ## 증상 재현
@@ -65,8 +75,8 @@
 구현 중에 찾은 것입니다(증상을 고치는 작업은 아님).
 
 - C82의 경로를 그대로 옮기자(마지막 본 점 = 본 칸의 정수 모서리, 걸음 방향 = 그 점에서 목적지로, 걸음은 입자 자리에서), 곧장 위로 던진 물방울(x = 32.5)이 본 칸의 x가 32, 33, 31, 33, 32, … 로 틱마다 더 벌어져 꼭대기 근처에서 1과 63을 오갔습니다(저장소 밖 임시 테스트, 70틱 추적). 모서리와 칸 중심의 0.5칸 차이가 방향을 기울이고, 걸음이 반대편으로 넘어가며 커집니다.
-- Noita의 실제 입자(폭발 뒤 입자, 원시 자료 982호출)는 입자와 마지막 본 점의 차이가 중앙값 0.68칸, 최대 3.16칸이었습니다. 빠르고(가로 50~80 px/s) 짧게 살아(나이 최대 24프레임) 벌어질 틈이 적었던 것으로 보입니다. 물보라처럼 느리고 거의 수직인 입자는 자료에 없습니다.
-- 그래서 걸음 수는 Noita대로, 방향만 입자에서 목적지로 잡았습니다(🔶, 아래 빈칸 표).
+- 그때 자료의 Noita 실제 입자(폭발 뒤 입자, 원시 자료 982호출)는 입자와 마지막 본 점의 차이가 중앙값 0.68칸, 최대 3.16칸이었습니다. 그래서 처음에는 걸음 수만 Noita대로, 방향은 입자에서 목적지로 잡았습니다(🔶).
+- C140이 물보라 입자에서 같은 벌어짐을 확인했습니다(최대 29칸, 영역 끝에서 28.4 px 옆에 돌아옴). 개발자 결정(✅ 2026-11-11)으로 Noita 그대로 되돌렸습니다. 대조 결과는 아래 "검증 결과"입니다. 곧장 위로 던진 물방울의 큰 벌어짐은 포트 차이가 아니라 이 규칙의 결과입니다.
 
 ## 실제 수치
 
@@ -87,7 +97,12 @@
 | 모래 | sand | density | 6 | 그대로 | 6(처음 30) |
 | 나무·얼음·유리 몸체 | wood_loose, ice_glass, glass_brittle | density | 6 | 그대로(Box2D 질량에도 씀) | 6 |
 | 돌 | rock_static | density | 10 | 그대로 | 10(처음 255) |
-| 풀 한도 | | | 100,000 | | 100,000 (`maxParticles` 🧪) |
+| 풀 한도 | 풀마다(+34, +40, +4c) | | 100,000 | | 풀마다 100,000 (`maxParticles` 🧪) |
+| 미는 분기 문턱 | 픽셀 속도² | | 4 (m/s)² | 1 m = 10칸 | 4 (`sprayFast` = 2 🧪) |
+| 미는 분기 노이즈, 옆, 세로 | | | U[−1.5, 1.5] m/s, 2.2, 1.1·0.3 | 그대로 | `sprayNoise`, `sprayAcross`, `sprayBack`, `sprayBackSlow` 🧪 |
+| 미는 분기 배율과 출발 높이 | 짧은 변 m | | m/4, m/20 px 위 | 1 px = 1칸 | `sprayPerSide` 0.25, `sprayRise` 20 🧪 |
+| 남는 칸 분기 | 픽셀 속도² | | > 9, ≤ 25·≤ 49·그 위 × 0.5·5·10, 0.1·1·2 px 위, 옆 −1.2·0.8 | 그대로 | `stuckFast` 3, `stuckSlow` 5, `stuckMid` 7, `stuckScale` 5 × `stuckSlowest`·`stuckMidway`·`stuckFastest`, `stuckBack`, `stuckOn` 🧪 |
+| 장식 입자 통과 밀도 | density | | 1000 | 8비트, 어떤 재질보다 큼 | 255 (`speckDensity`) |
 
 ## 연관 메커니즘
 
@@ -105,7 +120,9 @@
 - 그대로 씀:
   - 셀이 입자로 넘어가고 멈추면 대기열로 돌아가는 소유 흐름, 같은 틱 재삽입 (Noita 관측)
   - 적분 순서와 가속 값, 통과 모드의 0.25배 가속, 통과 횟수 20, vy > 0이면 보통 모드 (Noita 관측)
-  - 경로 검사의 걸음 수 규칙(최대 60, 마지막 본 칸에서 잰 거리), 같은 칸 건너뛰기, 막히지 않으면 목적지로 (Noita 관측)
+  - 경로 검사(최대 60걸음, 마지막 본 칸의 모서리에서 잰 방향과 거리, 걸음은 입자에서), 같은 칸 건너뛰기, 막히지 않으면 목적지로 (Noita 관측, C140이 벌어짐까지 확인)
+  - 몸체가 밀 때의 장식 입자 두 분기의 문턱·속도식·출발 위치·통과 모드·수명, 셀 입자·대기열보다 먼저 (Noita 관측, C140)
+  - 풀을 나누고 풀마다 100,000 (Noita 관측, C140)
   - 몸체 vy > 25 px/s 문턱, 입자 속도 −v × U[0.5, 0.75]를 ±0.5 rad 돌림 (Noita 관측)
   - 튀기(C86)의 순서와 값 (Noita 관측)
   - 균열 조각: 지운 픽셀마다 장식 입자 하나, 속도 (U×15−7.5, U×15−7.5), 보통 모드, 늘 튀기 표시, 수명 U[5, 10] s (Noita 관측)
@@ -115,7 +132,9 @@
   - 난수: Noita는 전역 Park–Miller 하나. 우리 입자는 만들 때 정한 64비트 씨앗을 지니고, 그 틱에 필요한 수를 (씨앗, 틱)의 스트림에서 뽑음. 그래서 목록 순서·worker 수·다른 입자와 상관없음. 몸체가 만드는 입자의 씨앗은 (seed, 틱, 칸 x, y), 균열 조각은 (seed, 틱, 몸체 key, 픽셀) (자체 설계)
   - 목록에서 뺄 때 Noita는 마지막 입자를 빈자리에 옮겨 순서가 바뀜. 우리는 순서를 지키며 당김(난수가 순서에 기대지 않아 결과에 영향 없음, 대기열에 들어가는 순서만 정함) (자체 설계)
   - 메모리에 없는 블록의 칸은 영역 밖처럼 봄(멈춤) (자체 설계)
-  - 경로의 걸음 방향은 입자에서 목적지로. 걸음 수는 Noita대로(🔶, 위 "증상 재현") (자체 설계)
+  - 풀이 차면 셀 입자가 될 셀은 대기열로. Noita는 셀을 잃음. 재질을 인벤토리에 모으므로 셀이 몰래 사라지면 버그로 보이고, 셀 보존 검사가 격자 + 대기열 + 입자의 합을 요구함 (✅ 2026-11-11 개발자 결정)
+  - 장식 입자의 통과 밀도 255(Noita 1000). 우리 밀도는 8비트이고, 어떤 재질보다 크다는 점은 같음 (자체 설계)
+  - 장식 입자의 난수를 (seed, 틱, 칸) 해시로 셀 입자와 따로 뽑음. Noita는 같은 전역 난수를 장식 입자가 먼저 4번 씀 (자체 설계, 결정성)
   - 셀 입자의 칸 좌표는 내림. Noita는 0쪽으로 자르는데 우리 좌표는 음수가 없어 같음
 - 쓰지 않음 (이유):
   - 카메라 입자 영역: 리플레이와 저장이 카메라에 묶이지 않게(이미 개발자 결정, design.md 8절 ✅ 2026-11-07)
@@ -123,6 +142,8 @@
   - 재삽입 때의 물결(ripple)·특수 효과 요청(C83:2537-2538): 그리기 효과이고 내부가 OPEN
   - 꼬리(trail, C84:2567-2569): 그리기용 값. 입자는 한 픽셀로 그림
   - 생성 때 튀기 표시 30%: 셀 입자(액체·가루)는 튀지 않아 결과가 같음. 뽑지 않음
+  - 장식 입자의 +6b 0x80(26.3%)과 빠른 몸체의 누적(+0x99c): 쓰임과 의미가 OPEN(BODY_SPLASH:138-140, 290)
+  - 빛나는 재질의 풀: 그 재질(gfx_glow)이 없음. 처음 생길 때 넣음
   - 입자 수명 플래그가 없는 셀 입자의 수명 1.0: 쓰이지 않는 값
 
 ## 자료에 없음 / OPEN → 우리 설계
@@ -130,10 +151,11 @@
 | 빈칸 | 자료 상태 | TPT 방식 (파일:함수) | 우리 설계 (우리 제약에 맞춘 방법) | 측정 방법 | 추가 분석 제안 |
 |---|---|---|---|---|---|
 | 몸체 칸의 통과 밀도 | Noita는 모든 재질이 한 밀도 척도(물 4, 나무 6, 바위 10). 처음 우리 액체·가루·고정 재질의 밀도는 뼈대의 임시값(물 20, 모래 30, 고정 255)이었고 고체만 Noita 값(나무 6, Box2D 질량에 씀) | 없음(TPT는 `Weight` 한 척도, `SimulationData.cpp` `init_can_move`. 강체 없음) | ✅ 2026-11-11 모든 재질의 밀도를 Noita 값으로 통일(개발자 결정). 통과 비교는 밀도를 그대로 비교해, Noita처럼 물 입자(4)는 몸체(6)를 지나고 모래 입자(6)는 못 지남. 처음에는 🔶 통과 비교에서만 고체 밀도에 5를 곱했음(`solidDensityScale`, 지움) | `TestWaterPassesThroughABody`, 입자의 밀도를 있음·없음으로만 해시한 골든 비교 | 아니오(관측 규칙이 분명하고 척도만 맞추면 됨) |
-| 걸음 방향 | Noita 관측(C82)은 마지막 본 칸의 모서리에서 목적지로. 느린 입자에서 벌어짐(위 "증상 재현") | 없음 | 🔶 걸음 수는 그대로, 방향은 입자에서 목적지로 | `TestParticlesFallWithGravity`, `TestLaunchedCellFliesAndLands` | 아니오(관측 규칙은 분명하고, 다르게 할 이유가 측정으로 있음) |
-| 풀이 찼을 때 셀의 행방 | OPEN(BODY_GRID_COUPLING:297-298) | 없음 | 🔶 한도(🧪 100,000)를 넘으면 셀 입자 대신 대기열로, 장식 입자는 만들지 않음. 셀을 잃지 않음 | `TestFullPoolQueuesTheCell` | 아니오 |
+| 걸음 방향 | 처음에는 느린 물보라 입자의 관측이 없었음. C140이 Noita에서도 벌어짐을 확인(BODY_SPLASH 6절) | 없음 | ✅ 2026-11-11 Noita 그대로(개발자 결정). 처음에는 🔶 방향만 입자에서 목적지로 | `TestPathSwingsAside`, `TestLaunchedCellFliesAndLands`, C140 기록 대조(저장소 밖) | 했음(C140, 개발자 승인) |
+| 풀이 찼을 때 셀의 행방 | C140: Noita는 칸을 먼저 비운 셀을 잃음(BODY_SPLASH 7절) | 없음 | ✅ 2026-11-11 풀은 Noita처럼 나누고 셀은 대기열로(개발자 결정, 일부러 다르게. 위 "채택 / 변경 / 제외") | `TestFullPoolQueuesTheCell`, `TestRelaunchKeepsTheLimit` | 했음(C140) |
 | 입자가 몸체 칸에 닿을 때 | OPEN(BODY_GRID_COUPLING:170-171, 295) | 없음 | 경로 검사의 고체로 봄(C82가 고체를 다루는 그대로). 몸체에 힘을 주지 않음 | `TestWaterPassesThroughABody`, `TestBoxSplashesThePool` | 아니오 |
-| 몸체가 액체를 밀 때의 장식 입자 | 개수는 LIVE, 속도식 OPEN(BODY_GRID_COUPLING:148-149, 208-213). 원시 자료 pool-c에서 처음 보인 속도는 vx ±15, vy −30~−75 px/s 쯤 | 없음 | 🔶 이번에는 만들지 않음. 셀 입자의 물보라만으로 보고, 플레이 뒤 부족하면 속도식을 좁은 추가 분석으로 | 직접 플레이 | 나중에(세 조건 중 "자체 설계가 플레이에서 모자람"을 아직 모름) |
+| 몸체가 밀 때의 장식 입자 | 처음에는 속도식 OPEN. C140이 두 분기의 식을 확인(BODY_SPLASH 3~5절) | 없음 | ✅ 2026-11-11 두 분기 모두 Noita대로(개발자 결정) | `TestPushSpraysAsNoita`, `TestStuckPixelSpraysWhatStays`, `TestBodySpeckStopsAtTheSecondMatter`, `TestBoxSplashesThePool`, 수명 측정(아래) | 했음(C140, 개발자 승인) |
+| 남는 칸 분기의 실례 | OPEN: Noita 장면에서 할당 0개(입자 영역 밖, BODY_SPLASH:288-289) | 없음 | 식만 옮김. 돌을 긁는 빠른 몸체에서 돌 장식 입자가 튐 | `TestStuckPixelSpraysWhatStays`, 직접 플레이 | 아니오 |
 | 기류(C87) | 방출기 입자만 관측 | `Air.cpp` `update_air`: 4×4 격자의 압력·공기 속도를 입자가 따라감. Noita의 기류와 다른 개념(Noita는 방출기마다의 잡음) | 🔶 이번 PR에서 뺌. 방출기(불꽃, 연기, 폭발 효과)를 넣을 때 그 입자에 붙임. 9절의 "유체/압력 모델의 수준"과는 따로 | 없음 | 아니오 |
 | 튀기의 축 반전 계수 | 모델은 `restitution` 상수, 산문은 "−1을 곱한다"(C86:2610) | `Simulation.cpp` 이동 막힘 뒤 속도에 `Collision`을 곱함(음수면 튐). 가져오지 않음(Noita 관측이 있음) | −1(산문대로) | `TestSpeckBounces` | 아니오 |
 | 균열 조각이 처음 놓이는 칸 | Noita는 셀 하나 = 입자 하나 | 없음 | 우리 픽셀은 0~2칸에 쓰이므로, 그 픽셀이 보이는 칸마다 하나. 보이는 칸이 없으면 만들지 않음 | `TestCrackThrowsSpecks` | 아니오 |
@@ -142,8 +164,10 @@
 
 ## 검증 결과 (2026-11-11)
 
-- 테스트: world `TestLaunchedCellFliesAndLands`(꼭대기 25행, 바닥에 돌아옴), `TestParticlesFallWithGravity`(C84 순서의 위치를 100틱 비트까지), `TestPassingThroughMatterRunsOut`, `TestDensityEndsPassing`, `TestWaterPassesThroughABody`, `TestFallingParticleStopsOnTheSurface`, `TestLaunchDrawsTheDensity`(512개 중 약 반), `TestSpeckBouncesAndGoes`, `TestSpeckLifeRunsOut`, `TestFullPoolQueuesTheCell`, `TestParticlesLeaveWithTheirBlock`, `TestFlyingDoesNotAllocate`, `TestSleepMatchesScanningEverything`(입자를 넣음). rigid `TestFastBodyThrowsWaterUp`, `TestBoxSplashesThePool`, `TestCrackThrowsSpecks`. save `TestBlockKeepsQueuedCellsAndBodies`(입자 300개 비트까지), `TestBlockReadsVersion5`. game `TestParticlesSurviveTheirBlocks`. 리플레이 골든은 틱마다 날아가는 셀을 세어 보존을 확인하고, 액체·가루 입자와 장식 입자가 모두 나와야 통과
+- 테스트: world `TestLaunchedCellFliesAndLands`(꼭대기 25행, 바닥에 돌아옴), `TestParticlesFallWithGravity`(C84 순서의 위치를 100틱 비트까지), `TestPassingThroughMatterRunsOut`, `TestDensityEndsPassing`, `TestWaterPassesThroughABody`, `TestFallingParticleStopsOnTheSurface`, `TestLaunchDrawsTheDensity`(512개 중 약 반), `TestSpeckBouncesAndGoes`, `TestSpeckLifeRunsOut`, `TestFullPoolQueuesTheCell`(풀 둘), `TestBodySpeckStopsAtTheSecondMatter`, `TestPathSwingsAside`, `TestParticlesLeaveWithTheirBlock`, `TestFlyingDoesNotAllocate`, `TestSleepMatchesScanningEverything`(입자를 넣음). rigid `TestFastBodyThrowsWaterUp`(장식 입자 수도), `TestBoxSplashesThePool`(장식 입자의 수명도), `TestPushSpraysAsNoita`, `TestStuckPixelSpraysWhatStays`, `TestCrackThrowsSpecks`. save `TestBlockKeepsQueuedCellsAndBodies`(입자 300개 비트까지), `TestBlockReadsVersion5`. game `TestParticlesSurviveTheirBlocks`. 리플레이 골든은 틱마다 날아가는 셀을 세어 보존을 확인하고, 액체·가루 입자와 장식 입자가 모두 나와야 통과
 - 골든: 장식 입자를 끈 빌드로 다시 돌려 셀 수가 모두 같음을 확인(장식 입자는 셀을 바꾸지 않음)
+- C140 경로 대조(저장소 밖 임시 테스트, 2026-11-11): C140 원시 기록에서 같은 셀 입자가 이어지는 보통 모드 전이 19,242개(lanes-v130 10,472, lanes-v200 7,134, mix-v130 1,636)를 뽑아, Noita의 위치와 마지막 본 칸에서 Noita의 다음 위치로 우리 `sweep`을 돌렸습니다. 마지막 본 칸이 모두 같았습니다. Noita는 칸 좌표를 0 쪽으로 자르고 우리는 내리므로, 방이 있는 음수 좌표에서는 한 칸 차이를 맞춰 비교했고 양수 좌표의 3,071개는 그대로 같았습니다. 29칸 사례는 float32 규칙(0 쪽 자름)으로 frame165부터 다시 돌리면 78프레임 모두 Noita의 본 칸과 같았습니다. 우리 포트를 같은 출발점에서 자유롭게 돌리면 벌어짐이 0~3칸에 그쳤습니다. 벌어짐이 작은 수치 차이(Q16과 float32, 우리 중력 1820/65536칸/틱²)를 키우고, 음수 좌표에서는 자른 모서리가 칸의 반대편에 있기 때문입니다(float32 규칙을 양수 좌표에서 내림으로 돌려도 최대 7칸). 곧장 위로 던진 물방울은 우리 포트, float32 규칙(내림), float32 규칙(음수 좌표에서 자름)이 초속 −60·−90·−120·−180칸에서 최대 14·52·9·14칸, 14·52·12·56칸, 18·52·14·12칸 벌어졌습니다. 예전의 30칸은 이 규칙 자체의 결과입니다.
+- 장식 입자의 수명(저장소 밖 임시 측정, Noita 차선처럼 56칸 폭 물 웅덩이에 몸체를 4칸 위에서 아래로 던짐): 20×20 상자 13 m/s 1,120개, 살아 있던 틱 최소/사분위/중앙/사분위/최대 1/2/3/5/20, 올라간 높이 중앙 0.33·최대 1.77칸(Noita 1,120개, 1/2/3/4/20, 0.66·2.33 px). 40×10 막대 13 m/s 920개, 1/4/6/11/20, 0.30·0.82칸(Noita 2,322개, 1/5/7/12/34, 0.49·5.28 px). 20 m/s 상자 1,107개, 1/2/3/5/20(Noita 1,063개, 1/2/3/4/20). 20 m/s 막대 960개, 1/4/6/11/20(Noita 1,558개, 1/4/6/11/66). 32×32 상자 1,762개, 1/2/3/4/20(Noita 1,182개, 1/2/2/4/20, 일부가 입자 영역 밖). 정착 모래 차선은 Noita 99·74개, 우리 0개: 우리 몸체는 정착 모래를 미리 만든 충돌 지형으로 만나 겹치지 않음(design.md 8절 "겹친 칸"). 막대의 개수가 Noita의 절반쯤인 것은 몸체가 물에 들어가 느려지는 정도의 차이로 보이고, 따로 재지 않았습니다
 - 밀도 통일(✅ 2026-11-11): 밀도를 Noita 값으로 바꾼 뒤 장면 골든은 그대로였고, 리플레이 골든은 입자가 나는 줄의 체크섬만 바뀜. 입자의 밀도를 있음·없음으로만 해시한 임시 빌드에서는 바꾸기 전과 뒤가 모든 줄에서 같았음(동작이 같음)
 - 비용: design.md 3절 "튀는 입자"의 비용 줄
 - 그림: [물보라](../images/splash.png), [균열 조각](../images/crack-specks.png)

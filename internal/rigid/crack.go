@@ -356,8 +356,7 @@ func (s *System) speck(b *body, k uint16, x, y int, c world.Cell) {
 		uint64(uint32(x))<<32|uint64(uint32(y))))
 	vx := float32(unit(&r)*speckSpeed) - speckSpeed/2
 	vy := float32(unit(&r)*speckSpeed) - speckSpeed/2
-	look := world.Cell{Mat: c.Mat, Tone: c.Tone, Damage: c.Damage}
-	s.w.Spray(look, x, y, int32(float32(vx*perTick)), int32(float32(vy*perTick)), r.Uint64())
+	s.w.Spray(look(c), x, y, int32(float32(vx*perTick)), int32(float32(vy*perTick)), r.Uint64())
 }
 
 // Walking returns how many cracks walk through the cells.

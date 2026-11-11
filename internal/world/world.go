@@ -216,8 +216,9 @@ type World struct {
 	fresh, retry, spare []Queued
 	retryBudget         int
 	// particles are the cells and specks flying out of the grid, in the
-	// order they move (particles.go).
+	// order they move, and pooled counts those in each pool (particles.go).
 	particles []Particle
+	pooled    [pools]int
 	// scanAll makes every chunk scan all its cells every tick, for tests
 	// that check that sleeping changes nothing.
 	scanAll bool
