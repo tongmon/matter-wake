@@ -140,7 +140,7 @@ func TestPassingThroughMatterRunsOut(t *testing.T) {
 func TestDensityEndsPassing(t *testing.T) {
 	w, ids := newTestWorld(t, 64, 256, 1)
 	w.Fill(0, 100, 64, 200, ids.water)
-	launchRaw(w, 31, 190, perSecond(-180), 20)
+	launchRaw(w, 31, 190, perSecond(-180), w.mats[ids.water].density)
 	w.Step()
 	if w.Particles() != 0 {
 		t.Fatalf("a particle with water's density still flies in water: %+v", w.particles[0])
@@ -150,9 +150,8 @@ func TestDensityEndsPassing(t *testing.T) {
 	}
 }
 
-// Water passes through a body's cells, as in Noita: a solid's density is
-// scaled to the others' (solidDensityScale). Sand, as dense as the scaled
-// wood, does not.
+// Water passes through a body's cells, as in Noita: water (4) is lighter
+// than wood (6). Sand, as dense as wood, does not.
 func TestWaterPassesThroughABody(t *testing.T) {
 	for _, tc := range []struct {
 		name   string

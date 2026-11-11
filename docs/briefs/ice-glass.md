@@ -72,14 +72,14 @@ Noita 값은 `go run ./tools/noitaref -fields solid_,density,hp,durability,crack
 |---|---|---|---|---|---|
 | ice | ice_static | cell_type, liquid_static | 1, true | 고정 액체 계열 = 고정 재질 | kind static |
 | ice | ice_static | durability, hp | 0, 30000 | 그대로(채굴 규칙, design.md 5절) | hardness 0, hp 30000(도구 2000/틱으로 15틱) |
-| ice | ice_static | density | 10 | 고정 재질은 상대 순서만 씀. Noita rock_static도 10 | density 255(stone과 같음) |
+| ice | ice_static | density | 10 | 고정 재질은 상대 순서만 씀. Noita rock_static도 10 | density 10(stone과 같음, 2026-11-11 Noita 값으로 통일, 처음 255) |
 | ice | ice_static | convert_to_box2d_material | ice_glass | 이름 연결 | body `ice_body` |
 | ice_body | ice_glass | density | 6 | 몸체 질량 밀도 그대로(나무와 같은 방식) | density 6 |
 | ice_body | ice_glass | durability, hp | 0, 10000 | 그대로 | hardness 0, hp 10000(5틱) |
 | ice_body | ice_glass | solid_friction, solid_restitution | 0.05, 0.2 | 그대로 | friction 0.05, restitution 0.2 |
 | ice_body | ice_glass | solid_static_type | 5 (ICE_BREAK) | 가장 위 조각이 남음 | anchor `top` |
 | ice_body | ice_glass | crackability, solid_on_sleep_convert, solid_break_to_type | 100, true, ice_static | PR B | PR B에서 |
-| glass | glass_static | durability, hp, density | 0, 30000, 10 | ice와 같음 | hardness 0, hp 30000, density 255 |
+| glass | glass_static | durability, hp, density | 0, 30000, 10 | ice와 같음 | hardness 0, hp 30000, density 10 |
 | glass | glass_static | convert_to_box2d_material | glass_brittle | 이름 연결 | body `glass_slab` |
 | glass_slab | glass_brittle | density, durability, hp | 6, 0, 10000 | 그대로 | density 6, hardness 0, hp 10000(5틱) |
 | glass_slab | glass_brittle | solid_friction, solid_restitution | 0.9, 0 | 그대로 | friction 0.9, restitution 0 |
@@ -91,7 +91,7 @@ Noita 값은 `go run ./tools/noitaref -fields solid_,density,hp,durability,crack
 | glass_body | glass | solid_static_type | 2 (STATIC_BUT_BREAK) | 가장 큰 조각이 남음 | anchor `largest` |
 | glass_body | glass | solid_on_break_explode, solid_break_to_type | true, glass_broken | 셀을 잃으면 통째로 부서짐 | shatter `glass_powder` |
 | glass_powder | glass_broken | liquid_sand | true | 가루 | kind powder |
-| glass_powder | glass_broken | density | 6(모래도 6) | 상대 순서만 씀 | density 30(모래와 같음) |
+| glass_powder | glass_broken | density | 6(모래도 6) | 상대 순서만 씀 | density 6(모래와 같음, 2026-11-11 Noita 값으로 통일, 처음 30) |
 | glass_powder | glass_broken | liquid_gravity | 1.1 | × 0.25(C47) | fallAccel 0.275 |
 | glass_powder | glass_broken | liquid_viscosity | 50 | 미끄러짐 % 그대로(모래와 같음) | slideChance 50 |
 | glass_powder | glass_broken | durability, hp | 0, 1000 | 그대로 | hardness 0, hp 1000 |

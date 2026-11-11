@@ -83,13 +83,6 @@ const (
 	bounceLifeSpread = 61
 )
 
-// solidDensityScale turns a solid's density, on Noita's scale (wood 6, the
-// mass of a body), into that of the other kinds, five times Noita's (water
-// 20, Noita's 4). 🔶 Only a particle passing through a body's cells
-// compares the two, so a drop of water passes through wood, as in Noita,
-// and a grain of sand does not.
-const solidDensityScale = 5
-
 // particleSalt keys a particle's random numbers in a tick apart from its
 // first ones.
 const particleSalt = 0x1f83d9abfb41bd6b
@@ -407,7 +400,7 @@ func meet(p *Particle, t *matProps) meeting {
 		if p.Pass > -2 {
 			p.Pass--
 		}
-		if uint16(p.Density) >= solidity(t) {
+		if p.Density >= t.density {
 			p.Flags &^= Passing
 		}
 	case p.Flags&Bounces != 0:
@@ -416,15 +409,6 @@ func meet(p *Particle, t *matProps) meeting {
 		return stops
 	}
 	return enters
-}
-
-// solidity returns the density a particle passing through a cell of t
-// compares with its own: a solid's on the scale of the others.
-func solidity(t *matProps) uint16 {
-	if t.kind == material.Solid {
-		return uint16(t.density) * solidDensityScale
-	}
-	return uint16(t.density)
 }
 
 // bounce turns p back off matter it hit heading along (ux, uy), as Noita

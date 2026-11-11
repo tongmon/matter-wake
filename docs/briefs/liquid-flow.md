@@ -88,7 +88,7 @@
 | water | water | liquid_flow_speed | 0.9 | 그대로 | flowSpeed 0.9 (Q8 0.8984) |
 | water | water | liquid_damping | 0.8 | 그대로 | flowDamping 0.8 (Q8 0.8008) |
 | water | water | liquid_viscosity | 50 | 일반 액체는 읽지 않음 | 쓰지 않음 |
-| water | water | density | 4 | 상대 순서만 씀 | density 20 (그대로) |
+| water | water | density | 4 | 상대 순서만 씀 | density 4 (2026-11-11 Noita 값으로 통일, 처음 20) |
 | sand | sand | liquid_gravity | 0.9 | ×0.25 | 0.225 (지금 0.25. 가루 작업에서 정함) |
 
 ## 연관 메커니즘

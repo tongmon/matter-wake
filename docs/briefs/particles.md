@@ -83,10 +83,10 @@
 | 튀기 표시 끔 | | 속력 < 10 px/s | | | 같음 |
 | 장식 입자 수명 | | | U[5, 10] s | | 300~600틱 |
 | 균열 조각 속도 | | | U×15−7.5 px/s 축마다 | | 같은 값(칸/s) |
-| 물 | water | density | 4 | 우리 셀 밀도 = Noita × 5 | 20(이미 데이터) |
-| 모래 | sand | density | 6 | × 5 | 30(이미 데이터) |
-| 나무·얼음·유리 몸체 | wood_loose, ice_glass, glass_brittle | density | 6 | 고체 밀도는 Noita 척도 그대로(Box2D 질량에 씀) | 통과 비교 때만 × 5 = 30 (🔶 `solidDensityScale`) |
-| 돌 | rock_static | density | 10 | | 255(이미 데이터, 무엇도 가라앉지 않게) |
+| 물 | water | density | 4 | 그대로(✅ 2026-11-11 Noita 값으로 통일) | 4(처음 20) |
+| 모래 | sand | density | 6 | 그대로 | 6(처음 30) |
+| 나무·얼음·유리 몸체 | wood_loose, ice_glass, glass_brittle | density | 6 | 그대로(Box2D 질량에도 씀) | 6 |
+| 돌 | rock_static | density | 10 | 그대로 | 10(처음 255) |
 | 풀 한도 | | | 100,000 | | 100,000 (`maxParticles` 🧪) |
 
 ## 연관 메커니즘
@@ -129,10 +129,10 @@
 
 | 빈칸 | 자료 상태 | TPT 방식 (파일:함수) | 우리 설계 (우리 제약에 맞춘 방법) | 측정 방법 | 추가 분석 제안 |
 |---|---|---|---|---|---|
-| 몸체 칸의 통과 밀도 | Noita는 모든 재질이 한 밀도 척도(물 4, 나무 6, 바위 10). 우리 액체·가루 밀도는 Noita × 5(물 20, 모래 30)이고 고체 밀도는 Noita 척도 그대로(나무 6, Box2D 질량에 씀) | 없음(TPT는 `Weight` 한 척도, `SimulationData.cpp` `init_can_move`. 강체 없음) | 🔶 통과 비교에서만 고체 밀도에 5를 곱함(`solidDensityScale`). 그래서 Noita처럼 물 입자(20)는 몸체(30)를 지나고 모래 입자(30)는 못 지남 | `TestSplashPassesThroughTheBody` | 아니오(관측 규칙이 분명하고 척도만 맞추면 됨) |
+| 몸체 칸의 통과 밀도 | Noita는 모든 재질이 한 밀도 척도(물 4, 나무 6, 바위 10). 처음 우리 액체·가루·고정 재질의 밀도는 뼈대의 임시값(물 20, 모래 30, 고정 255)이었고 고체만 Noita 값(나무 6, Box2D 질량에 씀) | 없음(TPT는 `Weight` 한 척도, `SimulationData.cpp` `init_can_move`. 강체 없음) | ✅ 2026-11-11 모든 재질의 밀도를 Noita 값으로 통일(개발자 결정). 통과 비교는 밀도를 그대로 비교해, Noita처럼 물 입자(4)는 몸체(6)를 지나고 모래 입자(6)는 못 지남. 처음에는 🔶 통과 비교에서만 고체 밀도에 5를 곱했음(`solidDensityScale`, 지움) | `TestWaterPassesThroughABody`, 입자의 밀도를 있음·없음으로만 해시한 골든 비교 | 아니오(관측 규칙이 분명하고 척도만 맞추면 됨) |
 | 걸음 방향 | Noita 관측(C82)은 마지막 본 칸의 모서리에서 목적지로. 느린 입자에서 벌어짐(위 "증상 재현") | 없음 | 🔶 걸음 수는 그대로, 방향은 입자에서 목적지로 | `TestParticlesFallWithGravity`, `TestLaunchedCellFliesAndLands` | 아니오(관측 규칙은 분명하고, 다르게 할 이유가 측정으로 있음) |
 | 풀이 찼을 때 셀의 행방 | OPEN(BODY_GRID_COUPLING:297-298) | 없음 | 🔶 한도(🧪 100,000)를 넘으면 셀 입자 대신 대기열로, 장식 입자는 만들지 않음. 셀을 잃지 않음 | `TestFullPoolQueuesTheCell` | 아니오 |
-| 입자가 몸체 칸에 닿을 때 | OPEN(BODY_GRID_COUPLING:170-171, 295) | 없음 | 경로 검사의 고체로 봄(C82가 고체를 다루는 그대로). 몸체에 힘을 주지 않음 | `TestSplashPassesThroughTheBody` | 아니오 |
+| 입자가 몸체 칸에 닿을 때 | OPEN(BODY_GRID_COUPLING:170-171, 295) | 없음 | 경로 검사의 고체로 봄(C82가 고체를 다루는 그대로). 몸체에 힘을 주지 않음 | `TestWaterPassesThroughABody`, `TestBoxSplashesThePool` | 아니오 |
 | 몸체가 액체를 밀 때의 장식 입자 | 개수는 LIVE, 속도식 OPEN(BODY_GRID_COUPLING:148-149, 208-213). 원시 자료 pool-c에서 처음 보인 속도는 vx ±15, vy −30~−75 px/s 쯤 | 없음 | 🔶 이번에는 만들지 않음. 셀 입자의 물보라만으로 보고, 플레이 뒤 부족하면 속도식을 좁은 추가 분석으로 | 직접 플레이 | 나중에(세 조건 중 "자체 설계가 플레이에서 모자람"을 아직 모름) |
 | 기류(C87) | 방출기 입자만 관측 | `Air.cpp` `update_air`: 4×4 격자의 압력·공기 속도를 입자가 따라감. Noita의 기류와 다른 개념(Noita는 방출기마다의 잡음) | 🔶 이번 PR에서 뺌. 방출기(불꽃, 연기, 폭발 효과)를 넣을 때 그 입자에 붙임. 9절의 "유체/압력 모델의 수준"과는 따로 | 없음 | 아니오 |
 | 튀기의 축 반전 계수 | 모델은 `restitution` 상수, 산문은 "−1을 곱한다"(C86:2610) | `Simulation.cpp` 이동 막힘 뒤 속도에 `Collision`을 곱함(음수면 튐). 가져오지 않음(Noita 관측이 있음) | −1(산문대로) | `TestSpeckBounces` | 아니오 |
@@ -144,6 +144,7 @@
 
 - 테스트: world `TestLaunchedCellFliesAndLands`(꼭대기 25행, 바닥에 돌아옴), `TestParticlesFallWithGravity`(C84 순서의 위치를 100틱 비트까지), `TestPassingThroughMatterRunsOut`, `TestDensityEndsPassing`, `TestWaterPassesThroughABody`, `TestFallingParticleStopsOnTheSurface`, `TestLaunchDrawsTheDensity`(512개 중 약 반), `TestSpeckBouncesAndGoes`, `TestSpeckLifeRunsOut`, `TestFullPoolQueuesTheCell`, `TestParticlesLeaveWithTheirBlock`, `TestFlyingDoesNotAllocate`, `TestSleepMatchesScanningEverything`(입자를 넣음). rigid `TestFastBodyThrowsWaterUp`, `TestBoxSplashesThePool`, `TestCrackThrowsSpecks`. save `TestBlockKeepsQueuedCellsAndBodies`(입자 300개 비트까지), `TestBlockReadsVersion5`. game `TestParticlesSurviveTheirBlocks`. 리플레이 골든은 틱마다 날아가는 셀을 세어 보존을 확인하고, 액체·가루 입자와 장식 입자가 모두 나와야 통과
 - 골든: 장식 입자를 끈 빌드로 다시 돌려 셀 수가 모두 같음을 확인(장식 입자는 셀을 바꾸지 않음)
+- 밀도 통일(✅ 2026-11-11): 밀도를 Noita 값으로 바꾼 뒤 장면 골든은 그대로였고, 리플레이 골든은 입자가 나는 줄의 체크섬만 바뀜. 입자의 밀도를 있음·없음으로만 해시한 임시 빌드에서는 바꾸기 전과 뒤가 모든 줄에서 같았음(동작이 같음)
 - 비용: design.md 3절 "튀는 입자"의 비용 줄
 - 그림: [물보라](../images/splash.png), [균열 조각](../images/crack-specks.png)
 

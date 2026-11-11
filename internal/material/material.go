@@ -158,8 +158,9 @@ type Def struct {
 	Name string `json:"name"`
 	Kind Kind   `json:"kind"`
 	// Density decides what sinks through what: a moving cell may sink into a
-	// liquid of lower density. A solid's density also sets the mass of its
-	// bodies (rigid package).
+	// liquid of lower density, and a flying cell passes through denser
+	// matter. Every kind uses Noita's scale (water 4, sand 6, stone 10). A
+	// solid's density also sets the mass of its bodies (rigid package).
 	Density uint8 `json:"density"`
 
 	// FallAccel is how much a falling cell's speed grows each tick, in

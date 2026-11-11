@@ -88,7 +88,7 @@
 | 흐르는 액체·움직이는 모래 → 입자 또는 대기열 | `internal/world/body.go:51` `Displace` | 다름 | 입자가 아직 없어 모두 재삽입 대기열(개발자 결정 4). 카메라 의존(입자 영역)은 따르지 않음 |
 | 기체 → 입자, 불 → 삭제 | 없음 | 없음 | 기체·불 재질이 아직 없음. 넣을 때 기체는 대기열, 불은 삭제(개발자 결정 4) |
 | 몸체 위 셀의 무게 없음 | 해당 없음 | 같음 | 셀이 몸체에 주는 힘은 부력과 액체 접촉 저항뿐([부력·저항 참고 요약](buoyancy-drag.md)) |
-| 재삽입 탐색 | `internal/world/reinsert.go:120` `reinsert` | 같음 | 고정 재질(Static)은 밀어내지 않고 통과만 함. 지금 돌은 밀도 255라 어차피 밀리지 않음 |
+| 재삽입 탐색 | `internal/world/reinsert.go:120` `reinsert` | 같음 | 고정 재질(Static)은 밀어내지 않고 통과만 함. 종류로 막으므로 돌의 밀도(2026-11-11부터 Noita 값 10)와 상관없음 |
 | 재삽입 스케줄러(예산, retry 먼저, 밀려난 셀) | `internal/world/reinsert.go:59` `reinsertQueued`, `:79` `retryCells` | 같음 | 난수는 전역 LCG 대신 (시드, 틱) 스트림 |
 | 만료 삭제, 100,000 상한 | 없음 | 다름 | 셀 보존을 위해 두지 않음. 몸체가 밀어낸 셀에는 만료가 없음(BODY_GRID_COUPLING:194-206에서 끝까지 남음) |
 | 지형 분류 0/1/2 | `internal/world/collision.go:25` `Classify` | 같음 | 부착(+22)·sticks_to_ceiling·never_box2d가 없어 분류 1은 Static, 2는 쉰 틱 ≥ 20인 가루 |

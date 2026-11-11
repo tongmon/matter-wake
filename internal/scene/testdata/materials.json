@@ -1,14 +1,14 @@
 {
   "materials": [
-    { "name": "air", "kind": "empty", "density": 0, "color": "#00000000" },
-    { "name": "stone", "kind": "static", "density": 255, "color": "#6b6a72", "toneSpread": 40 },
+    { "name": "air", "kind": "empty", "density": 1, "color": "#00000000" },
+    { "name": "stone", "kind": "static", "density": 10, "color": "#6b6a72", "toneSpread": 40 },
     {
-      "name": "sand", "kind": "powder", "density": 30,
+      "name": "sand", "kind": "powder", "density": 6,
       "fallAccel": 0.25, "sinkChance": 25, "slideChance": 80,
       "color": "#e0c27a", "toneSpread": 50
     },
     {
-      "name": "water", "kind": "liquid", "density": 20,
+      "name": "water", "kind": "liquid", "density": 4,
       "fallAccel": 0.25, "sinkChance": 50,
       "flowSpeed": 0.5, "flowDamping": 0.9, "dispersion": 4,
       "color": "#3a7bd5c8", "toneSpread": 20

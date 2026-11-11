@@ -14,7 +14,7 @@ import (
 func TestDotsDoNotAllocate(t *testing.T) {
 	tab, err := material.NewTable([]material.Def{
 		{Name: "air", Kind: material.Empty},
-		{Name: "water", Kind: material.Liquid, Density: 20, Color: material.Color{R: 40, G: 120, B: 210, A: 200}},
+		{Name: "water", Kind: material.Liquid, Density: 4, Color: material.Color{R: 40, G: 120, B: 210, A: 200}},
 	})
 	if err != nil {
 		t.Fatal(err)

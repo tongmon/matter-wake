@@ -34,13 +34,13 @@ func testDefs() []material.Def {
 	}
 	return []material.Def{
 		{Name: "air", Kind: material.Empty},
-		{Name: "stone", Kind: material.Static, Density: 255},
+		{Name: "stone", Kind: material.Static, Density: 10},
 		{
-			Name: "sand", Kind: material.Powder, Density: 30,
+			Name: "sand", Kind: material.Powder, Density: 6,
 			FallAccel: q(0.225), SinkChance: 25, SlideChance: 50,
 		},
 		{
-			Name: "water", Kind: material.Liquid, Density: 20,
+			Name: "water", Kind: material.Liquid, Density: 4,
 			FallAccel: q(0.375), SinkChance: 50,
 			FlowSpeed: q(0.9), FlowDamping: q(0.8), Dispersion: 4,
 		},
