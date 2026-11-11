@@ -67,12 +67,12 @@ func (s *System) Wear(x, y int, amount uint32) (material.ID, bool) {
 }
 
 // showDamage puts the damage of pixel k of b, at slot, into every cell
-// that shows the pixel, or empties them if hide is set. A turned body's
-// pixel may show in two cells, and a body that does not move is not
-// written again. The cells that show it have their centers inside the
-// pixel, where b was last written: within a cell of the cell its center is
-// in.
-func (s *System) showDamage(b *body, slot, k uint16, hide bool) {
+// that shows the pixel, or, if crumble is set, takes those cells out, each
+// thrown off as a speck (speck). A turned body's pixel may show in two
+// cells, and a body that does not move is not written again. The cells
+// that show it have their centers inside the pixel, where b was last
+// written: within a cell of the cell its center is in.
+func (s *System) showDamage(b *body, slot, k uint16, crumble bool) {
 	if !b.written {
 		return
 	}
@@ -85,7 +85,8 @@ func (s *System) showDamage(b *body, slot, k uint16, hide bool) {
 			}
 			if owner, pixel := c.Body(); owner == slot && pixel == k {
 				c.Damage = b.px[k].shade()
-				if hide {
+				if crumble {
+					s.speck(b, k, x, y, c)
 					c = world.Cell{}
 				}
 				s.w.Put(x, y, c)

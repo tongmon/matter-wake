@@ -17,12 +17,12 @@ import (
 // not move them. Bedrock is harder than testTool can dig.
 const testMaterials = `{"materials": [
 	{"name": "air", "kind": "empty"},
-	{"name": "stone", "kind": "static", "density": 255, "hardness": 10, "hp": 1000},
-	{"name": "sand", "kind": "powder", "density": 30, "fallAccel": 0.225, "sinkChance": 25, "slideChance": 50,
+	{"name": "stone", "kind": "static", "density": 10, "hardness": 10, "hp": 1000},
+	{"name": "sand", "kind": "powder", "density": 6, "fallAccel": 0.225, "sinkChance": 25, "slideChance": 50,
 	 "hardness": 4, "hp": 300},
-	{"name": "water", "kind": "liquid", "density": 20, "fallAccel": 0.375, "sinkChance": 50,
+	{"name": "water", "kind": "liquid", "density": 4, "fallAccel": 0.375, "sinkChance": 50,
 	 "flowSpeed": 0.9, "flowDamping": 0.8, "dispersion": 4},
-	{"name": "bedrock", "kind": "static", "density": 255, "hardness": 11, "hp": 1},
+	{"name": "bedrock", "kind": "static", "density": 10, "hardness": 11, "hp": 1},
 	{"name": "wood", "kind": "solid", "density": 6, "hardness": 8, "hp": 300, "friction": 0.9, "restitution": 0.2}
 ]}`
 
@@ -581,14 +581,14 @@ func TestBodyToolWorksInTheTerrain(t *testing.T) {
 // shatters into.
 const coldMaterials = `{"materials": [
 	{"name": "air", "kind": "empty"},
-	{"name": "stone", "kind": "static", "density": 255, "hardness": 10, "hp": 1000},
-	{"name": "sand", "kind": "powder", "density": 30, "fallAccel": 0.225, "sinkChance": 25, "slideChance": 50,
+	{"name": "stone", "kind": "static", "density": 10, "hardness": 10, "hp": 1000},
+	{"name": "sand", "kind": "powder", "density": 6, "fallAccel": 0.225, "sinkChance": 25, "slideChance": 50,
 	 "hardness": 4, "hp": 300},
-	{"name": "water", "kind": "liquid", "density": 20, "fallAccel": 0.375, "sinkChance": 50,
+	{"name": "water", "kind": "liquid", "density": 4, "fallAccel": 0.375, "sinkChance": 50,
 	 "flowSpeed": 0.9, "flowDamping": 0.8, "dispersion": 4},
-	{"name": "ice", "kind": "static", "density": 255, "hp": 600, "body": "ice_body"},
-	{"name": "glass", "kind": "static", "density": 255, "hp": 600, "body": "glass_slab"},
-	{"name": "glass_powder", "kind": "powder", "density": 30, "fallAccel": 0.275, "sinkChance": 25, "slideChance": 50, "hp": 300},
+	{"name": "ice", "kind": "static", "density": 10, "hp": 600, "body": "ice_body"},
+	{"name": "glass", "kind": "static", "density": 10, "hp": 600, "body": "glass_slab"},
+	{"name": "glass_powder", "kind": "powder", "density": 6, "fallAccel": 0.275, "sinkChance": 25, "slideChance": 50, "hp": 300},
 	{"name": "ice_body", "kind": "solid", "density": 6, "hp": 300, "friction": 0.05, "restitution": 0.2, "anchor": "top",
 	 "cracks": true, "sleepTo": "ice"},
 	{"name": "glass_body", "kind": "solid", "density": 6, "hp": 300, "friction": 0.3, "restitution": 0.2,
@@ -621,6 +621,7 @@ func TestIceAndGlassTurnAsTheToolDigs(t *testing.T) {
 		n := make([]int, tab.Len())
 		g.world.Counts(n)
 		g.world.Queued(n)
+		g.world.Flying(n)
 		made, turned, pixels := make([]int, tab.Len()), make([]int, tab.Len()), make([]int, tab.Len())
 		g.Made(made)
 		g.Turned(turned)

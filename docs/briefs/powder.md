@@ -63,7 +63,7 @@
 | sand | sand | liquid_gravity | 0.9 | ×0.25 (C47:1181) | fallAccel 0.225 (Q8 0.2266) |
 | sand | sand | liquid_gravity | 0.9 | 쉬는 확률 (1 − 0.9) × 0.5 | 약 5% (Q8 계산으로 4.7%) |
 | sand | sand | liquid_viscosity | 50 | rand%101 < 50 → 50/101 | slideChance 50 |
-| sand | sand | density | 6 | 상대 순서만 씀 | density 30 (그대로) |
+| sand | sand | density | 6 | 상대 순서만 씀 | density 6 (2026-11-11 Noita 값으로 통일, 처음 30) |
 | sand | sand | liquid_sticks_to_ceiling | 0 | 부착하지 않음 | 해당 없음 |
 | sand → 액체 | — | 밀도 교환 | 26/101 | 백분율 | sinkChance 25 (그대로) |
 

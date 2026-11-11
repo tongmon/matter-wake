@@ -1,19 +1,19 @@
 {
   "materials": [
-    { "name": "air", "kind": "empty", "density": 0, "color": "#00000000" },
+    { "name": "air", "kind": "empty", "density": 1, "color": "#00000000" },
     {
-      "name": "stone", "kind": "static", "density": 255,
+      "name": "stone", "kind": "static", "density": 10,
       "hardness": 10, "hp": 100000,
       "color": "#6b6a72", "toneSpread": 40
     },
     {
-      "name": "sand", "kind": "powder", "density": 30,
+      "name": "sand", "kind": "powder", "density": 6,
       "fallAccel": 0.225, "sinkChance": 25, "slideChance": 50,
       "hardness": 4, "hp": 800,
       "color": "#e0c27a", "toneSpread": 50
     },
     {
-      "name": "water", "kind": "liquid", "density": 20,
+      "name": "water", "kind": "liquid", "density": 4,
       "fallAccel": 0.375, "sinkChance": 50,
       "flowSpeed": 0.9, "flowDamping": 0.8, "dispersion": 4,
       "color": "#3a7bd5c8", "toneSpread": 20
@@ -25,17 +25,17 @@
       "color": "#8a5a32", "toneSpread": 40
     },
     {
-      "name": "ice", "kind": "static", "density": 255,
+      "name": "ice", "kind": "static", "density": 10,
       "hardness": 0, "hp": 30000, "body": "ice_body",
       "color": "#b7dcec", "toneSpread": 30
     },
     {
-      "name": "glass", "kind": "static", "density": 255,
+      "name": "glass", "kind": "static", "density": 10,
       "hardness": 0, "hp": 30000, "body": "glass_slab",
       "color": "#d5e9edb4", "toneSpread": 20
     },
     {
-      "name": "glass_powder", "kind": "powder", "density": 30,
+      "name": "glass_powder", "kind": "powder", "density": 6,
       "fallAccel": 0.275, "sinkChance": 25, "slideChance": 50,
       "hardness": 0, "hp": 1000,
       "color": "#e6f0f0", "toneSpread": 50

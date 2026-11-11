@@ -1,11 +1,14 @@
 package game
 
 import (
+	"cmp"
 	"hash/fnv"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
+	"github.com/tongmon/matter-wake/internal/material"
 	"github.com/tongmon/matter-wake/internal/world"
 )
 
@@ -356,5 +359,73 @@ func TestUpcomingDoesNotAllocate(t *testing.T) {
 	g.Upcoming(x, y, 512)
 	if n := testing.AllocsPerRun(20, func() { g.Upcoming(x, y, 512) }); n != 0 {
 		t.Fatalf("Upcoming allocates %v times a call", n)
+	}
+}
+
+// launchFromTheGround throws n cells of the ground under the middle of the
+// view up out of the grid, fast enough to stay in the air a few seconds.
+func launchFromTheGround(g *Game, n int) {
+	x0, _ := g.Spawn()
+	x0 += g.viewW/2 - n/2
+	for x := x0; x < x0+n; x++ {
+		y := g.terrain.Surface(x)
+		// The sand on top may have settled a little lower.
+		for c, _ := g.world.At(x, y); c.Mat == material.Air; c, _ = g.world.At(x, y) {
+			y++
+		}
+		g.world.Launch(x, y, int32(x%5-2)*world.ParticleOne/60, -300*world.ParticleOne/60, uint64(x))
+	}
+	g.world.Flush()
+}
+
+// Particles in flight go into the store with their blocks and come back
+// with them, still flying: saving the blocks changes nothing, and neither
+// does leaving the blocks and coming back, but for the ticks they waited.
+func TestParticlesSurviveTheirBlocks(t *testing.T) {
+	saved, kept := newTerrainGame(t, 2), newTerrainGame(t, 2)
+	x, y := saved.Spawn()
+	in := Input{CameraX: x, CameraY: y}
+	for _, g := range []*Game{saved, kept} {
+		step(t, g, &in)
+		launchFromTheGround(g, 40)
+		step(t, g, &in)
+	}
+	if saved.World().Particles() != 40 || saved.World().QueueLen() != 0 {
+		t.Fatalf("%d particles fly and %d cells wait; the test needs 40 and none", saved.World().Particles(), saved.World().QueueLen())
+	}
+	if err := saved.SaveBlocks(); err != nil {
+		t.Fatal(err)
+	}
+	for range 60 {
+		step(t, saved, &in)
+		step(t, kept, &in)
+		if a, b := saved.World().Checksum(), kept.World().Checksum(); a != b {
+			t.Fatalf("tick %d: checksum %#x after saving the blocks, %#x without", saved.World().Tick(), a, b)
+		}
+	}
+	// Away to the far corner, so every block goes, and back.
+	flying := saved.World().AppendParticles(nil)
+	if len(flying) == 0 {
+		t.Fatal("no particle flies; the test needs some to leave with their blocks")
+	}
+	saved.limits.Target = 1
+	base := saved.world.Tick()
+	for now := range uint32(30) {
+		saved.streaming.Interval = 1
+		if err := saved.streamAt(base+now+1, 0, 4096-270); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if n := saved.World().Particles(); n != 0 {
+		t.Fatalf("%d particles stayed in memory without their blocks", n)
+	}
+	if err := saved.streamAt(base+31, x, y); err != nil {
+		t.Fatal(err)
+	}
+	back := saved.World().AppendParticles(nil)
+	slices.SortFunc(back, func(a, b world.Particle) int { return cmp.Compare(a.Seed, b.Seed) })
+	slices.SortFunc(flying, func(a, b world.Particle) int { return cmp.Compare(a.Seed, b.Seed) })
+	if !slices.Equal(back, flying) {
+		t.Fatalf("%d particles came back, of the %d that left, or changed", len(back), len(flying))
 	}
 }

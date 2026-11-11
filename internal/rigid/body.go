@@ -24,9 +24,66 @@ const (
 
 // Salts that key a body's random choices apart from the world's.
 const (
-	toneSalt = 0x3c6ef372fe94f82b
-	sandSalt = 0xa54ff53a5f1d36f1
+	toneSalt   = 0x3c6ef372fe94f82b
+	sandSalt   = 0xa54ff53a5f1d36f1
+	splashSalt = 0x5be0cd19137e2179
+	spraySalt  = 0x1f83d9ab9b05688c
 )
+
+// How a body splashes what it pushes away, Noita's rule (C134 5.1e in
+// docs/briefs/particles.md): a body moving down faster than splashSpeed,
+// in cells per second, throws each liquid or powder cell in its way back
+// against its motion as a particle, at splashSlow to splashSlow +
+// splashSpread of its speed, turned up to splashTurn radians either way.
+// Slower, the cells go into the queue of cells to put back. 🧪 Noita's.
+const (
+	splashSpeed  = 25
+	splashSlow   = 0.5
+	splashSpread = 0.25
+	splashTurn   = 0.5
+)
+
+// How a body sprays what its pixels meet, Noita's rule (C140 3 in
+// docs/briefs/particles.md), 🧪 Noita's values. A pixel's speed is in m/s,
+// a speck's in cells per second, as Noita mixes them.
+//
+// A pixel faster than sprayFast that pushes a liquid or powder away
+// throws a speck of it too. Up to sprayNoise either way is added to each
+// axis of the pixel's velocity; the speck flies across up to sprayAcross
+// times that x either way, and along y between sprayBackSlow and sprayBack
+// times that y turned back, all times the body's shorter side in pixels
+// times sprayPerSide. It starts 1/sprayRise of that side above the cell
+// and passes through matter.
+//
+// A pixel faster than stuckFast that cannot push its cell away throws a
+// speck of what stays, without the noise: across, between stuckBack and
+// stuckOn times x; along y as above; all times stuckScale times
+// stuckSlowest, stuckMidway or stuckFastest as the pixel is no faster
+// than stuckSlow, no faster than stuckMid, or faster. It starts that last
+// factor of a cell above the cell, and does not pass.
+const (
+	sprayFast     = 2
+	sprayNoise    = 1.5
+	sprayAcross   = 2.2
+	sprayBack     = 1.1
+	sprayBackSlow = 0.3
+	sprayPerSide  = 0.25
+	sprayRise     = 20
+
+	stuckFast    = 3
+	stuckBack    = -1.2
+	stuckOn      = 0.8
+	stuckSlow    = 5
+	stuckMid     = 7
+	stuckScale   = 5
+	stuckSlowest = 0.1
+	stuckMidway  = 1
+	stuckFastest = 2
+)
+
+// perTick turns cells per second into a particle's 1/world.ParticleOne
+// cells per tick.
+const perTick = float32(world.ParticleOne) / 60
 
 // body is a rigid body: its Box2D handle, its image of w × h pixels of one
 // material, some of which may be gone, and the cells it was last written
@@ -337,11 +394,13 @@ func abs32(f float32) float32 {
 // cell's offset from the body's center in cells, for its speed. Air and
 // the body's own cells take the pixel. Static terrain keeps its cell, as
 // does a powder at rest unless it has settled and the body hits it hard
-// enough (givesWay). Liquids and other powders are pushed into the
-// world's queue of cells to put back; a liquid drags on the body as it
-// goes (C42, push). Another body's cell goes to the body
-// with the higher key: the one written later, which takes it. Either way
-// the body that loses the cell counts it as blocked.
+// enough (givesWay); a fast pixel sprays a speck of what stays (stuck).
+// Liquids and other powders are pushed away (splash): thrown off as
+// particles if the body moves down fast, or else into the world's queue
+// of cells to put back, and a fast pixel sprays a speck of them first; a
+// liquid drags on the body as it goes (C42, push). Another body's cell
+// goes to the body with the higher key: the one written later, which
+// takes it. Either way the body that loses the cell counts it as blocked.
 func (s *System) claim(b *body, slot uint16, k, x, y int, rx, ry float32) bool {
 	c, ok := s.w.At(x, y)
 	if !ok {
@@ -360,22 +419,116 @@ func (s *System) claim(b *body, slot uint16, k, x, y int, rx, ry float32) bool {
 			s.bodies[other].blocked++
 		}
 	case material.Static:
+		s.stuck(b, x, y, c, rx, ry)
 		return false
 	case material.Powder:
 		if c.Resting() && !s.givesWay(b, k, c, rx, ry) {
+			s.stuck(b, x, y, c, rx, ry)
 			return false
 		}
-		s.w.Displace(x, y)
+		s.spray(b, x, y, c, rx, ry)
+		s.splash(b, x, y)
 	case material.Liquid:
 		b.dragN++
 		b.dragX += rx
 		b.dragY += ry
 		b.dragR2 += float32(rx*rx) + float32(ry*ry)
-		s.w.Displace(x, y)
+		s.spray(b, x, y, c, rx, ry)
+		s.splash(b, x, y)
 	}
 	px := b.px[k]
 	s.w.Put(x, y, world.BodyCell(b.mat, px.tone, px.shade(), slot, uint16(k)))
 	return true
+}
+
+// splash takes the liquid or powder cell at (x, y), in b's way, out of the
+// grid: if b moves down faster than splashSpeed, into a particle thrown
+// back against b's motion, as Noita throws it (C134 5.1e); otherwise into
+// the queue of cells to put back. The draws come from a hash of the cell
+// and the tick, so the order cells are written in does not matter.
+func (s *System) splash(b *body, x, y int) {
+	s.velocity(b)
+	vx, vy := float32(b.v.X*cellsPerMeter), float32(b.v.Y*cellsPerMeter)
+	if !(vy > splashSpeed) {
+		s.w.Displace(x, y)
+		return
+	}
+	r := rng.New(rng.Hash3(s.w.Seed()^splashSalt, uint64(s.w.Tick()), uint64(x), uint64(y)))
+	q := physics.MakeRot(float32(unit(&r)*(2*splashTurn)) - splashTurn)
+	k := float32(unit(&r)*splashSpread) + splashSlow
+	ux, uy := -float32(vx*k), -float32(vy*k)
+	px := float32(q.C*ux) - float32(q.S*uy)
+	py := float32(q.S*ux) + float32(q.C*uy)
+	s.w.Launch(x, y, int32(float32(px*perTick)), int32(float32(py*perTick)), r.Uint64())
+}
+
+// spray throws a speck of c, the liquid or powder at (x, y) that b's pixel
+// at (rx, ry) cells from its center pushes away, if the pixel moves faster
+// than sprayFast, as Noita does (C140 3.1): back against the pixel's
+// motion along y, either way across, faster for a bigger body, from a
+// little above the cell, passing through matter. The draws come from a
+// hash of the cell and the tick.
+func (s *System) spray(b *body, x, y int, c world.Cell, rx, ry float32) {
+	vx, vy := s.pixelVelocity(b, rx, ry)
+	if !(float32(vx*vx)+float32(vy*vy) > sprayFast*sprayFast) {
+		return
+	}
+	r := rng.New(rng.Hash3(s.w.Seed()^spraySalt, uint64(s.w.Tick()), uint64(x), uint64(y)))
+	a := abs32(float32(unit(&r)*(2*sprayNoise)) - sprayNoise + vx)
+	a = float32(a * sprayAcross)
+	v := float32(unit(&r)*(2*sprayNoise)) - sprayNoise + vy
+	lo, hi := between(float32(-sprayBack*v), float32(-sprayBackSlow*v))
+	side := min(b.w, b.h)
+	scale := float32(float32(side) * sprayPerSide)
+	py := float32((float32(unit(&r)*(hi-lo)) + lo) * scale)
+	px := float32((float32(unit(&r)*(2*a)) - a) * scale)
+	mx, my := cellMiddle(x, y)
+	my -= int64(side) * world.ParticleOne / sprayRise
+	s.w.Spatter(look(c), mx, my, int32(float32(px*perTick)), int32(float32(py*perTick)), r.Uint64(), true)
+}
+
+// stuck throws a speck of c, at (x, y), which b's pixel at (rx, ry) cells
+// from its center could not push away, if the pixel moves faster than
+// stuckFast, as Noita does (C140 3.2): back against the pixel's motion,
+// faster the faster it moves, without noise, not passing through matter.
+// The draws come from a hash of the cell and the tick.
+func (s *System) stuck(b *body, x, y int, c world.Cell, rx, ry float32) {
+	vx, vy := s.pixelVelocity(b, rx, ry)
+	v2 := float32(vx*vx) + float32(vy*vy)
+	if !(v2 > stuckFast*stuckFast) {
+		return
+	}
+	speed, up := float32(stuckFastest), int64(stuckFastest*world.ParticleOne)
+	switch {
+	case v2 <= stuckSlow*stuckSlow:
+		speed, up = stuckSlowest, world.ParticleOne/10
+	case v2 <= stuckMid*stuckMid:
+		speed, up = stuckMidway, world.ParticleOne
+	}
+	speed = float32(speed * stuckScale)
+	r := rng.New(rng.Hash3(s.w.Seed()^spraySalt, uint64(s.w.Tick()), uint64(x), uint64(y)))
+	xlo, xhi := between(float32(stuckBack*vx), float32(stuckOn*vx))
+	ylo, yhi := between(float32(-sprayBack*vy), float32(-sprayBackSlow*vy))
+	py := float32((float32(unit(&r)*(yhi-ylo)) + ylo) * speed)
+	px := float32((float32(unit(&r)*(xhi-xlo)) + xlo) * speed)
+	mx, my := cellMiddle(x, y)
+	s.w.Spatter(look(c), mx, my-up, int32(float32(px*perTick)), int32(float32(py*perTick)), r.Uint64(), false)
+}
+
+// cellMiddle returns the middle of cell (x, y) in 1/world.ParticleOne
+// cells.
+func cellMiddle(x, y int) (mx, my int64) {
+	return int64(x)*world.ParticleOne + world.ParticleOne/2, int64(y)*world.ParticleOne + world.ParticleOne/2
+}
+
+// between returns a and b, the smaller first.
+func between(a, b float32) (lo, hi float32) {
+	return min(a, b), max(a, b)
+}
+
+// look returns what a speck of c shows: its material, tone and damage.
+func look(c world.Cell) world.Cell {
+	return world.Cell{Mat: c.Mat, Tone: c.Tone, Damage: c.Damage}
 }
 
 // givesWay reports whether resting powder c gives way to pixel k of b, at
@@ -401,11 +554,16 @@ func (s *System) givesWay(b *body, k int, c world.Cell, rx, ry float32) bool {
 // pixelSpeed2 returns the square of the speed, in (m/s)², of the point of
 // b at (rx, ry) cells from its center of mass.
 func (s *System) pixelSpeed2(b *body, rx, ry float32) float32 {
+	vx, vy := s.pixelVelocity(b, rx, ry)
+	return float32(vx*vx) + float32(vy*vy)
+}
+
+// pixelVelocity returns the velocity, in m/s, of the point of b at (rx, ry)
+// cells from its center of mass.
+func (s *System) pixelVelocity(b *body, rx, ry float32) (vx, vy float32) {
 	s.velocity(b)
 	mx, my := rx/cellsPerMeter, ry/cellsPerMeter
-	vx := b.v.X - float32(b.spin*my)
-	vy := b.v.Y + float32(b.spin*mx)
-	return float32(vx*vx) + float32(vy*vy)
+	return b.v.X - float32(b.spin*my), b.v.Y + float32(b.spin*mx)
 }
 
 // reaches reports whether cell (x, y) and b's shapes, where b was last

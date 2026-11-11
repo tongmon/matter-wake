@@ -3,6 +3,7 @@ package app
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 	"time"
 
@@ -241,5 +242,28 @@ func TestPrefetchDoesNotAllocate(t *testing.T) {
 	}
 	if n := testing.AllocsPerRun(20, func() { s.Prefetch(blocks) }); n != 0 {
 		t.Fatalf("Prefetch allocates %v times a call", n)
+	}
+}
+
+// A copy of a block shares nothing with it and keeps everything: its
+// cells, queued cells, bodies and particles.
+func TestCopyBlockKeepsEverything(t *testing.T) {
+	b := &save.Block{
+		Cells:     new(world.Block),
+		Queued:    []world.Queued{{Cell: world.Cell{Mat: 1}, X: 3, Y: 4}},
+		Bodies:    []save.Body{{Key: 7, W: 1, H: 1, Pixels: []save.Pixel{{OK: true, Tone: 9}}}},
+		Particles: []world.Particle{{X: 5 << 16, Y: 6 << 16, Cell: world.Cell{Mat: 1}, Flags: world.Passing}},
+	}
+	b.Cells[10].Mat = 2
+	c := copyBlock(b)
+	if !reflect.DeepEqual(b, c) {
+		t.Fatalf("the copy %+v differs from the block %+v", c, b)
+	}
+	c.Cells[10].Mat = 0
+	c.Queued[0].X = 0
+	c.Bodies[0].Pixels[0].Tone = 0
+	c.Particles[0].X = 0
+	if b.Cells[10].Mat != 2 || b.Queued[0].X != 3 || b.Bodies[0].Pixels[0].Tone != 9 || b.Particles[0].X != 5<<16 {
+		t.Fatal("changing the copy changed the block")
 	}
 }

@@ -27,10 +27,10 @@ func table(tb testing.TB, names ...string) *material.Table {
 		return v
 	}
 	all := map[string]material.Def{
-		"stone": {Name: "stone", Kind: material.Static, Density: 255, Hardness: 10, HP: 100000},
-		"sand":  {Name: "sand", Kind: material.Powder, Density: 30, FallAccel: q(0.225), SinkChance: 25, SlideChance: 50, Hardness: 4, HP: 800},
-		"water": {Name: "water", Kind: material.Liquid, Density: 20, FallAccel: q(0.375), SinkChance: 50, FlowSpeed: q(0.9), FlowDamping: q(0.8), Dispersion: 4},
-		"oil":   {Name: "oil", Kind: material.Liquid, Density: 15, FallAccel: q(0.375), SinkChance: 50, FlowSpeed: q(0.9), FlowDamping: q(0.8), Dispersion: 4},
+		"stone": {Name: "stone", Kind: material.Static, Density: 10, Hardness: 10, HP: 100000},
+		"sand":  {Name: "sand", Kind: material.Powder, Density: 6, FallAccel: q(0.225), SinkChance: 25, SlideChance: 50, Hardness: 4, HP: 800},
+		"water": {Name: "water", Kind: material.Liquid, Density: 4, FallAccel: q(0.375), SinkChance: 50, FlowSpeed: q(0.9), FlowDamping: q(0.8), Dispersion: 4},
+		"oil":   {Name: "oil", Kind: material.Liquid, Density: 1, FallAccel: q(0.375), SinkChance: 50, FlowSpeed: q(0.9), FlowDamping: q(0.8), Dispersion: 4},
 	}
 	defs := []material.Def{{Name: "air", Kind: material.Empty}}
 	for _, n := range names {

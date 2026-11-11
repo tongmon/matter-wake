@@ -209,7 +209,10 @@ func (s *prefetchStore) write() {
 
 // copyBlock returns a copy of b that shares nothing with it.
 func copyBlock(b *save.Block) *save.Block {
-	c := &save.Block{Cells: new(world.Block), Queued: slices.Clone(b.Queued), Bodies: slices.Clone(b.Bodies)}
+	c := &save.Block{
+		Cells: new(world.Block), Queued: slices.Clone(b.Queued), Bodies: slices.Clone(b.Bodies),
+		Particles: slices.Clone(b.Particles),
+	}
 	*c.Cells = *b.Cells
 	for i := range c.Bodies {
 		c.Bodies[i].Pixels = slices.Clone(c.Bodies[i].Pixels)

@@ -1,9 +1,11 @@
 package world
 
-// Checksum hashes the cells in memory. Worlds with the same blocks in
-// memory and equal cells give equal checksums, so tests use it to compare
-// runs. It hashes the blocks in order, each row by row, so a world of one
-// block is hashed row by row.
+// Checksum hashes the cells in memory and the particles flying. Worlds
+// with the same blocks in memory, equal cells and equal particles give
+// equal checksums, so tests use it to compare runs. It hashes the blocks
+// in order, each row by row, so a world of one block is hashed row by row,
+// and then the particles in their order. A world without particles hashes
+// as its cells alone.
 //
 // The hash is our own, built to be fast rather than standard. Each cell is
 // packed into two 64-bit words, and each word is mixed in by an exclusive
@@ -16,7 +18,20 @@ func (w *World) Checksum() uint64 {
 	w.eachRow(func(row []Cell) {
 		h = hashRow(h, row)
 	})
+	for i := range w.particles {
+		h = hashParticle(h, &w.particles[i])
+	}
 	return h
+}
+
+// hashParticle mixes every field of p into h.
+func hashParticle(h uint64, p *Particle) uint64 {
+	h = hashCell(h, p.Cell)
+	for _, v := range [...]uint64{uint64(p.X), uint64(p.Y), uint64(p.LX), uint64(p.LY), p.Seed} {
+		h = mix(h, v)
+	}
+	h = mix(h, uint64(uint32(p.VX))|uint64(uint32(p.VY))<<32)
+	return mix(h, uint64(uint32(p.Life))|uint64(p.Density)<<32|uint64(uint8(p.Pass))<<40|uint64(p.Flags)<<48)
 }
 
 const (

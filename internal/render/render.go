@@ -49,6 +49,14 @@ type Renderer struct {
 	path                  vector.Path
 	stroke                vector.StrokeOptions
 	drawPath              vector.DrawPathOptions
+	// particles is DrawWorld's buffer of the particles flying; dots and
+	// dotIndex are the triangles it draws them with, two to a particle,
+	// and dot the white pixel they take their color from.
+	particles []world.Particle
+	dots      []ebiten.Vertex
+	dotIndex  []uint32
+	dot       *ebiten.Image
+	dotOp     ebiten.DrawTrianglesOptions
 }
 
 // New returns a renderer for the cells of mats.
@@ -62,7 +70,8 @@ func New(mats *material.Table) *Renderer {
 }
 
 // DrawWorld draws the cells of w that the camera at (camX, camY) sees, one
-// pixel per cell, over the background; dst is the view. w must be the
+// pixel per cell, over the background, and then the particles flying, each
+// a pixel of its cell's color where it is; dst is the view. w must be the
 // world the renderer was made for, since the renderer keeps what it drew
 // of it. Cells of blocks not in memory are left as background.
 func (r *Renderer) DrawWorld(dst *ebiten.Image, w *world.World, camX, camY int) {
@@ -84,6 +93,51 @@ func (r *Renderer) DrawWorld(dst *ebiten.Image, w *world.World, camX, camY int) 
 			r.op.GeoM.Translate(float64(x-camX), float64(y-camY))
 			dst.DrawImage(c.img, &r.op)
 		}
+	}
+	r.drawParticles(dst, w, camX, camY)
+}
+
+// drawParticles draws the particles of w the camera at (camX, camY) sees,
+// in one draw call. Drawn one by one, each would box its color for the
+// call (Codex review).
+func (r *Renderer) drawParticles(dst *ebiten.Image, w *world.World, camX, camY int) {
+	r.buildDots(w, camX, camY, dst.Bounds().Dx(), dst.Bounds().Dy())
+	if len(r.dotIndex) == 0 {
+		return
+	}
+	if r.dot == nil {
+		r.dot = ebiten.NewImage(1, 1)
+		r.dot.Fill(color.White)
+		r.dotOp.ColorScaleMode = ebiten.ColorScaleModePremultipliedAlpha
+	}
+	dst.DrawTriangles32(r.dots, r.dotIndex, r.dot, &r.dotOp)
+}
+
+// buildDots lists in dots and dotIndex two triangles for each particle of
+// w in a view of vw × vh cells whose top-left cell is (camX, camY): the
+// square of the cell it is in, in its cell's premultiplied color.
+func (r *Renderer) buildDots(w *world.World, camX, camY, vw, vh int) {
+	r.particles = w.AppendParticles(r.particles[:0])
+	r.dots, r.dotIndex = r.dots[:0], r.dotIndex[:0]
+	for i := range r.particles {
+		p := &r.particles[i]
+		x, y := p.At()
+		if x -= camX; x < 0 || x >= vw {
+			continue
+		}
+		if y -= camY; y < 0 || y >= vh {
+			continue
+		}
+		c := r.pal.RGBA(p.Cell)
+		cr, cg, cb, ca := float32(c[0])/255, float32(c[1])/255, float32(c[2])/255, float32(c[3])/255
+		n := uint32(len(r.dots))
+		for _, d := range [4][2]float32{{0, 0}, {1, 0}, {0, 1}, {1, 1}} {
+			r.dots = append(r.dots, ebiten.Vertex{
+				DstX: float32(x) + d[0], DstY: float32(y) + d[1], SrcX: 0.5, SrcY: 0.5,
+				ColorR: cr, ColorG: cg, ColorB: cb, ColorA: ca,
+			})
+		}
+		r.dotIndex = append(r.dotIndex, n, n+1, n+2, n+1, n+3, n+2)
 	}
 }
 
@@ -154,8 +208,9 @@ type Status struct {
 // DrawOverlay draws the brush outline at the cursor, a status line with
 // the camera, the blocks in memory, how many chunks the last tick ran, the
 // bodies in memory and how many of them wait frozen for a block, the
-// cracks walking through them, the cells waiting to be put back, and what
-// the inventory holds of each slot's material, and a line of keys.
+// cracks walking through them, the cells waiting to be put back, the
+// particles flying, and what the inventory holds of each slot's material,
+// and a line of keys.
 func (r *Renderer) DrawOverlay(dst *ebiten.Image, g *game.Game, s *Status) {
 	sx, sy := float32(s.CursorX-s.CameraX), float32(s.CursorY-s.CameraY)
 	switch {
@@ -190,7 +245,7 @@ func (r *Renderer) DrawOverlay(dst *ebiten.Image, g *game.Game, s *Status) {
 		first,
 		{
 			fmt.Sprintf("%d bodies (%d frozen)", g.Bodies(), g.Frozen()), fmt.Sprintf("%d cracks", g.Walking()),
-			fmt.Sprintf("%d queued", w.QueueLen()),
+			fmt.Sprintf("%d queued", w.QueueLen()), fmt.Sprintf("%d particles", w.Particles()),
 		},
 		held,
 		keys,

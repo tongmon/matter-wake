@@ -47,6 +47,14 @@ func (p *Palette) FillRect(dst []byte, w *world.World, x0, y0, x1, y1 int) {
 	}
 }
 
+// RGBA returns the color of c as premultiplied red, green, blue and alpha,
+// as Fill writes it: for a particle, drawn alone.
+func (p *Palette) RGBA(c world.Cell) [4]byte {
+	var px [4]byte
+	p.put(px[:], c)
+	return px
+}
+
 // damageTint is how far toward white a cell is drawn at full damage, in
 // 256ths: about 60% (🧪). Damage lightens while tone only darkens, so a
 // worn cell never looks like natural variation.
